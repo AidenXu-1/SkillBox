@@ -2,7 +2,7 @@
 
 > 一个统一管理本地 Skills，并同步安装到多个 Agent 产品的本地工具。
 
-本仓库采用「三层物理隔离 + AI 工作层」的方式管理:把**想清楚 / 做出来 / 长什么样**分开,并为不同 AI agent 提供统一入口。
+本仓库采用「三层物理隔离 + AI 工作层」的方式管理：把**想清楚 / 做出来 / 长什么样**分开，并为不同 AI Agent 提供统一入口。
 
 ## 仓库结构
 
@@ -12,7 +12,7 @@ SkillBox/
 ├── AGENTS.md         ← 通用 Agent 工作入口(Codex / Copilot 等)
 ├── README.md         ← 你在这里:项目总入口与导航
 ├── docs/             ← 规划与管理:spec、agent-guide、overview、roadmap、progress、handoff、决策记录
-├── app/              ← 应用本体代码(地基阶段仅占位)
+├── app/              ← SwiftUI 应用、纯 Swift 核心和自动化测试
 ├── design/           ← 设计与 UI 参考
 └── scratch/          ← 草稿/实验区(git 忽略)
 ```
@@ -30,9 +30,19 @@ SkillBox/
 1. 读 [`docs/spec.md`](docs/spec.md) —— 当前唯一开发准绳。
 2. 读 [`docs/agent-guide.md`](docs/agent-guide.md) —— AI 协作规则与安全边界。
 3. 读 [`docs/roadmap.md`](docs/roadmap.md) —— 阶段地图。
-4. 想了解进展,看 [`docs/progress.md`](docs/progress.md)。
+4. 想了解进展，看 [`docs/progress.md`](docs/progress.md)。
 5. 接手项目 / 换设备继续,先读 [`docs/handoff.md`](docs/handoff.md)。
 
 ## 当前阶段
 
-🟡 **交互原型确认** —— [Spec v1](docs/spec.md) 已冻结。当前正在验证首次盘点、Skill 库、安装矩阵、同步预览与撤销体验；视觉确认后进入 SwiftUI Kickoff。
+🟡 **功能真实验收前** —— [Spec v1](docs/spec.md) 已冻结，核心闭环、功能型 SwiftUI 界面和 19 项自动化测试已完成。下一步是获得明确授权后做一次可恢复的真实同步，然后进入 UI 优化。
+
+## 快速验证
+
+```bash
+cd app
+swift test
+./Scripts/package-app.sh release
+```
+
+更详细的运行方式见 [`app/README.md`](app/README.md)。

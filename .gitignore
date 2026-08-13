@@ -23,6 +23,11 @@ tmp/
 
 # ——— 选型后按需启用(取消注释,或删掉不相关的)———
 # 依赖与构建产物
+app/.build/
+app/.swiftpm/
+app/*.xcodeproj/
+app/*.xcworkspace/
+app/dist/
 # node_modules/
 # dist/
 # build/

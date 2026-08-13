@@ -1,7 +1,31 @@
-# app —— SkillBox 应用
+# SkillBox 应用工程
 
-技术路线已确定为 Swift 6 + SwiftUI，纯 Swift 核心模块与应用 UI 分离。
+## 目录
 
-当前仍处于交互原型确认门槛，尚未初始化正式 Xcode 工程。用户确认 [可操作原型](../design/ui/skillbox-prototype-v1.html) 后，按 [编码约定](../docs/conventions.md) 建立工程和测试布局。
+- `Package.swift`：Swift Package 入口，可直接构建应用并运行测试。
+- `Sources/SkillBoxCore/`：不依赖 SwiftUI 的扫描、风险、仓库和同步核心。
+- `Sources/SkillBoxApp/`：SwiftUI macOS 应用。
+- `Tests/SkillBoxCoreTests/`：使用临时目录的核心自动化测试。
 
-正式范围与安全合同见 [Spec v1](../docs/spec.md)。
+## 本地运行
+
+```bash
+cd app
+swift run SkillBox
+```
+
+## 验证
+
+```bash
+cd app
+swift test
+swift build
+```
+
+## 生成本地测试 App
+
+```bash
+./Scripts/package-app.sh release
+```
+
+默认使用 ad-hoc 签名并启用 Hardened Runtime，只用于本机测试。设置 `SKILLBOX_CODESIGN_IDENTITY` 后可以使用 Developer ID 签名；公证和 DMG 仍属于正式发行门槛。
