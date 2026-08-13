@@ -35,4 +35,4 @@ SkillBox/
 
 ## 当前阶段
 
-🟡 **地基搭建** —— 目录与文档骨架已就位,尚未进入需求与编码。下一步是写 [`docs/spec.md`](docs/spec.md) 的 v0 草案。
+🟡 **交互原型确认** —— [Spec v1](docs/spec.md) 已冻结。当前正在验证首次盘点、Skill 库、安装矩阵、同步预览与撤销体验；视觉确认后进入 SwiftUI Kickoff。

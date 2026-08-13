@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SkillBox Prototype v1</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #162033;
+      --muted: #687287;
+      --quiet: #929bad;
+      --line: rgba(31, 46, 76, .11);
+      --line-strong: rgba(31, 46, 76, .18);
+      --canvas: #eef1f6;
+      --sidebar: rgba(244, 246, 249, .92);
+      --surface: #ffffff;
+      --surface-soft: #f7f8fb;
+      --blue: #2867e8;
+      --blue-soft: #e9f0ff;
+      --green: #14885e;
+      --green-soft: #e7f6ef;
+      --orange: #b96210;
+      --orange-soft: #fff2df;
+      --red: #c93a48;
+      --red-soft: #fdecee;
+      --purple: #7256c9;
+      --shadow-window: 0 34px 90px rgba(31, 40, 63, .18), 0 2px 8px rgba(31, 40, 63, .10);
+      --shadow-card: 0 1px 2px rgba(20, 29, 49, .04), 0 10px 24px rgba(20, 29, 49, .045);
+      --radius-window: 20px;
+      --radius-card: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      min-width: 1160px;
+      min-height: 760px;
+      display: grid;
+      place-items: center;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 15% 10%, rgba(115, 140, 208, .17), transparent 32%),
+        radial-gradient(circle at 85% 88%, rgba(69, 149, 129, .10), transparent 28%),
+        var(--canvas);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input { font: inherit; }
+    button { color: inherit; }
+
+    .app-window {
+      width: min(1420px, calc(100vw - 44px));
+      height: min(920px, calc(100vh - 44px));
+      min-height: 720px;
+      display: grid;
+      grid-template-columns: 228px minmax(0, 1fr);
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid rgba(255, 255, 255, .75);
+      border-radius: var(--radius-window);
+      box-shadow: var(--shadow-window);
+      position: relative;
+    }
+
+    .sidebar {
+      min-width: 0;
+      padding: 18px 12px 14px;
+      display: flex;
+      flex-direction: column;
+      background: var(--sidebar);
+      border-right: 1px solid var(--line);
+      backdrop-filter: blur(28px) saturate(150%);
+    }
+
+    .traffic { display: flex; gap: 8px; padding: 0 4px 18px; }
+    .traffic span { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+    .traffic .red { background: #ff5f57; }
+    .traffic .yellow { background: #febc2e; }
+    .traffic .green { background: #28c840; }
+
+    .brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 20px; }
+    .brand-mark {
+      width: 34px; height: 34px; border-radius: 10px;
+      display: grid; place-items: center;
+      color: white; font-size: 17px; font-weight: 760;
+      background: var(--blue);
+      box-shadow: 0 8px 20px rgba(40, 103, 232, .25);
+    }
+    .brand strong { display: block; font-size: 15px; letter-spacing: -.01em; }
+    .brand small { display: block; margin-top: 2px; color: var(--quiet); font-size: 10px; }
+
+    .nav-label { padding: 0 10px 7px; color: var(--quiet); font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: .07em; }
+    .nav { display: grid; gap: 3px; }
+    .nav-button {
+      min-height: 38px;
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 10px;
+      border: 0; border-radius: 9px;
+      background: transparent;
+      color: #4d586d;
+      font-size: 13px; font-weight: 540;
+      text-align: left; cursor: default;
+      transition: background .14s ease, color .14s ease, transform .1s ease;
+    }
+    .nav-button:active { transform: scale(.985); }
+    .nav-button:hover { background: rgba(40, 63, 107, .06); }
+    .nav-button.active { background: #dde5f3; color: #15233c; font-weight: 650; }
+    .nav-icon { width: 18px; height: 18px; display: grid; place-items: center; color: currentColor; }
+    .nav-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .nav-count { margin-left: auto; min-width: 20px; padding: 2px 6px; border-radius: 10px; background: rgba(89, 104, 131, .12); color: var(--muted); font-size: 10px; text-align: center; }
+    .nav-button.active .nav-count { background: white; color: var(--blue); }
+
+    .sidebar-spacer { flex: 1; }
+    .scan-card {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255,255,255,.66);
+    }
+    .scan-card-head { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 650; }
+    .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
+    .scan-card p { margin: 8px 0 10px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+    .text-button { border: 0; padding: 0; background: transparent; color: var(--blue); font-size: 11px; font-weight: 600; cursor: default; }
+
+    .workspace { min-width: 0; display: grid; grid-template-rows: 58px minmax(0, 1fr); background: #fbfcfe; }
+    .toolbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 0 26px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(251, 252, 254, .86);
+      backdrop-filter: blur(22px) saturate(140%);
+      position: relative; z-index: 5;
+    }
+    .toolbar-title { min-width: 115px; font-size: 13px; font-weight: 660; }
+    .search {
+      width: min(340px, 34vw); height: 31px;
+      display: flex; align-items: center; gap: 8px;
+      padding: 0 11px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: rgba(239, 242, 247, .82);
+      color: var(--quiet); font-size: 12px;
+    }
+    .search svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; }
+    .toolbar-spacer { flex: 1; }
+    .icon-button {
+      width: 32px; height: 32px; display: grid; place-items: center;
+      border: 1px solid var(--line); border-radius: 9px;
+      background: white; color: var(--muted); cursor: default;
+    }
+    .icon-button:hover { border-color: var(--line-strong); background: var(--surface-soft); }
+    .icon-button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+    .avatar { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: white; background: #29364d; font-size: 11px; font-weight: 720; }
+
+    .pages { min-height: 0; overflow: hidden; position: relative; }
+    .page { display: none; height: 100%; overflow: auto; padding: 30px 32px 38px; }
+    .page.active { display: block; }
+    .page-head { display: flex; align-items: flex-start; gap: 18px; margin-bottom: 24px; }
+    .page-head > div:first-child { flex: 1; }
+    .eyebrow { margin-bottom: 6px; color: var(--blue); font-size: 11px; font-weight: 730; letter-spacing: .05em; }
+    h1 { margin: 0; font-size: 27px; line-height: 1.15; letter-spacing: -.035em; font-weight: 720; }
+    .lead { margin: 8px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .head-actions { display: flex; gap: 8px; padding-top: 2px; }
+
+    .button {
+      min-height: 34px; padding: 0 14px;
+      border: 1px solid var(--line-strong); border-radius: 9px;
+      background: white; color: #28354c;
+      font-size: 12px; font-weight: 650; cursor: default;
+      box-shadow: 0 1px 2px rgba(24, 34, 54, .05);
+      transition: transform .1s ease, background .14s ease, box-shadow .14s ease;
+    }
+    .button:active { transform: scale(.975); }
+    .button:hover { background: #f8f9fc; }
+    .button.primary { border-color: var(--blue); color: white; background: var(--blue); box-shadow: 0 6px 14px rgba(40, 103, 232, .18); }
+    .button.primary:hover { background: #225ed8; }
+    .button.danger { border-color: rgba(201,58,72,.25); color: var(--red); background: var(--red-soft); }
+    .button[disabled] { opacity: .45; box-shadow: none; }
+
+    .status-strip {
+      display: flex; align-items: center; gap: 10px;
+      padding: 11px 14px; margin-bottom: 18px;
+      border: 1px solid rgba(20,136,94,.16); border-radius: 11px;
+      background: var(--green-soft); color: #1c6c50; font-size: 12px;
+    }
+    .status-strip strong { color: #145c43; }
+    .status-strip .right { margin-left: auto; color: #4c7c69; font-size: 11px; }
+
+    .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .stat-card, .card {
+      border: 1px solid var(--line); border-radius: var(--radius-card);
+      background: var(--surface); box-shadow: var(--shadow-card);
+    }
+    .stat-card { padding: 16px; min-height: 105px; position: relative; overflow: hidden; }
+    .stat-label { color: var(--muted); font-size: 11px; font-weight: 580; }
+    .stat-value { margin-top: 8px; font-size: 25px; font-weight: 720; letter-spacing: -.03em; }
+    .stat-note { margin-top: 5px; color: var(--quiet); font-size: 10px; }
+    .stat-dot { position: absolute; right: 15px; top: 16px; width: 9px; height: 9px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 0 5px var(--blue-soft); }
+    .stat-dot.green { background: var(--green); box-shadow: 0 0 0 5px var(--green-soft); }
+    .stat-dot.orange { background: var(--orange); box-shadow: 0 0 0 5px var(--orange-soft); }
+
+    .dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(290px, .75fr); gap: 16px; }
+    .card-head { display: flex; align-items: center; padding: 16px 17px 12px; }
+    .card-head h2 { margin: 0; font-size: 14px; font-weight: 680; }
+    .card-head small { margin-left: auto; color: var(--quiet); font-size: 10px; }
+    .issue-list, .agent-list, .timeline { padding: 0 8px 8px; }
+    .issue, .agent-row, .timeline-row {
+      display: flex; align-items: center; gap: 12px;
+      min-height: 57px; padding: 9px 10px;
+      border-top: 1px solid rgba(31,46,76,.07);
+    }
+    .issue:first-child, .agent-row:first-child, .timeline-row:first-child { border-top: 0; }
+    .issue-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; font-size: 13px; font-weight: 760; }
+    .issue-icon.warn { color: var(--orange); background: var(--orange-soft); }
+    .issue-icon.info { color: var(--blue); background: var(--blue-soft); }
+    .issue-icon.safe { color: var(--green); background: var(--green-soft); }
+    .issue-copy { min-width: 0; flex: 1; }
+    .issue-copy strong { display: block; font-size: 12px; font-weight: 650; }
+    .issue-copy span { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .chevron { color: #a4acba; font-size: 18px; }
+    .agent-glyph { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 9px; color: white; font-size: 10px; font-weight: 760; background: #27364f; }
+    .agent-glyph.claude { background: #c16d45; }
+    .agent-glyph.kimi { background: #6163d8; }
+    .agent-glyph.zcode { background: #1f8c79; }
+    .agent-copy { flex: 1; }
+    .agent-copy strong { display: block; font-size: 11px; }
+    .agent-copy span { color: var(--quiet); font-size: 9px; }
+    .mini-status { padding: 3px 7px; border-radius: 10px; background: var(--green-soft); color: var(--green); font-size: 9px; font-weight: 650; }
+    .mini-status.warn { background: var(--orange-soft); color: var(--orange); }
+    .timeline-card { margin-top: 16px; }
+    .timeline-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); margin-left: 4px; }
+    .timeline-row time { margin-left: auto; color: var(--quiet); font-size: 9px; }
+
+    .library-layout { height: calc(100% - 86px); min-height: 520px; display: grid; grid-template-columns: 340px minmax(0, 1fr); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: white; box-shadow: var(--shadow-card); }
+    .library-list { min-width: 0; border-right: 1px solid var(--line); background: #fafbfc; display: grid; grid-template-rows: auto minmax(0,1fr); }
+    .filter-bar { padding: 12px; border-bottom: 1px solid var(--line); }
+    .filter-input { width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); outline: none; }
+    .filter-input:focus { border-color: rgba(40,103,232,.5); box-shadow: 0 0 0 3px var(--blue-soft); }
+    .filters { display: flex; gap: 6px; margin-top: 9px; }
+    .filter-pill { border: 0; border-radius: 12px; padding: 4px 8px; background: #eef1f5; color: var(--muted); font-size: 9px; }
+    .filter-pill.active { color: var(--blue); background: var(--blue-soft); font-weight: 650; }
+    .skill-list-scroll { overflow: auto; }
+    .skill-item { width: 100%; display: grid; grid-template-columns: 36px minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 12px; border: 0; border-bottom: 1px solid rgba(31,46,76,.07); background: transparent; text-align: left; cursor: default; }
+    .skill-item:hover { background: #f5f7fa; }
+    .skill-item.active { background: #eaf0fb; }
+    .skill-mark { width: 35px; height: 35px; display: grid; place-items: center; border-radius: 10px; color: var(--blue); background: var(--blue-soft); font-size: 12px; font-weight: 760; }
+    .skill-mark.purple { color: var(--purple); background: #f0ecff; }
+    .skill-mark.green { color: var(--green); background: var(--green-soft); }
+    .skill-item strong { display: block; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .skill-item small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .risk-badge { padding: 3px 7px; border-radius: 10px; color: var(--green); background: var(--green-soft); font-size: 8px; font-weight: 680; }
+    .risk-badge.warn { color: var(--orange); background: var(--orange-soft); }
+    .skill-detail { overflow: auto; padding: 22px 24px; }
+    .detail-head { display: flex; align-items: flex-start; gap: 14px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+    .detail-head .skill-mark { width: 44px; height: 44px; border-radius: 12px; font-size: 14px; }
+    .detail-title { flex: 1; min-width: 0; }
+    .detail-title h2 { margin: 0; font-size: 18px; letter-spacing: -.02em; }
+    .detail-title p { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+    .metadata { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; margin: 16px 0; }
+    .meta-box { padding: 11px; border-radius: 10px; background: var(--surface-soft); }
+    .meta-box span { display: block; color: var(--quiet); font-size: 9px; }
+    .meta-box strong { display: block; margin-top: 5px; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .section-title { display: flex; align-items: center; gap: 7px; margin: 18px 0 9px; font-size: 11px; font-weight: 690; }
+    .section-title .count { padding: 2px 6px; border-radius: 9px; background: #edf0f5; color: var(--muted); font-size: 8px; }
+    .install-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+    .install-chip { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 9px; font-size: 9px; }
+    .install-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+    .code-preview { margin: 0; padding: 15px; border: 1px solid var(--line); border-radius: 11px; background: #f6f7fa; color: #354057; font: 10px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+    .risk-panel { padding: 12px; border: 1px solid rgba(20,136,94,.15); border-radius: 11px; background: var(--green-soft); }
+    .risk-panel strong { display: block; color: #176c4f; font-size: 11px; }
+    .risk-panel p { margin: 5px 0 0; color: #497867; font-size: 9px; line-height: 1.5; }
+
+    .matrix-wrap { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: white; box-shadow: var(--shadow-card); }
+    .matrix-top { display: flex; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--line); background: #fafbfc; }
+    .matrix-top span { color: var(--muted); font-size: 10px; }
+    .matrix-legend { margin-left: auto; display: flex; gap: 12px; color: var(--quiet); font-size: 9px; }
+    .matrix-legend i { display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 50%; }
+    .matrix-scroll { overflow: auto; }
+    .matrix { width: 100%; min-width: 930px; border-collapse: collapse; table-layout: fixed; }
+    .matrix th, .matrix td { height: 56px; border-bottom: 1px solid rgba(31,46,76,.07); text-align: center; }
+    .matrix th { height: 62px; color: var(--muted); background: #fcfcfd; font-size: 8px; font-weight: 650; position: sticky; top: 0; z-index: 1; }
+    .matrix th:first-child, .matrix td:first-child { width: 224px; padding-left: 15px; text-align: left; }
+    .matrix-agent { display: grid; justify-items: center; gap: 5px; }
+    .matrix-agent .agent-glyph { width: 25px; height: 25px; border-radius: 7px; font-size: 8px; }
+    .matrix-skill { display: flex; align-items: center; gap: 10px; }
+    .matrix-skill .skill-mark { width: 31px; height: 31px; border-radius: 8px; font-size: 10px; }
+    .matrix-skill strong { display: block; font-size: 10px; }
+    .matrix-skill small { display: block; margin-top: 3px; color: var(--quiet); font-size: 8px; }
+    .install-toggle { width: 22px; height: 22px; display: grid; place-items: center; margin: auto; border: 1.5px solid #c8cfda; border-radius: 50%; background: white; color: transparent; font-size: 11px; cursor: default; transition: transform .1s ease, border-color .14s ease, background .14s ease; }
+    .install-toggle:active { transform: scale(.88); }
+    .install-toggle.on { border-color: var(--green); background: var(--green); color: white; }
+    .install-toggle.pending { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); }
+    .install-toggle.indirect { border-color: #b9a9e5; background: #f0ecff; color: var(--purple); }
+    .install-toggle.drift { border-color: var(--orange); background: var(--orange-soft); color: var(--orange); }
+    .agent-footer { display: flex; align-items: center; gap: 9px; margin-top: 14px; color: var(--muted); font-size: 10px; }
+    .agent-footer .button { margin-left: auto; }
+
+    .records { display: grid; gap: 10px; }
+    .record { display: grid; grid-template-columns: 42px minmax(0,1fr) auto; gap: 12px; align-items: center; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+    .record-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px; color: var(--green); background: var(--green-soft); font-weight: 760; }
+    .record-copy strong { font-size: 12px; }
+    .record-copy p { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
+    .record-meta { text-align: right; }
+    .record-meta time { display: block; color: var(--quiet); font-size: 9px; margin-bottom: 7px; }
+
+    .settings-grid { display: grid; grid-template-columns: minmax(0,1fr) 330px; gap: 16px; }
+    .settings-section { padding: 17px; }
+    .settings-section h2 { margin: 0 0 13px; font-size: 14px; }
+    .setting-row { display: flex; align-items: center; gap: 12px; min-height: 58px; border-top: 1px solid var(--line); }
+    .setting-row:first-of-type { border-top: 0; }
+    .setting-copy { flex: 1; }
+    .setting-copy strong { display: block; font-size: 11px; }
+    .setting-copy span { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.45; }
+    .toggle { width: 34px; height: 20px; border: 0; border-radius: 10px; padding: 2px; background: #cdd3dc; }
+    .toggle::after { content: ""; display: block; width: 16px; height: 16px; border-radius: 50%; background: white; box-shadow: 0 1px 3px rgba(0,0,0,.2); transform: translateX(14px); }
+    .toggle.on { background: var(--green); }
+    .promise { padding: 18px; border-radius: 14px; color: white; background: #23334c; }
+    .promise-mark { width: 40px; height: 40px; display: grid; place-items: center; margin-bottom: 26px; border-radius: 12px; background: rgba(255,255,255,.12); font-size: 18px; }
+    .promise h2 { margin: 0; font-size: 17px; letter-spacing: -.02em; }
+    .promise p { margin: 8px 0 18px; color: #c7d1e0; font-size: 10px; line-height: 1.55; }
+    .promise ul { margin: 0; padding: 0; display: grid; gap: 10px; list-style: none; }
+    .promise li { display: flex; gap: 8px; color: #e9eef6; font-size: 10px; }
+    .promise li::before { content: "✓"; color: #67d2ac; font-weight: 760; }
+
+    .scrim { position: absolute; inset: 0; display: none; place-items: center; padding: 38px; background: rgba(18, 25, 38, .34); backdrop-filter: blur(10px); z-index: 20; }
+    .scrim.open { display: grid; }
+    .modal { width: min(850px, calc(100% - 50px)); max-height: calc(100% - 40px); overflow: auto; border: 1px solid rgba(255,255,255,.65); border-radius: 18px; background: #fbfcfe; box-shadow: 0 34px 80px rgba(17,25,40,.28); transform-origin: center; animation: arrive .24s cubic-bezier(.2,.8,.2,1); }
+    @keyframes arrive { from { opacity: 0; transform: scale(.975) translateY(8px); } to { opacity: 1; transform: none; } }
+    .modal-head { display: flex; align-items: center; padding: 14px 17px; border-bottom: 1px solid var(--line); }
+    .modal-head strong { font-size: 12px; }
+    .modal-close { margin-left: auto; width: 25px; height: 25px; border: 0; border-radius: 50%; background: #e9ecf1; color: var(--muted); }
+    .modal-body { padding: 22px; }
+    .modal-foot { display: flex; align-items: center; gap: 8px; padding: 13px 17px; border-top: 1px solid var(--line); background: #f8f9fb; }
+    .modal-foot .spacer { flex: 1; }
+
+    .onboarding { width: min(940px, calc(100% - 40px)); }
+    .steps { display: flex; align-items: center; gap: 6px; margin-right: 16px; }
+    .step-dot { width: 22px; height: 4px; border-radius: 2px; background: #dfe3e9; }
+    .step-dot.active { background: var(--blue); }
+    .onboard-grid { min-height: 480px; display: grid; grid-template-columns: 42% 58%; }
+    .onboard-visual { position: relative; display: grid; place-items: center; overflow: hidden; padding: 32px; background: #edf2fb; border-right: 1px solid var(--line); }
+    .orbit { width: 240px; height: 240px; border: 1px solid rgba(40,103,232,.16); border-radius: 50%; position: relative; }
+    .orbit::before { content: ""; position: absolute; inset: 32px; border: 1px solid rgba(40,103,232,.16); border-radius: 50%; }
+    .orbit-core { position: absolute; left: 50%; top: 50%; width: 74px; height: 74px; transform: translate(-50%,-50%); display: grid; place-items: center; border-radius: 22px; color: white; background: var(--blue); box-shadow: 0 18px 34px rgba(40,103,232,.28); font-size: 24px; font-weight: 760; }
+    .orb { position: absolute; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; color: white; font-size: 10px; font-weight: 740; box-shadow: 0 8px 20px rgba(40,50,70,.13); }
+    .orb.one { left: 5px; top: 78px; background: #c16d45; }
+    .orb.two { right: 10px; top: 38px; background: #252f43; }
+    .orb.three { right: 20px; bottom: 25px; background: #6163d8; }
+    .orb.four { left: 38px; bottom: 1px; background: #1f8c79; }
+    .onboard-copy { padding: 50px 48px 38px; display: flex; flex-direction: column; }
+    .onboard-copy .eyebrow { margin-bottom: 10px; }
+    .onboard-copy h2 { margin: 0; max-width: 360px; font-size: 29px; line-height: 1.18; letter-spacing: -.04em; }
+    .onboard-copy > p { margin: 14px 0 24px; max-width: 390px; color: var(--muted); font-size: 12px; line-height: 1.65; }
+    .promise-list { display: grid; gap: 12px; margin-top: 4px; }
+    .promise-row { display: flex; align-items: flex-start; gap: 10px; }
+    .promise-check { width: 21px; height: 21px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 7px; color: var(--green); background: var(--green-soft); font-size: 10px; font-weight: 760; }
+    .promise-row strong { display: block; font-size: 11px; }
+    .promise-row span { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; }
+    .onboard-actions { margin-top: auto; display: flex; align-items: center; gap: 9px; padding-top: 30px; }
+    .privacy-note { margin-left: auto; color: var(--quiet); font-size: 9px; }
+    .scan-results { display: none; width: 100%; align-self: stretch; }
+    .scan-results.visible { display: block; }
+    .scan-result { display: grid; grid-template-columns: 32px minmax(0,1fr) auto; gap: 9px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+    .scan-result:first-child { border-top: 0; }
+    .scan-result .agent-glyph { width: 30px; height: 30px; }
+    .scan-result strong { display: block; font-size: 10px; }
+    .scan-result small { color: var(--muted); font-size: 8px; }
+    .scan-count { color: var(--green); font-size: 9px; font-weight: 650; }
+
+    .sync-summary { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-bottom: 16px; }
+    .sync-chip { padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: white; }
+    .sync-chip strong { display: block; font-size: 16px; }
+    .sync-chip span { color: var(--muted); font-size: 9px; }
+    .operation-list { border: 1px solid var(--line); border-radius: 11px; overflow: hidden; }
+    .operation { display: grid; grid-template-columns: 24px minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 11px; border-top: 1px solid var(--line); }
+    .operation:first-child { border-top: 0; }
+    .op-icon { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 7px; color: var(--blue); background: var(--blue-soft); font-size: 10px; font-weight: 760; }
+    .op-icon.warn { color: var(--orange); background: var(--orange-soft); }
+    .operation strong { display: block; font-size: 10px; }
+    .operation small { color: var(--muted); font-size: 8px; }
+    .operation code { color: var(--quiet); font: 8px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .block-note { display: flex; gap: 9px; margin-top: 12px; padding: 10px; border-radius: 10px; color: #7d551b; background: var(--orange-soft); font-size: 9px; line-height: 1.45; }
+
+    .toast { position: absolute; left: 50%; bottom: 18px; z-index: 30; display: flex; align-items: center; gap: 10px; min-width: 390px; padding: 11px 12px; border-radius: 12px; color: white; background: rgba(28, 38, 54, .94); box-shadow: 0 16px 36px rgba(20,28,42,.24); transform: translate(-50%, 90px); opacity: 0; transition: transform .3s cubic-bezier(.2,.8,.2,1), opacity .2s ease; }
+    .toast.show { transform: translate(-50%, 0); opacity: 1; }
+    .toast-check { width: 25px; height: 25px; display: grid; place-items: center; border-radius: 8px; color: #b8f0dc; background: rgba(73,190,146,.18); }
+    .toast-copy { flex: 1; }
+    .toast-copy strong { display: block; font-size: 10px; }
+    .toast-copy span { display: block; margin-top: 2px; color: #bac4d2; font-size: 8px; }
+    .toast button { border: 0; background: transparent; color: #9ebeff; font-size: 9px; font-weight: 680; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+    }
+    @media (prefers-reduced-transparency: reduce) {
+      .sidebar, .toolbar, .scrim { backdrop-filter: none; }
+      .sidebar, .toolbar { background: #f6f7f9; }
+    }
+    @media (prefers-contrast: more) {
+      :root { --line: rgba(18,28,45,.28); --line-strong: rgba(18,28,45,.48); }
+      .sidebar { background: #f4f5f7; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app-window" aria-label="SkillBox 原型">
+    <aside class="sidebar">
+      <div class="traffic" aria-hidden="true"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+      <div class="brand"><div class="brand-mark">S</div><div><strong>SkillBox</strong><small>本地 Skill 控制中心</small></div></div>
+      <div class="nav-label">管理</div>
+      <nav class="nav" aria-label="主导航">
+        <button class="nav-button active" data-page="overview"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6v-9h-6v9ZM4 20h6v-3H4v3Zm10-13h6V4h-6v3Z"/></svg></span>资产总览<span class="nav-count">3</span></button>
+        <button class="nav-button" data-page="library"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z"/><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20"/></svg></span>Skill 库<span class="nav-count">68</span></button>
+        <button class="nav-button" data-page="agents"><span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="7" rx="2"/><rect x="14" y="4" width="7" height="7" rx="2"/><rect x="3" y="15" width="7" height="6" rx="2"/><rect x="14" y="15" width="7" height="6" rx="2"/></svg></span>Agents<span class="nav-count">9</span></button>
+        <button class="nav-button" data-page="records"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6"/><path d="M4 4v4.6h4.6M12 7v5l3 2"/></svg></span>操作记录</button>
+      </nav>
+      <div class="nav-label" style="margin-top:18px">系统</div>
+      <nav class="nav"><button class="nav-button" data-page="settings"><span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.37.33.71.6 1 .3.27.68.4 1.1.4h.09v4h-.09a1.7 1.7 0 0 0-1.7.6Z"/></svg></span>设置</button></nav>
+      <div class="sidebar-spacer"></div>
+      <div class="scan-card"><div class="scan-card-head"><span class="pulse"></span>本机状态清晰</div><p>9 个 Agent 已识别<br>上次盘点：今天 10:42</p><button id="replayOnboarding" class="text-button">重新体验首次盘点</button></div>
+    </aside>
+
+    <section class="workspace">
+      <header class="toolbar"><div class="toolbar-title" id="toolbarTitle">资产总览</div><div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><span>搜索 Skill、Agent 或来源</span></div><div class="toolbar-spacer"></div><button class="icon-button" aria-label="重新扫描"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6.1 9A7 7 0 0 1 18.5 6.5L20 12M4 12l1.5 5.5A7 7 0 0 0 17.9 15"/></svg></button><button class="icon-button" aria-label="通知"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></button><div class="avatar">兆</div></header>
+
+      <div class="pages">
+        <section class="page active" id="page-overview">
+          <div class="page-head"><div><div class="eyebrow">本机状态</div><h1>你的 Skills 很清楚</h1><p class="lead">68 份中央原件，已连接 9 个 Agent。现在有 3 件事值得你处理。</p></div><div class="head-actions"><button class="button" data-go="library">导入 Skill</button><button class="button primary" data-go="agents">查看安装矩阵</button></div></div>
+          <div class="status-strip"><span class="pulse"></span><strong>只读盘点已完成</strong><span>没有修改任何 Agent 文件</span><span class="right">今天 10:42 · 156 个副本</span></div>
+          <div class="stats">
+            <div class="stat-card"><span class="stat-dot"></span><div class="stat-label">中央原件</div><div class="stat-value">68</div><div class="stat-note">来自 12 个来源</div></div>
+            <div class="stat-card"><span class="stat-dot green"></span><div class="stat-label">状态一致</div><div class="stat-value">151</div><div class="stat-note">Agent 副本与原件相同</div></div>
+            <div class="stat-card"><span class="stat-dot orange"></span><div class="stat-label">需要处理</div><div class="stat-value">3</div><div class="stat-note">2 个外部改动 · 1 个冲突</div></div>
+            <div class="stat-card"><span class="stat-dot green"></span><div class="stat-label">已识别 Agent</div><div class="stat-value">9</div><div class="stat-note">其中 7 个已安装</div></div>
+          </div>
+          <div class="dashboard-grid">
+            <div>
+              <article class="card"><div class="card-head"><h2>需要你决定</h2><small>不会自动处理</small></div><div class="issue-list">
+                <div class="issue"><div class="issue-icon warn">!</div><div class="issue-copy"><strong>human-writing 有两个不同版本</strong><span>Codex 与 HanaAgent 内容不同，需要选择中央原件</span></div><span class="chevron">›</span></div>
+                <div class="issue"><div class="issue-icon info">↗</div><div class="issue-copy"><strong>agent-team 在 ZCode 中被修改</strong><span>目标副本与上次同步指纹不同，已暂停更新</span></div><span class="chevron">›</span></div>
+                <div class="issue"><div class="issue-icon safe">✓</div><div class="issue-copy"><strong>29 个重复副本可以安全归并</strong><span>内容完全一致，只需要保留一份中央原件</span></div><span class="chevron">›</span></div>
+              </div></article>
+              <article class="card timeline-card"><div class="card-head"><h2>最近操作</h2><small>全部可追溯</small></div><div class="timeline">
+                <div class="timeline-row"><span class="timeline-dot"></span><div class="issue-copy"><strong>完成只读盘点</strong><span>扫描 7 个现有目录，零文件改动</span></div><time>10:42</time></div>
+                <div class="timeline-row"><span class="timeline-dot" style="background:var(--blue);box-shadow:0 0 0 4px var(--blue-soft)"></span><div class="issue-copy"><strong>更新 wechat-layout-publisher</strong><span>同步至 Codex、Claude Code 和 HanaAgent</span></div><time>昨天</time></div>
+              </div></article>
+            </div>
+            <article class="card"><div class="card-head"><h2>Agents</h2><small>7 / 9 已安装</small></div><div class="agent-list">
+              <div class="agent-row"><div class="agent-glyph">Cx</div><div class="agent-copy"><strong>Codex</strong><span>64 个 Skills</span></div><span class="mini-status">状态一致</span></div>
+              <div class="agent-row"><div class="agent-glyph claude">Cl</div><div class="agent-copy"><strong>Claude Code</strong><span>目录尚未建立</span></div><span class="mini-status warn">可安装</span></div>
+              <div class="agent-row"><div class="agent-glyph kimi">Ki</div><div class="agent-copy"><strong>Kimi Code</strong><span>间接可见 64 个</span></div><span class="mini-status warn">需了解</span></div>
+              <div class="agent-row"><div class="agent-glyph zcode">Z</div><div class="agent-copy"><strong>ZCode</strong><span>30 个 Skills</span></div><span class="mini-status warn">1 个改动</span></div>
+              <div class="agent-row"><div class="agent-glyph" style="background:#8d5bb3">H</div><div class="agent-copy"><strong>HanaAgent</strong><span>39 个 Skills</span></div><span class="mini-status">状态一致</span></div>
+            </div></article>
+          </div>
+        </section>
+
+        <section class="page" id="page-library">
+          <div class="page-head"><div><div class="eyebrow">中央原件库</div><h1>Skill 库</h1><p class="lead">查看来源、风险和安装位置。第一版只读预览，不在这里直接修改原件。</p></div><div class="head-actions"><button class="button">从本地导入</button><button class="button primary">从 GitHub 导入</button></div></div>
+          <div class="library-layout">
+            <div class="library-list"><div class="filter-bar"><input class="filter-input" aria-label="筛选 Skills" placeholder="筛选 68 个 Skills"><div class="filters"><button class="filter-pill active">全部</button><button class="filter-pill">需处理 3</button><button class="filter-pill">GitHub 27</button></div></div><div class="skill-list-scroll">
+              <button class="skill-item active" data-skill="wechat"><span class="skill-mark">W</span><span><strong>wechat-layout-publisher</strong><small>公众号排版与发布工作流</small></span><span class="risk-badge">低风险</span></button>
+              <button class="skill-item" data-skill="agent"><span class="skill-mark purple">A</span><span><strong>agent-team</strong><small>多 Agent 团队协作治理</small></span><span class="risk-badge warn">有改动</span></button>
+              <button class="skill-item" data-skill="writing"><span class="skill-mark green">H</span><span><strong>human-writing</strong><small>通用中文创作与改稿</small></span><span class="risk-badge warn">2 个版本</span></button>
+              <button class="skill-item"><span class="skill-mark">V</span><span><strong>vercel-react-best-practices</strong><small>React 与 Next.js 性能规则</small></span><span class="risk-badge">低风险</span></button>
+              <button class="skill-item"><span class="skill-mark purple">M</span><span><strong>museframe</strong><small>小红书视觉内容生产</small></span><span class="risk-badge">低风险</span></button>
+              <button class="skill-item"><span class="skill-mark green">O</span><span><strong>obsidian</strong><small>Obsidian 知识库操作</small></span><span class="risk-badge warn">需注意</span></button>
+            </div></div>
+            <article class="skill-detail"><div class="detail-head"><span class="skill-mark" id="detailMark">W</span><div class="detail-title"><h2 id="detailName">wechat-layout-publisher</h2><p id="detailDescription">公众号定稿、配图排版、可复制 HTML 与发布归档工作流。</p></div><button class="button">在 Finder 中显示</button></div>
+              <div class="metadata"><div class="meta-box"><span>来源</span><strong id="detailSource">本地项目 · 已验证</strong></div><div class="meta-box"><span>内容指纹</span><strong id="detailHash">8c91…72af</strong></div><div class="meta-box"><span>最近更新</span><strong id="detailDate">今天 09:18</strong></div></div>
+              <div class="section-title">已安装到 <span class="count">3</span></div><div class="install-chips"><span class="install-chip"><i></i>Codex</span><span class="install-chip"><i></i>Claude Code</span><span class="install-chip"><i></i>HanaAgent</span></div>
+              <div class="section-title">本地风险报告</div><div class="risk-panel"><strong>未发现阻断项</strong><p>扫描 24 个文本文件、2 个脚本和 0 个二进制。脚本中存在网络请求说明，但导入和扫描过程不会执行它们。</p></div>
+              <div class="section-title">SKILL.md 预览</div><pre class="code-preview" id="detailCode">---
+name: wechat-layout-publisher
+description: 公众号排版、配图、定稿与发布工作流。
+---
+
+# WeChat Layout Publisher
+
+先确认原稿、排版目标与发布边界，再生成可复制 HTML。</pre>
+            </article>
+          </div>
+        </section>
+
+        <section class="page" id="page-agents">
+          <div class="page-head"><div><div class="eyebrow">期望安装关系</div><h1>Agents</h1><p class="lead">点击圆点只会修改计划。确认预览前，SkillBox 不会写入任何 Agent 目录。</p></div><div class="head-actions"><button class="button">添加自定义目录</button><button class="button primary" id="openSync">预览 4 项变更</button></div></div>
+          <div class="matrix-wrap"><div class="matrix-top"><span>显示 6 个常用 Skill · 9 个内置 Agent</span><div class="matrix-legend"><span><i style="background:var(--green)"></i>已同步</span><span><i style="background:var(--blue)"></i>待同步</span><span><i style="background:var(--purple)"></i>间接可见</span><span><i style="background:var(--orange)"></i>外部改动</span></div></div><div class="matrix-scroll"><table class="matrix">
+            <thead><tr><th>Skill</th><th><span class="matrix-agent"><span class="agent-glyph">Cx</span>Codex</span></th><th><span class="matrix-agent"><span class="agent-glyph claude">Cl</span>Claude</span></th><th><span class="matrix-agent"><span class="agent-glyph">Cu</span>Cursor</span></th><th><span class="matrix-agent"><span class="agent-glyph kimi">Ki</span>Kimi</span></th><th><span class="matrix-agent"><span class="agent-glyph zcode">Z</span>ZCode</span></th><th><span class="matrix-agent"><span class="agent-glyph" style="background:#3675a9">W</span>WorkBuddy</span></th><th><span class="matrix-agent"><span class="agent-glyph" style="background:#8d5bb3">H</span>Hana</span></th><th><span class="matrix-agent"><span class="agent-glyph" style="background:#d06c3a">G</span>Gemini</span></th><th><span class="matrix-agent"><span class="agent-glyph" style="background:#343c48">O</span>OpenCode</span></th></tr></thead>
+            <tbody>
+              <tr><td><span class="matrix-skill"><span class="skill-mark">W</span><span><strong>wechat-layout-publisher</strong><small>低风险 · 本地</small></span></span></td><td><button class="install-toggle on" aria-label="已安装到 Codex">✓</button></td><td><button class="install-toggle pending" aria-label="待安装到 Claude">+</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle indirect" title="从 Codex 间接可见">↗</button></td><td><button class="install-toggle on">✓</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle on">✓</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle">✓</button></td></tr>
+              <tr><td><span class="matrix-skill"><span class="skill-mark purple">A</span><span><strong>agent-team</strong><small>ZCode 有外部改动</small></span></span></td><td><button class="install-toggle on">✓</button></td><td><button class="install-toggle pending">+</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle indirect">↗</button></td><td><button class="install-toggle drift">!</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle on">✓</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle">✓</button></td></tr>
+              <tr><td><span class="matrix-skill"><span class="skill-mark green">H</span><span><strong>human-writing</strong><small>2 个版本待选择</small></span></span></td><td><button class="install-toggle drift">!</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle indirect">↗</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle drift">!</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle">✓</button></td></tr>
+              <tr><td><span class="matrix-skill"><span class="skill-mark">V</span><span><strong>vercel-react-best-practices</strong><small>GitHub · 低风险</small></span></span></td><td><button class="install-toggle on">✓</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle on">✓</button></td><td><button class="install-toggle indirect">↗</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle pending">+</button></td><td><button class="install-toggle">✓</button></td></tr>
+              <tr><td><span class="matrix-skill"><span class="skill-mark purple">M</span><span><strong>museframe</strong><small>本地 · 低风险</small></span></span></td><td><button class="install-toggle on">✓</button></td><td><button class="install-toggle pending">+</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle indirect">↗</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle on">✓</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle">✓</button></td></tr>
+              <tr><td><span class="matrix-skill"><span class="skill-mark green">O</span><span><strong>obsidian</strong><small>包含脚本 · 需注意</small></span></span></td><td><button class="install-toggle on">✓</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle indirect">↗</button></td><td><button class="install-toggle on">✓</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle on">✓</button></td><td><button class="install-toggle">✓</button></td><td><button class="install-toggle">✓</button></td></tr>
+            </tbody></table></div></div>
+          <div class="agent-footer"><span class="pulse"></span><span>所有更改都停留在计划中</span><span>·</span><span>1 个阻塞项不会被执行</span><button class="button primary" id="openSyncBottom">预览同步</button></div>
+        </section>
+
+        <section class="page" id="page-records">
+          <div class="page-head"><div><div class="eyebrow">恢复与追踪</div><h1>操作记录</h1><p class="lead">每次写入都有明确清单和恢复点。外部改动出现后，撤销会暂停并请你决定。</p></div></div>
+          <div class="records">
+            <article class="record"><div class="record-icon">✓</div><div class="record-copy"><strong>同步 3 个 Skills 到 4 个 Agents</strong><p>新增 4 项 · 更新 2 项 · 已保存恢复点 · 事务 #A84F</p></div><div class="record-meta"><time>昨天 18:32</time><button class="button">查看与撤销</button></div></article>
+            <article class="record"><div class="record-icon">↻</div><div class="record-copy"><strong>更新 wechat-layout-publisher</strong><p>来源 commit 91b7e3a · 风险等级保持为低</p></div><div class="record-meta"><time>8 月 12 日</time><button class="button">查看详情</button></div></article>
+            <article class="record"><div class="record-icon">⌕</div><div class="record-copy"><strong>完成首次只读盘点</strong><p>发现 156 个副本 · 归并 63 组 · 零文件改动</p></div><div class="record-meta"><time>8 月 11 日</time><button class="button">查看报告</button></div></article>
+          </div>
+        </section>
+
+        <section class="page" id="page-settings">
+          <div class="page-head"><div><div class="eyebrow">偏好与边界</div><h1>设置</h1><p class="lead">SkillBox 只在你主动确认后写入，并把每一次改动留在本机。</p></div></div>
+          <div class="settings-grid"><div class="card settings-section"><h2>本地管理</h2>
+            <div class="setting-row"><div class="setting-copy"><strong>中央仓库</strong><span>~/Library/Application Support/SkillBox/Library</span></div><button class="button">在 Finder 中显示</button></div>
+            <div class="setting-row"><div class="setting-copy"><strong>打开应用时只读扫描</strong><span>检查状态变化，不自动创建目录或同步文件</span></div><button class="toggle on" aria-label="已开启"></button></div>
+            <div class="setting-row"><div class="setting-copy"><strong>备份保留</strong><span>至少 30 天，并始终保留最近 10 个事务</span></div><button class="button">管理备份</button></div>
+            <div class="setting-row"><div class="setting-copy"><strong>首次盘点</strong><span>重新体验引导不会改变已经建立的中央仓库</span></div><button class="button" id="replayOnboardingSettings">重新打开</button></div>
+          </div><aside class="promise"><div class="promise-mark">S</div><h2>安全承诺</h2><p>公开、透明、可恢复。SkillBox 不上传你的 Skill 内容，也不会在扫描时执行其中的脚本。</p><ul><li>写入前展示完整变更</li><li>未管理内容不会静默覆盖</li><li>外部改动会暂停同步</li><li>风险报告留在本机</li></ul></aside></div>
+        </section>
+      </div>
+    </section>
+
+    <div class="scrim" id="onboardingScrim" role="dialog" aria-modal="true" aria-labelledby="onboardTitle">
+      <section class="modal onboarding"><header class="modal-head"><div class="steps"><span class="step-dot active"></span><span class="step-dot"></span><span class="step-dot"></span></div><strong>首次盘点</strong><button class="modal-close" data-close="onboarding" aria-label="关闭">×</button></header>
+        <div class="onboard-grid"><div class="onboard-visual"><div class="orbit"><div class="orbit-core">S</div><div class="orb one">Cl</div><div class="orb two">Cx</div><div class="orb three">Ki</div><div class="orb four">Z</div></div></div>
+          <div class="onboard-copy"><div class="eyebrow" id="onboardEyebrow">欢迎使用 SkillBox</div><h2 id="onboardTitle">先看清，再决定怎么整理</h2><p id="onboardText">SkillBox 会只读扫描标准 Skills 目录，找出重复、冲突和风险。扫描结束不会自动迁移，也不会修改任何 Agent 文件。</p>
+            <div class="promise-list" id="promiseList"><div class="promise-row"><span class="promise-check">✓</span><span><strong>盘点阶段完全只读</strong><span>不会创建、移动、重命名或删除文件</span></span></div><div class="promise-row"><span class="promise-check">✓</span><span><strong>相同副本自动归在一起</strong><span>内容不同的版本会留给你选择</span></span></div><div class="promise-row"><span class="promise-check">✓</span><span><strong>每次写入都能预览和撤销</strong><span>中央仓库建立后，首次同步仍需单独确认</span></span></div></div>
+            <div class="scan-results" id="scanResults"><div class="scan-result"><span class="agent-glyph">Cx</span><span><strong>Codex</strong><small>~/.codex/skills</small></span><span class="scan-count">64 个</span></div><div class="scan-result"><span class="agent-glyph zcode">Z</span><span><strong>ZCode</strong><small>~/.zcode/skills</small></span><span class="scan-count">30 个</span></div><div class="scan-result"><span class="agent-glyph" style="background:#8d5bb3">H</span><span><strong>HanaAgent</strong><small>~/.hanako/skills</small></span><span class="scan-count">39 个</span></div><div class="scan-result"><span class="agent-glyph kimi">Ki</span><span><strong>Kimi Code</strong><small>通过通用目录间接可见</small></span><span class="scan-count">64 个</span></div></div>
+            <div class="onboard-actions"><button class="button" data-close="onboarding">稍后再说</button><button class="button primary" id="onboardNext">开始只读盘点</button><span class="privacy-note">全部处理都在本机完成</span></div>
+          </div></div>
+      </section>
+    </div>
+
+    <div class="scrim" id="syncScrim" role="dialog" aria-modal="true" aria-labelledby="syncTitle"><section class="modal"><header class="modal-head"><strong id="syncTitle">同步预览</strong><button class="modal-close" data-close="sync" aria-label="关闭">×</button></header><div class="modal-body"><div class="sync-summary"><div class="sync-chip"><strong>3</strong><span>新增</span></div><div class="sync-chip"><strong>1</strong><span>更新</span></div><div class="sync-chip"><strong>0</strong><span>移除</span></div><div class="sync-chip"><strong style="color:var(--orange)">1</strong><span>已阻塞</span></div></div><div class="operation-list"><div class="operation"><span class="op-icon">+</span><span><strong>安装 wechat-layout-publisher</strong><small>Claude Code · 将创建目标目录</small></span><code>~/.claude/skills/…</code></div><div class="operation"><span class="op-icon">+</span><span><strong>安装 agent-team</strong><small>Claude Code · 新增实体副本</small></span><code>~/.claude/skills/…</code></div><div class="operation"><span class="op-icon">+</span><span><strong>安装 museframe</strong><small>Claude Code · 新增实体副本</small></span><code>~/.claude/skills/…</code></div><div class="operation"><span class="op-icon">↻</span><span><strong>更新 vercel-react-best-practices</strong><small>Gemini CLI · 已保存当前副本作为恢复点</small></span><code>~/.gemini/skills/…</code></div><div class="operation"><span class="op-icon warn">!</span><span><strong>暂停 agent-team 的 ZCode 更新</strong><small>检测到外部改动，本次同步不会触碰它</small></span><code>~/.zcode/skills/…</code></div></div><div class="block-note"><strong>安全边界</strong><span>已阻塞项目不会随本次确认执行。同步前会再次验证目标指纹；任何状态变化都会停止写入。</span></div></div><footer class="modal-foot"><button class="button" data-close="sync">返回调整</button><span class="spacer"></span><span style="color:var(--muted);font-size:9px">将创建 1 个恢复点</span><button class="button primary" id="commitSync">同步 4 项变更</button></footer></section></div>
+
+    <div class="toast" id="toast" role="status"><span class="toast-check">✓</span><span class="toast-copy"><strong>同步完成，4 项变更已写入</strong><span>恢复点将至少保留 30 天</span></span><button data-go="records">查看记录</button><button id="undoToast">撤销</button></div>
+  </main>
+
+  <script>
+    const titleMap = { overview: '资产总览', library: 'Skill 库', agents: 'Agents', records: '操作记录', settings: '设置' };
+    const navButtons = [...document.querySelectorAll('.nav-button[data-page]')];
+    function showPage(name) {
+      navButtons.forEach(button => button.classList.toggle('active', button.dataset.page === name));
+      document.querySelectorAll('.page').forEach(page => page.classList.toggle('active', page.id === `page-${name}`));
+      document.getElementById('toolbarTitle').textContent = titleMap[name];
+    }
+    navButtons.forEach(button => button.addEventListener('click', () => showPage(button.dataset.page)));
+    document.querySelectorAll('[data-go]').forEach(button => button.addEventListener('click', () => showPage(button.dataset.go)));
+
+    const skillData = {
+      wechat: { mark: 'W', name: 'wechat-layout-publisher', description: '公众号定稿、配图排版、可复制 HTML 与发布归档工作流。', source: '本地项目 · 已验证', hash: '8c91…72af', date: '今天 09:18' },
+      agent: { mark: 'A', name: 'agent-team', description: '多 Agent 团队协作、节点治理、审计与可恢复交接。', source: 'GitHub · AidenXu-1', hash: '2f0b…41c8', date: '昨天 22:06' },
+      writing: { mark: 'H', name: 'human-writing', description: '面向真实中文语境的创作、改稿和表达工作流。', source: '两个本地版本待选择', hash: '冲突', date: '今天 10:42' }
+    };
+    document.querySelectorAll('.skill-item[data-skill]').forEach(item => item.addEventListener('click', () => {
+      document.querySelectorAll('.skill-item').forEach(row => row.classList.remove('active'));
+      item.classList.add('active');
+      const skill = skillData[item.dataset.skill];
+      document.getElementById('detailMark').textContent = skill.mark;
+      document.getElementById('detailName').textContent = skill.name;
+      document.getElementById('detailDescription').textContent = skill.description;
+      document.getElementById('detailSource').textContent = skill.source;
+      document.getElementById('detailHash').textContent = skill.hash;
+      document.getElementById('detailDate').textContent = skill.date;
+      document.getElementById('detailCode').textContent = `---\nname: ${skill.name}\ndescription: ${skill.description}\n---\n\n# ${skill.name}\n\n中央原件内容只读预览。`;
+    }));
+
+    document.querySelectorAll('.install-toggle:not(.indirect):not(.drift)').forEach(toggle => toggle.addEventListener('click', () => {
+      if (toggle.classList.contains('on')) { toggle.classList.remove('on'); toggle.classList.add('pending'); toggle.textContent = '−'; }
+      else if (toggle.classList.contains('pending')) { toggle.classList.remove('pending'); toggle.textContent = '✓'; }
+      else { toggle.classList.add('pending'); toggle.textContent = '+'; }
+    }));
+
+    const onboarding = document.getElementById('onboardingScrim');
+    const sync = document.getElementById('syncScrim');
+    function openOnboarding() { onboarding.classList.add('open'); document.getElementById('onboardNext').focus(); }
+    document.getElementById('replayOnboarding').addEventListener('click', openOnboarding);
+    document.getElementById('replayOnboardingSettings').addEventListener('click', openOnboarding);
+    document.querySelectorAll('[data-close="onboarding"]').forEach(button => button.addEventListener('click', () => onboarding.classList.remove('open')));
+    document.querySelectorAll('[data-close="sync"]').forEach(button => button.addEventListener('click', () => sync.classList.remove('open')));
+    document.getElementById('openSync').addEventListener('click', () => sync.classList.add('open'));
+    document.getElementById('openSyncBottom').addEventListener('click', () => sync.classList.add('open'));
+
+    let onboardStep = 1;
+    document.getElementById('onboardNext').addEventListener('click', event => {
+      onboardStep += 1;
+      document.querySelectorAll('.step-dot').forEach((dot, index) => dot.classList.toggle('active', index < onboardStep));
+      if (onboardStep === 2) {
+        document.getElementById('onboardEyebrow').textContent = '只读盘点完成';
+        document.getElementById('onboardTitle').textContent = '找到 156 个副本';
+        document.getElementById('onboardText').textContent = '其中 63 组内容完全相同，可以安全归并；3 组需要你查看。到这里仍然没有修改任何文件。';
+        document.getElementById('promiseList').style.display = 'none';
+        document.getElementById('scanResults').classList.add('visible');
+        event.currentTarget.textContent = '查看归并建议';
+      } else {
+        onboarding.classList.remove('open');
+        showPage('overview');
+      }
+    });
+
+    const toast = document.getElementById('toast');
+    document.getElementById('commitSync').addEventListener('click', () => {
+      sync.classList.remove('open');
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 7000);
+    });
+    document.getElementById('undoToast').addEventListener('click', () => {
+      toast.querySelector('strong').textContent = '已撤销刚才的同步';
+      toast.querySelector('.toast-copy span').textContent = '4 项变更已从恢复点还原';
+      setTimeout(() => toast.classList.remove('show'), 3200);
+    });
+
+    const query = new URLSearchParams(location.search);
+    if (query.get('page')) showPage(query.get('page'));
+    if (query.get('onboarding') === '1') {
+      openOnboarding();
+      if (query.get('step') === '2') document.getElementById('onboardNext').click();
+    }
+    if (query.get('sync') === '1') { showPage('agents'); sync.classList.add('open'); }
+  </script>
+</body>
+</html>

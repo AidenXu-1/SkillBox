@@ -1,20 +1,7 @@
-# app —— 应用本体代码
+# app —— SkillBox 应用
 
-> ⚠️ **地基阶段占位**:技术栈尚未确定,这里暂时只有本说明。
+技术路线已确定为 Swift 6 + SwiftUI，纯 Swift 核心模块与应用 UI 分离。
 
-## 这里将放什么
+当前仍处于交互原型确认门槛，尚未初始化正式 Xcode 工程。用户确认 [可操作原型](../design/ui/skillbox-prototype-v1.html) 后，按 [编码约定](../docs/conventions.md) 建立工程和测试布局。
 
-应用的全部源代码。等 `docs/spec.md` 和风险检查完成,进入 **Kickoff** 后,再在这里初始化真正的工程脚手架。
-
-## Kickoff 之前,先别急着建目录
-
-代码目录结构高度依赖 Spec、风险检查和技术路线。现在建一套之后可能又要推翻,等 Kickoff 确认后再初始化,避免返工。
-
-## Kickoff 后,这里应包含(参考)
-
-- [ ] 工程初始化(包管理 / 构建配置)
-- [ ] `README` 写清:如何安装依赖、如何启动、如何打包
-- [ ] 与 [`../docs/handoff.md`](../docs/handoff.md) 的"怎么把环境跑起来"保持同步
-
----
-关联:[路线图](../docs/roadmap.md) ·[Spec](../docs/spec.md) ·[决策记录](../docs/decisions/)
+正式范围与安全合同见 [Spec v1](../docs/spec.md)。
