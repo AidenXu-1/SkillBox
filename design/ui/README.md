@@ -14,6 +14,10 @@
 - [通俗文案版·总览](skillbox-copy-v2-overview.png)
 - [通俗文案版·欢迎页](skillbox-copy-v2-onboarding.png)
 - [通俗文案版·安装确认](skillbox-copy-v2-install-preview.png)
+- [空状态与冲突处理 v3 说明](skillbox-layout-v3.md)
+- [空 Skill 库 v3](skillbox-layout-v3-empty-library.png)
+- [空安装页 v3](skillbox-layout-v3-empty-agents.png)
+- [同名内容选择 v3](skillbox-layout-v3-conflict-choice.png)
 
 ## 可视化交付要求
 

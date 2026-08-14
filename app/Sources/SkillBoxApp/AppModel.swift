@@ -9,6 +9,7 @@ final class AppModel: ObservableObject {
     @Published var scanResult: ScanResult?
     @Published var pendingCandidates: [SkillCandidate] = []
     @Published var selectedCandidateIDs: Set<String> = []
+    @Published var activeConflict: ConflictGroup?
     @Published var syncPlan: SyncPlan?
     @Published var isBusy = false
     @Published var statusMessage = "准备查看本机 Skills"
@@ -79,6 +80,7 @@ final class AppModel: ObservableObject {
 
     func prepareScanImport() {
         guard let scanResult else { return }
+        activeConflict = nil
         let byName = Dictionary(grouping: scanResult.candidates, by: \.canonicalName)
         pendingCandidates = byName.values.flatMap { candidates in
             Dictionary(grouping: candidates, by: \.fingerprint).values.compactMap(\.first)
@@ -89,6 +91,23 @@ final class AppModel: ObservableObject {
             return versions.values.first?.first?.id
         })
         updatingSkillID = nil
+    }
+
+    func prepareConflictImport(_ conflict: ConflictGroup) {
+        activeConflict = conflict
+        pendingCandidates = conflict.versions
+            .compactMap { $0.candidates.first }
+            .sorted { $0.source.displayName < $1.source.displayName }
+        selectedCandidateIDs = []
+        updatingSkillID = nil
+    }
+
+    func sourceSummary(for candidate: SkillCandidate) -> String {
+        guard let version = activeConflict?.versions.first(where: { $0.fingerprint == candidate.fingerprint }) else {
+            return candidate.source.displayName
+        }
+        let sources = Set(version.candidates.map(\.source.displayName))
+        return sources.sorted().joined(separator: "、")
     }
 
     func setCandidate(_ candidate: SkillCandidate, selected: Bool) {
@@ -107,12 +126,14 @@ final class AppModel: ObservableObject {
     }
 
     func previewGitHub() async {
+        activeConflict = nil
         updatingSkillID = nil
         await preview(provider: GitHubSourceProvider(), locator: githubURL)
     }
 
     func checkForUpdate(_ skill: SkillRecord) async {
         guard skill.source.kind == .github else { return }
+        activeConflict = nil
         updatingSkillID = skill.id
         let all = await loadPreview(provider: GitHubSourceProvider(), locator: skill.source.locator)
         guard let all else { return }
@@ -143,6 +164,7 @@ final class AppModel: ObservableObject {
             cleanupGitHubCandidates(pendingCandidates)
             pendingCandidates = []
             selectedCandidateIDs = []
+            activeConflict = nil
             updatingSkillID = nil
             statusMessage = "已加入「我的 Skills」"
             await reload()
@@ -153,6 +175,7 @@ final class AppModel: ObservableObject {
         cleanupGitHubCandidates(pendingCandidates)
         pendingCandidates = []
         selectedCandidateIDs = []
+        activeConflict = nil
         updatingSkillID = nil
     }
 
@@ -245,6 +268,7 @@ final class AppModel: ObservableObject {
 
     private func preview(provider: any SourceProvider, locator: String) async {
         guard let candidates = await loadPreview(provider: provider, locator: locator) else { return }
+        activeConflict = nil
         pendingCandidates = candidates
         selectedCandidateIDs = Set(candidates.filter { !$0.riskReport.isBlocked }.map(\.id))
     }

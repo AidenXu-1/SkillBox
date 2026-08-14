@@ -49,7 +49,11 @@
 - 通俗文案总览：`skillbox-copy-v2-overview.png`
 - 通俗文案欢迎页：`skillbox-copy-v2-onboarding.png`
 - 通俗文案安装确认：`skillbox-copy-v2-install-preview.png`
+- 空 Skill 库 v3：`skillbox-layout-v3-empty-library.png`
+- 空安装页 v3：`skillbox-layout-v3-empty-agents.png`
+- 同名内容选择 v3：`skillbox-layout-v3-conflict-choice.png`
+- v3 设计说明：`skillbox-layout-v3.md`
 
 ## 当前确认项
 
-整体气质、导航结构和交互方向已经用户确认。本轮等待用户确认通俗文案的信息量、状态名称和安装确认说法。
+整体气质、导航结构和交互方向已经用户确认。v3 根据真实使用反馈修复空页面留白和不可点击的同名内容提示；真实 SwiftUI 鼠标验收仍待 Computer Use 通道恢复后补做。

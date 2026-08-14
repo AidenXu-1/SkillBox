@@ -48,13 +48,32 @@ struct ContentView: View {
         } detail: {
             Group {
                 switch selection ?? .overview {
-                case .overview: OverviewView(model: model, goTo: { selection = $0 })
+                case .overview:
+                    OverviewView(
+                        model: model,
+                        goTo: { selection = $0 },
+                        reviewConflict: { conflict in
+                            model.prepareConflictImport(conflict)
+                            showImportPreview = true
+                        },
+                        reviewAllConflicts: {
+                            model.prepareScanImport()
+                            showImportPreview = true
+                        }
+                    )
                 case .library: LibraryView(model: model, selectedSkillID: $selectedSkillID, importLocal: chooseLocalFolder, importGitHub: { showGitHub = true })
-                case .agents: AgentsView(model: model, showSyncPreview: $showSyncPreview, addCustom: { showCustomTarget = true })
+                case .agents:
+                    AgentsView(
+                        model: model,
+                        showSyncPreview: $showSyncPreview,
+                        addCustom: { showCustomTarget = true },
+                        addSkill: { selection = .library }
+                    )
                 case .history: HistoryView(model: model)
                 case .settings: SettingsView(model: model)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .navigationTitle(selection?.rawValue ?? "SkillBox")
             .toolbar { Button { Task { await model.scanInstalledSkills() } } label: { Label("重新查看", systemImage: "arrow.clockwise") }.disabled(model.isBusy) }
         }
@@ -95,9 +114,11 @@ private struct MetricCard: View {
 private struct OverviewView: View {
     @ObservedObject var model: AppModel
     let goTo: (SidebarItem) -> Void
+    let reviewConflict: (ConflictGroup) -> Void
+    let reviewAllConflicts: () -> Void
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 20) {
-            HStack(alignment: .top) { PageHeader(eyebrow: "当前情况", title: "你的 Skills 一目了然", subtitle: "这里汇总本机已找到、已加入 SkillBox 和需要你选择的内容。") ; Spacer(); Button("把找到的 Skills 加入管理") { model.prepareScanImport() }.disabled(model.scanResult?.candidates.isEmpty != false); Button("选择安装位置") { goTo(.agents) }.buttonStyle(.borderedProminent) }
+            HStack(alignment: .top) { PageHeader(eyebrow: "当前情况", title: "你的 Skills 一目了然", subtitle: "这里汇总本机已找到、已加入 SkillBox 和需要你选择的内容。") ; Spacer(); Button("把找到的 Skills 加入管理", action: reviewAllConflicts).disabled(model.scanResult?.candidates.isEmpty != false); Button("选择安装位置") { goTo(.agents) }.buttonStyle(.borderedProminent) }
             HStack(spacing: 12) {
                 MetricCard(title: "已加入 SkillBox", value: "\(model.snapshot.skills.count)", note: "集中保存在本机", color: .blue)
                 MetricCard(title: "本机找到", value: "\(model.scanResult?.candidates.count ?? 0)", note: "只查看，没有改动", color: .green)
@@ -106,17 +127,54 @@ private struct OverviewView: View {
             }
             GroupBox("需要你选择") { VStack(alignment: .leading, spacing: 0) {
                 if let conflicts = model.scanResult?.conflicts, !conflicts.isEmpty {
-                    ForEach(conflicts.prefix(5)) { conflict in IssueRow(icon: "exclamationmark.triangle.fill", color: .orange, title: "\(conflict.canonicalName) 有 \(conflict.versions.count) 份不同内容", note: "请选一份加入 SkillBox") }
+                    ForEach(conflicts.prefix(5)) { conflict in
+                        ConflictRow(conflict: conflict) { reviewConflict(conflict) }
+                    }
+                    if conflicts.count > 5 {
+                        Divider()
+                        Button("整理全部 \(conflicts.count) 组") { reviewAllConflicts() }
+                            .padding(.top, 10)
+                    }
                 } else { ContentUnavailableView("没有需要处理的同名内容", systemImage: "checkmark.circle", description: Text("以后发现同名但内容不同的 Skill，会在这里请你选择")) }
             }.padding(.vertical, 4) }
             GroupBox("应用位置") { LazyVGrid(columns: [GridItem(.adaptive(minimum: 220))], spacing: 10) { ForEach(model.snapshot.targets) { target in HStack { Image(systemName: target.detectionStatus == .available ? "checkmark.circle.fill" : "circle.dashed").foregroundStyle(target.detectionStatus == .available ? .green : .secondary); VStack(alignment: .leading) { Text(target.displayName).font(.callout.weight(.medium)); Text(target.detectionStatus == .available ? "已找到" : "尚未在本机使用").font(.caption2).foregroundStyle(.secondary) }; Spacer() }.padding(10).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 9)).help(target.path) } }.padding(.vertical, 5) }
-        }.padding(28) }
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(28) }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
-private struct IssueRow: View {
-    let icon: String; let color: Color; let title: String; let note: String
-    var body: some View { HStack(spacing: 12) { Image(systemName: icon).foregroundStyle(color).frame(width: 24); VStack(alignment: .leading, spacing: 3) { Text(title).font(.callout.weight(.medium)); Text(note).font(.caption).foregroundStyle(.secondary) }; Spacer() }.padding(.vertical, 9) }
+private struct ConflictRow: View {
+    let conflict: ConflictGroup
+    let action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(conflict.canonicalName) 有 \(conflict.versions.count) 份不同内容")
+                        .font(.callout.weight(.medium))
+                    Text("点击查看来源并选择保留哪一份")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+            .background(isHovering ? Color.accentColor.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .accessibilityHint("查看这些版本并选择一份加入 SkillBox")
+    }
 }
 
 private struct LibraryView: View {
@@ -126,19 +184,40 @@ private struct LibraryView: View {
     var selected: SkillRecord? { model.snapshot.skills.first { $0.id == selectedSkillID } ?? model.snapshot.skills.first }
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top) { PageHeader(eyebrow: "集中管理", title: "我的 Skills", subtitle: "每个 Skill 在这里保留一份，再由你决定安装到哪些应用。") ; Spacer(); Button("从电脑添加", action: importLocal); Button("从 GitHub 添加", action: importGitHub).buttonStyle(.borderedProminent) }.padding(28)
-            HSplitView {
-                List(model.snapshot.skills, selection: $selectedSkillID) { skill in HStack { Image(systemName: riskIcon(skill.riskReport.highestSeverity)).foregroundStyle(riskColor(skill.riskReport.highestSeverity)); VStack(alignment: .leading) { Text(skill.displayName).font(.callout.weight(.medium)); Text(skill.description).font(.caption2).foregroundStyle(.secondary).lineLimit(1) } }.tag(skill.id) }.frame(minWidth: 280, idealWidth: 330)
-                Group {
-                    if let selected {
-                        SkillDetailView(model: model, skill: selected)
-                    } else {
-                        ContentUnavailableView("还没有添加 Skill", systemImage: "shippingbox", description: Text("可以从电脑文件夹或公开 GitHub 地址添加"))
+            HStack(alignment: .top) {
+                PageHeader(eyebrow: "集中管理", title: "我的 Skills", subtitle: "每个 Skill 在这里保留一份，再由你决定安装到哪些应用。")
+                Spacer()
+                if !model.snapshot.skills.isEmpty {
+                    Button("从电脑添加", action: importLocal)
+                    Button("从 GitHub 添加", action: importGitHub).buttonStyle(.borderedProminent)
+                }
+            }
+            .padding(28)
+            if model.snapshot.skills.isEmpty {
+                ContentUnavailableView {
+                    Label("还没有添加 Skill", systemImage: "shippingbox")
+                } description: {
+                    Text("从电脑文件夹或公开 GitHub 地址添加，确认前只会查看内容。")
+                } actions: {
+                    HStack {
+                        Button("从电脑添加", action: importLocal)
+                        Button("从 GitHub 添加", action: importGitHub)
+                            .buttonStyle(.borderedProminent)
                     }
                 }
-                .frame(minWidth: 480)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.bottom, 72)
+            } else {
+                HSplitView {
+                    List(model.snapshot.skills, selection: $selectedSkillID) { skill in HStack { Image(systemName: riskIcon(skill.riskReport.highestSeverity)).foregroundStyle(riskColor(skill.riskReport.highestSeverity)); VStack(alignment: .leading) { Text(skill.displayName).font(.callout.weight(.medium)); Text(skill.description).font(.caption2).foregroundStyle(.secondary).lineLimit(1) } }.tag(skill.id) }.frame(minWidth: 280, idealWidth: 330)
+                    if let selected {
+                        SkillDetailView(model: model, skill: selected)
+                            .frame(minWidth: 480)
+                    }
+                }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
     private func riskIcon(_ severity: RiskSeverity) -> String { severity >= .high ? "exclamationmark.triangle.fill" : severity == .caution ? "exclamationmark.circle.fill" : "checkmark.circle.fill" }
     private func riskColor(_ severity: RiskSeverity) -> Color { severity >= .high ? .red : severity == .caution ? .orange : .green }
@@ -183,14 +262,49 @@ private struct AgentsView: View {
     @ObservedObject var model: AppModel
     @Binding var showSyncPreview: Bool
     let addCustom: () -> Void
-    var body: some View { ScrollView([.horizontal, .vertical]) { VStack(alignment: .leading, spacing: 18) {
-        HStack(alignment: .top) { PageHeader(eyebrow: "选择使用位置", title: "安装到哪些应用", subtitle: "点一下选择或取消。只有最后点击「确认并开始」时才会改动文件。") ; Spacer(); Button("添加其他应用", action: addCustom); Button("检查 \(model.syncPlan?.executableActions.count ?? 0) 项安装改动") { showSyncPreview = true }.buttonStyle(.borderedProminent).disabled(model.syncPlan?.executableActions.isEmpty != false) }
-        Grid(horizontalSpacing: 10, verticalSpacing: 8) {
-            GridRow { Text("我的 Skills").font(.caption.weight(.semibold)).frame(width: 210, alignment: .leading); ForEach(model.snapshot.targets) { Text($0.displayName).font(.caption2.weight(.medium)).frame(width: 72).lineLimit(2) } }
-            Divider().gridCellColumns(model.snapshot.targets.count + 1)
-            ForEach(model.snapshot.skills) { skill in GridRow { Text(skill.displayName).font(.callout.weight(.medium)).frame(width: 210, alignment: .leading); ForEach(model.snapshot.targets) { target in AssignmentButton(model: model, skill: skill, target: target).frame(width: 72) } } }
-        }.padding().background(.background, in: RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.45)))
-    }.padding(28) } }
+    let addSkill: () -> Void
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                PageHeader(eyebrow: "选择使用位置", title: "安装到哪些应用", subtitle: "点一下选择或取消。只有最后点击「确认并开始」时才会改动文件。")
+                Spacer()
+                Button("添加其他应用", action: addCustom)
+                if !model.snapshot.skills.isEmpty {
+                    Button("检查 \(model.syncPlan?.executableActions.count ?? 0) 项安装改动") { showSyncPreview = true }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.syncPlan?.executableActions.isEmpty != false)
+                }
+            }
+            .padding(28)
+            if model.snapshot.skills.isEmpty {
+                ContentUnavailableView {
+                    Label("先添加一个 Skill", systemImage: "square.grid.2x2")
+                } description: {
+                    Text("添加后，就能在这里选择要安装到哪些应用。")
+                } actions: {
+                    Button("去添加 Skill", action: addSkill)
+                        .buttonStyle(.borderedProminent)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.bottom, 72)
+            } else {
+                ScrollView([.horizontal, .vertical]) {
+                    Grid(horizontalSpacing: 10, verticalSpacing: 8) {
+                        GridRow { Text("我的 Skills").font(.caption.weight(.semibold)).frame(width: 210, alignment: .leading); ForEach(model.snapshot.targets) { Text($0.displayName).font(.caption2.weight(.medium)).frame(width: 72).lineLimit(2) } }
+                        Divider().gridCellColumns(model.snapshot.targets.count + 1)
+                        ForEach(model.snapshot.skills) { skill in GridRow { Text(skill.displayName).font(.callout.weight(.medium)).frame(width: 210, alignment: .leading); ForEach(model.snapshot.targets) { target in AssignmentButton(model: model, skill: skill, target: target).frame(width: 72) } } }
+                    }
+                    .padding()
+                    .background(.background, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.45)))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 28)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
 }
 
 private struct AssignmentButton: View {
@@ -231,8 +345,124 @@ private struct GitHubImportView: View {
 }
 
 private struct ImportPreviewView: View {
-    @ObservedObject var model: AppModel; @Binding var isPresented: Bool
-    var body: some View { VStack(alignment: .leading, spacing: 16) { Text(model.updatingSkillID == nil ? "选择要添加的 Skills" : "确认更新").font(.title2.bold()); Text(model.updatingSkillID == nil ? "勾选要加入「我的 Skills」的内容。名字相同但内容不同时，需要你选其中一份。" : "确认后，SkillBox 会保留旧内容的备份，并更新库里的这份 Skill。已经安装到应用里的内容不会自动变化。").foregroundStyle(.secondary); List(model.pendingCandidates) { candidate in Toggle(isOn: Binding(get: { model.selectedCandidateIDs.contains(candidate.id) }, set: { model.setCandidate(candidate, selected: $0) })) { VStack(alignment: .leading) { HStack { Text(candidate.displayName).font(.headline); Spacer(); Text(candidate.riskReport.isBlocked ? "无法添加" : candidate.riskReport.findings.isEmpty ? "检查通过" : "有 \(candidate.riskReport.findings.count) 项需要留意").font(.caption).foregroundStyle(candidate.riskReport.isBlocked ? .red : .secondary) }; Text(candidate.description).font(.caption).foregroundStyle(.secondary); Text("来自 \(candidate.source.displayName) · 内容编号 \(String(candidate.fingerprint.prefix(8)))").font(.caption2).foregroundStyle(.tertiary) } }.disabled(candidate.riskReport.isBlocked) }.frame(minHeight: 320); HStack { Button("取消") { model.cancelCandidatePreview(); isPresented = false }; Spacer(); Button(model.updatingSkillID == nil ? "添加所选" : "确认更新") { isPresented = false; Task { await model.importSelectedCandidates() } }.buttonStyle(.borderedProminent).disabled(model.selectedCandidateIDs.isEmpty) } }.padding(24).frame(width: 680, height: 520).interactiveDismissDisabled() }
+    @ObservedObject var model: AppModel
+    @Binding var isPresented: Bool
+
+    private var isResolvingConflict: Bool { model.activeConflict != nil }
+
+    private var title: String {
+        if let conflict = model.activeConflict { return "选择 \(conflict.canonicalName) 的保留版本" }
+        return model.updatingSkillID == nil ? "选择要添加的 Skills" : "确认更新"
+    }
+
+    private var explanation: String {
+        if model.activeConflict != nil {
+            return "这些 Skill 名字相同，但内容不同。选中一份加入「我的 Skills」，其他位置的原文件仍会保留。"
+        }
+        return model.updatingSkillID == nil
+            ? "勾选要加入「我的 Skills」的内容。名字相同但内容不同时，需要你选其中一份。"
+            : "确认后，SkillBox 会保留旧内容的备份，并更新库里的这份 Skill。已经安装到应用里的内容不会自动变化。"
+    }
+
+    private var confirmTitle: String {
+        if isResolvingConflict { return "保留所选版本" }
+        return model.updatingSkillID == nil ? "添加所选" : "确认更新"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(title).font(.title2.bold())
+            Text(explanation).foregroundStyle(.secondary)
+            if isResolvingConflict {
+                conflictChoices
+            } else {
+                candidateChoices
+            }
+            HStack {
+                Button("取消") {
+                    model.cancelCandidatePreview()
+                    isPresented = false
+                }
+                Spacer()
+                Button(confirmTitle) {
+                    isPresented = false
+                    Task { await model.importSelectedCandidates() }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.selectedCandidateIDs.isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 680, height: 520)
+        .interactiveDismissDisabled()
+    }
+
+    private var conflictChoices: some View {
+        List(model.pendingCandidates) { candidate in
+            Button {
+                model.setCandidate(candidate, selected: true)
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: model.selectedCandidateIDs.contains(candidate.id) ? "largecircle.fill.circle" : "circle")
+                        .foregroundStyle(model.selectedCandidateIDs.contains(candidate.id) ? Color.accentColor : .secondary)
+                        .font(.title3)
+                        .padding(.top, 2)
+                    CandidateSummary(
+                        candidate: candidate,
+                        sourceText: "在 \(model.sourceSummary(for: candidate)) 中找到"
+                    )
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(candidate.riskReport.isBlocked)
+            .accessibilityHint("选择这一份加入 SkillBox")
+        }
+        .frame(minHeight: 320)
+    }
+
+    private var candidateChoices: some View {
+        List(model.pendingCandidates) { candidate in
+            Toggle(isOn: Binding(
+                get: { model.selectedCandidateIDs.contains(candidate.id) },
+                set: { model.setCandidate(candidate, selected: $0) }
+            )) {
+                CandidateSummary(candidate: candidate, sourceText: "来自 \(candidate.source.displayName)")
+            }
+            .disabled(candidate.riskReport.isBlocked)
+        }
+        .frame(minHeight: 320)
+    }
+}
+
+private struct CandidateSummary: View {
+    let candidate: SkillCandidate
+    let sourceText: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(candidate.displayName).font(.headline)
+                Spacer()
+                Text(statusText)
+                    .font(.caption)
+                    .foregroundStyle(candidate.riskReport.isBlocked ? .red : .secondary)
+            }
+            Text(candidate.description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Text("\(sourceText) · 内容编号 \(String(candidate.fingerprint.prefix(8)))")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private var statusText: String {
+        if candidate.riskReport.isBlocked { return "无法添加" }
+        if candidate.riskReport.findings.isEmpty { return "检查通过" }
+        return "有 \(candidate.riskReport.findings.count) 项需要留意"
+    }
 }
 
 private struct SyncPreviewView: View {

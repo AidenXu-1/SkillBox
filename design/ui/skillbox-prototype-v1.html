@@ -212,6 +212,8 @@
       min-height: 57px; padding: 9px 10px;
       border-top: 1px solid rgba(31,46,76,.07);
     }
+    button.issue { width: 100%; border-right: 0; border-bottom: 0; border-left: 0; background: transparent; text-align: left; cursor: pointer; }
+    button.issue:hover { border-radius: 9px; background: var(--blue-soft); }
     .issue:first-child, .agent-row:first-child, .timeline-row:first-child { border-top: 0; }
     .issue-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; font-size: 13px; font-weight: 760; }
     .issue-icon.warn { color: var(--orange); background: var(--orange-soft); }
@@ -325,7 +327,30 @@
     .promise li { display: flex; gap: 8px; color: #e9eef6; font-size: 10px; }
     .promise li::before { content: "✓"; color: #67d2ac; font-weight: 760; }
 
-    .scrim { position: absolute; inset: 0; display: none; place-items: center; padding: 38px; background: rgba(18, 25, 38, .34); backdrop-filter: blur(10px); z-index: 20; }
+    .prototype-empty { display: none; }
+    body.show-empty .prototype-empty { height: calc(100% - 86px); min-height: 470px; display: grid; place-items: center; padding-bottom: 72px; text-align: center; }
+    body.show-empty #page-library .library-layout,
+    body.show-empty #page-agents .matrix-wrap,
+    body.show-empty #page-agents .agent-footer { display: none; }
+    body.show-empty #page-library .head-actions { display: none; }
+    body.show-empty #page-agents #openSync { display: none; }
+    .empty-symbol { width: 54px; height: 54px; margin: 0 auto 16px; display: grid; place-items: center; border-radius: 16px; color: var(--blue); background: var(--blue-soft); font-size: 24px; }
+    .empty-copy h2 { margin: 0; font-size: 20px; letter-spacing: -.025em; }
+    .empty-copy p { margin: 8px 0 18px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .empty-actions { display: flex; justify-content: center; gap: 8px; }
+
+    .version-intro { margin: 0 0 16px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .version-list { display: grid; gap: 9px; }
+    .version-choice { width: 100%; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: white; text-align: left; cursor: pointer; }
+    .version-choice:hover { border-color: rgba(40,103,232,.38); background: #fbfcff; }
+    .radio { width: 17px; height: 17px; border: 1.5px solid #b9c1cd; border-radius: 50%; }
+    .version-choice.selected { border-color: rgba(40,103,232,.48); background: var(--blue-soft); }
+    .version-choice.selected .radio { border: 5px solid var(--blue); background: white; }
+    .version-copy strong { display: block; font-size: 12px; }
+    .version-copy span { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+    .version-status { color: var(--green); font-size: 10px; font-weight: 650; }
+
+    .scrim { position: absolute; inset: 0; display: none; place-items: center; padding: 38px; background: rgba(18, 25, 38, .34); z-index: 20; }
     .scrim.open { display: grid; }
     .modal { width: min(850px, calc(100% - 50px)); max-height: calc(100% - 40px); overflow: auto; border: 1px solid rgba(255,255,255,.65); border-radius: 18px; background: #fbfcfe; box-shadow: 0 34px 80px rgba(17,25,40,.28); transform-origin: center; animation: arrive .24s cubic-bezier(.2,.8,.2,1); }
     @keyframes arrive { from { opacity: 0; transform: scale(.975) translateY(8px); } to { opacity: 1; transform: none; } }
@@ -439,7 +464,7 @@
           <div class="dashboard-grid">
             <div>
               <article class="card"><div class="card-head"><h2>需要你选择</h2><small>不会自动处理</small></div><div class="issue-list">
-                <div class="issue"><div class="issue-icon warn">!</div><div class="issue-copy"><strong>human-writing 有两份不同内容</strong><span>Codex 与 HanaAgent 里的内容不同，请选一份加入 SkillBox</span></div><span class="chevron">›</span></div>
+                <button class="issue conflict-trigger"><div class="issue-icon warn">!</div><div class="issue-copy"><strong>lark-approval 有 3 份不同内容</strong><span>点击查看来源并选择保留哪一份</span></div><span class="chevron">›</span></button>
                 <div class="issue"><div class="issue-icon info">↗</div><div class="issue-copy"><strong>agent-team 在 ZCode 中被改过</strong><span>为了保护新内容，SkillBox 已暂停更新</span></div><span class="chevron">›</span></div>
                 <div class="issue"><div class="issue-icon safe">✓</div><div class="issue-copy"><strong>29 份重复内容可以只整理一次</strong><span>它们的内容完全相同，加入 SkillBox 时不会重复保存</span></div><span class="chevron">›</span></div>
               </div></article>
@@ -460,6 +485,7 @@
 
         <section class="page" id="page-library">
           <div class="page-head"><div><div class="eyebrow">集中管理</div><h1>我的 Skills</h1><p class="lead">每个 Skill 在这里保留一份，再由你决定安装到哪些应用。</p></div><div class="head-actions"><button class="button">从电脑添加</button><button class="button primary">从 GitHub 添加</button></div></div>
+          <div class="prototype-empty"><div class="empty-copy"><div class="empty-symbol">□</div><h2>还没有添加 Skill</h2><p>从电脑文件夹或公开 GitHub 地址添加，确认前只会查看内容。</p><div class="empty-actions"><button class="button">从电脑添加</button><button class="button primary">从 GitHub 添加</button></div></div></div>
           <div class="library-layout">
             <div class="library-list"><div class="filter-bar"><input class="filter-input" aria-label="筛选 Skills" placeholder="筛选 68 个 Skills"><div class="filters"><button class="filter-pill active">全部</button><button class="filter-pill">需处理 3</button><button class="filter-pill">GitHub 27</button></div></div><div class="skill-list-scroll">
               <button class="skill-item active" data-skill="wechat"><span class="skill-mark">W</span><span><strong>wechat-layout-publisher</strong><small>公众号排版与发布工作流</small></span><span class="risk-badge">低风险</span></button>
@@ -487,6 +513,7 @@ description: 公众号排版、配图、定稿与发布工作流。
 
         <section class="page" id="page-agents">
           <div class="page-head"><div><div class="eyebrow">选择使用位置</div><h1>安装到哪些应用</h1><p class="lead">点一下选择或取消。只有最后点击「确认并开始」时才会改动文件。</p></div><div class="head-actions"><button class="button">添加其他应用</button><button class="button primary" id="openSync">检查 4 项安装改动</button></div></div>
+          <div class="prototype-empty"><div class="empty-copy"><div class="empty-symbol">▦</div><h2>先添加一个 Skill</h2><p>添加后，就能在这里选择要安装到哪些应用。</p><div class="empty-actions"><button class="button primary" data-go="library">去添加 Skill</button></div></div></div>
           <div class="matrix-wrap"><div class="matrix-top"><span>显示 6 个常用 Skill · 9 款支持应用</span><div class="matrix-legend"><span><i style="background:var(--green)"></i>已安装</span><span><i style="background:var(--blue)"></i>等待确认</span><span><i style="background:var(--purple)"></i>已能使用</span><span><i style="background:var(--orange)"></i>后来被改过</span></div></div><div class="matrix-scroll"><table class="matrix">
             <thead><tr><th>Skill</th><th><span class="matrix-agent"><span class="agent-glyph">Cx</span>Codex</span></th><th><span class="matrix-agent"><span class="agent-glyph claude">Cl</span>Claude</span></th><th><span class="matrix-agent"><span class="agent-glyph">Cu</span>Cursor</span></th><th><span class="matrix-agent"><span class="agent-glyph kimi">Ki</span>Kimi</span></th><th><span class="matrix-agent"><span class="agent-glyph zcode">Z</span>ZCode</span></th><th><span class="matrix-agent"><span class="agent-glyph" style="background:#3675a9">W</span>WorkBuddy</span></th><th><span class="matrix-agent"><span class="agent-glyph" style="background:#8d5bb3">H</span>Hana</span></th><th><span class="matrix-agent"><span class="agent-glyph" style="background:#d06c3a">G</span>Gemini</span></th><th><span class="matrix-agent"><span class="agent-glyph" style="background:#343c48">O</span>OpenCode</span></th></tr></thead>
             <tbody>
@@ -534,6 +561,8 @@ description: 公众号排版、配图、定稿与发布工作流。
 
     <div class="scrim" id="syncScrim" role="dialog" aria-modal="true" aria-labelledby="syncTitle"><section class="modal"><header class="modal-head"><strong id="syncTitle">确认安装改动</strong><button class="modal-close" data-close="sync" aria-label="关闭">×</button></header><div class="modal-body"><div class="sync-summary"><div class="sync-chip"><strong>3</strong><span>添加</span></div><div class="sync-chip"><strong>1</strong><span>更新</span></div><div class="sync-chip"><strong>0</strong><span>移除</span></div><div class="sync-chip"><strong style="color:var(--orange)">1</strong><span>需要处理</span></div></div><div class="operation-list"><div class="operation"><span class="op-icon">+</span><span><strong>安装 wechat-layout-publisher</strong><small>安装位置：Claude Code</small></span></div><div class="operation"><span class="op-icon">+</span><span><strong>安装 agent-team</strong><small>安装位置：Claude Code</small></span></div><div class="operation"><span class="op-icon">+</span><span><strong>安装 museframe</strong><small>安装位置：Claude Code</small></span></div><div class="operation"><span class="op-icon">↻</span><span><strong>更新 vercel-react-best-practices</strong><small>安装位置：Gemini CLI，开始前会留备份</small></span></div><div class="operation"><span class="op-icon warn">!</span><span><strong>agent-team 在 ZCode 中被改过</strong><small>为了保护新内容，本次不会改动它</small></span></div></div><div class="block-note"><strong>文件保护</strong><span>真正写入前，SkillBox 会再检查一次。如果文件在你确认后发生变化，会停下来并恢复已经完成的部分。</span></div></div><footer class="modal-foot"><button class="button" data-close="sync">返回调整</button><span class="spacer"></span><span style="color:var(--muted);font-size:9px">开始前会留好备份</span><button class="button primary" id="commitSync">确认并开始</button></footer></section></div>
 
+    <div class="scrim" id="conflictScrim" role="dialog" aria-modal="true" aria-labelledby="conflictTitle"><section class="modal" style="max-width:680px"><header class="modal-head"><strong id="conflictTitle">选择 lark-approval 的保留版本</strong><button class="modal-close" data-close="conflict" aria-label="关闭">×</button></header><div class="modal-body"><p class="version-intro">这些 Skill 名字相同，但内容不同。选中一份加入「我的 Skills」，其他位置的原文件仍会保留。</p><div class="version-list"><button class="version-choice"><span class="radio"></span><span class="version-copy"><strong>lark-approval</strong><span>在 Codex 中找到 · 内容编号 03fa82c1</span></span><span class="version-status">检查通过</span></button><button class="version-choice"><span class="radio"></span><span class="version-copy"><strong>lark-approval</strong><span>在 ZCode 中找到 · 内容编号 8ab7d432</span></span><span class="version-status">检查通过</span></button><button class="version-choice"><span class="radio"></span><span class="version-copy"><strong>lark-approval</strong><span>在 WorkBuddy、HanaAgent 中找到 · 内容编号 b1876a9e</span></span><span class="version-status">检查通过</span></button></div></div><footer class="modal-foot"><button class="button" data-close="conflict">取消</button><span class="spacer"></span><button class="button primary" id="keepConflict" disabled>保留所选版本</button></footer></section></div>
+
     <div class="toast" id="toast" role="status"><span class="toast-check">✓</span><span class="toast-copy"><strong>安装完成，更新了 4 个位置</strong><span>备份将至少保留 30 天</span></span><button data-go="records">查看最近操作</button><button id="undoToast">恢复到操作前</button></div>
   </main>
 
@@ -574,11 +603,19 @@ description: 公众号排版、配图、定稿与发布工作流。
 
     const onboarding = document.getElementById('onboardingScrim');
     const sync = document.getElementById('syncScrim');
+    const conflict = document.getElementById('conflictScrim');
     function openOnboarding() { onboarding.classList.add('open'); document.getElementById('onboardNext').focus(); }
     document.getElementById('replayOnboarding').addEventListener('click', openOnboarding);
     document.getElementById('replayOnboardingSettings').addEventListener('click', openOnboarding);
     document.querySelectorAll('[data-close="onboarding"]').forEach(button => button.addEventListener('click', () => onboarding.classList.remove('open')));
     document.querySelectorAll('[data-close="sync"]').forEach(button => button.addEventListener('click', () => sync.classList.remove('open')));
+    document.querySelectorAll('[data-close="conflict"]').forEach(button => button.addEventListener('click', () => conflict.classList.remove('open')));
+    document.querySelectorAll('.conflict-trigger').forEach(button => button.addEventListener('click', () => conflict.classList.add('open')));
+    document.querySelectorAll('.version-choice').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('.version-choice').forEach(choice => choice.classList.remove('selected'));
+      button.classList.add('selected');
+      document.getElementById('keepConflict').disabled = false;
+    }));
     document.getElementById('openSync').addEventListener('click', () => sync.classList.add('open'));
     document.getElementById('openSyncBottom').addEventListener('click', () => sync.classList.add('open'));
 
@@ -612,12 +649,17 @@ description: 公众号排版、配图、定稿与发布工作流。
     });
 
     const query = new URLSearchParams(location.search);
+    if (query.get('empty') === '1') {
+      document.body.classList.add('show-empty');
+      document.querySelector('.nav-button[data-page="library"] .nav-count').textContent = '0';
+    }
     if (query.get('page')) showPage(query.get('page'));
     if (query.get('onboarding') === '1') {
       openOnboarding();
       if (query.get('step') === '2') document.getElementById('onboardNext').click();
     }
     if (query.get('sync') === '1') { showPage('agents'); sync.classList.add('open'); }
+    if (query.get('conflict') === '1') { showPage('overview'); conflict.classList.add('open'); }
   </script>
 </body>
 </html>
