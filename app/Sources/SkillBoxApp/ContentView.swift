@@ -248,6 +248,9 @@ private struct SkillDetailView: View {
     @Binding var showSyncPreview: Bool
     let onDeleted: () -> Void
     @State private var showRawSource = false
+    @State private var showDetails = true
+    @State private var directoryEntries: [SkillDirectoryEntry] = []
+    @State private var isLoadingDirectory = true
     @State private var confirmation: Confirmation?
 
     private var availableTargets: [AgentTarget] { model.availableTargets() }
@@ -256,14 +259,30 @@ private struct SkillDetailView: View {
     private var hasDesiredAssignments: Bool {
         model.snapshot.assignments.contains { $0.skillID == skill.id && $0.isDesired }
     }
+    private var installedTargets: [AgentTarget] {
+        let targetIDs = Set(model.snapshot.installations.filter { $0.skillID == skill.id }.map(\.targetID))
+        return model.snapshot.targets.filter { targetIDs.contains($0.id) }
+    }
+    private var mainMarkdown: SkillDirectoryEntry? {
+        directoryEntries.first { $0.relativePath.caseInsensitiveCompare("SKILL.md") == .orderedSame }
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack {
+            VStack(alignment: .leading, spacing: 17) {
+                HStack(alignment: .top, spacing: 14) {
+                    Text(String(skill.displayName.prefix(1)).uppercased())
+                        .font(.title3.bold())
+                        .foregroundStyle(.blue)
+                        .frame(width: 48, height: 48)
+                        .background(.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(skill.displayName).font(.title2.bold())
-                        Text(skill.description).foregroundStyle(.secondary)
+                        Text(skill.displayName)
+                            .font(.title2.bold())
+                        Text(skill.description)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
                     }
                     Spacer()
                     if skill.source.kind == .github {
@@ -271,12 +290,28 @@ private struct SkillDetailView: View {
                     }
                     Button("在 Finder 中显示") { Task { model.reveal(await model.contentURL(for: skill)) } }
                 }
+                HStack(spacing: 8) {
+                    Label(skill.source.displayName, systemImage: "tray.full")
+                    Text("·")
+                    Label("\(skill.riskReport.scannedFileCount) 个文件", systemImage: "doc.on.doc")
+                    Text("·")
+                    Text(skill.importedAt, format: .dateTime.year().month().day())
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 Divider()
-                LabeledContent("来自", value: skill.source.displayName)
-                LabeledContent("包含", value: "\(skill.riskReport.scannedFileCount) 个文件")
-                GroupBox("快速操作") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
+
+                VStack(alignment: .leading, spacing: 13) {
+                    HStack(alignment: .center, spacing: 14) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("安装到你的 AI 应用")
+                                .font(.headline)
+                            Text("只会选择已经找到且可以写入的位置，继续后先给你看安装清单。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        HStack(spacing: 8) {
                             Button {
                                 confirmation = .installEverywhere
                             } label: {
@@ -286,37 +321,123 @@ private struct SkillDetailView: View {
                             Button {
                                 confirmation = .uninstallEverywhere
                             } label: {
-                                Label("从所有应用卸载", systemImage: "square.and.arrow.up")
+                                Text("全部卸载")
                             }
                             .disabled(!hasInstallations && !hasDesiredAssignments)
-                            Spacer()
-                            Button("删除这份 Skill", role: .destructive) {
-                                confirmation = hasInstallations ? .uninstallBeforeDelete : .delete
+                        }
+                    }
+                    Divider().opacity(0.55)
+                    HStack {
+                        Text(installedTargets.isEmpty ? "尚未通过 SkillBox 安装" : "已安装到 \(installedTargets.count) 个应用")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("删除这份 Skill", role: .destructive) {
+                            confirmation = hasInstallations ? .uninstallBeforeDelete : .delete
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.red)
+                    }
+                }
+                .padding(15)
+                .background(.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
+                .overlay(RoundedRectangle(cornerRadius: 13).stroke(.blue.opacity(0.15)))
+
+                if !installedTargets.isEmpty {
+                    VStack(alignment: .leading, spacing: 9) {
+                        Text("已安装到")
+                            .font(.headline)
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 7) {
+                                ForEach(installedTargets) { target in
+                                    Label(target.displayName, systemImage: "checkmark.circle.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 9)
+                                        .padding(.vertical, 6)
+                                        .background(.quaternary.opacity(0.4), in: Capsule())
+                                }
                             }
                         }
-                        Text("全部安装只会使用已经找到且可以写入的应用位置；下一步仍会让你检查改动。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 5)
                 }
-                GroupBox("使用前检查") { VStack(alignment: .leading, spacing: 10) { if skill.riskReport.findings.isEmpty { Label("没有发现需要留意的内容", systemImage: "checkmark.shield.fill").foregroundStyle(.green) } else { ForEach(skill.riskReport.findings.prefix(8)) { finding in VStack(alignment: .leading, spacing: 3) { HStack { Text(riskTitle(finding.category)).font(.callout.weight(.medium)); Spacer(); Text(riskLevel(finding.severity)).font(.caption2.weight(.semibold)).foregroundStyle(finding.severity >= .high ? .red : finding.severity == .caution ? .orange : .secondary) }; Text("\(riskAdvice(finding.severity)) 位置：\(finding.relativePath)").font(.caption).foregroundStyle(.secondary) } } }; Text("SkillBox 只检查文件，不会运行它。检查能发现明显问题，但仍建议只添加你信任的来源。").font(.caption2).foregroundStyle(.tertiary) }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 5) }
-                DisclosureGroup("查看技术信息") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        LabeledContent("内容校验码", value: String(skill.fingerprint.prefix(12)) + "…")
-                        Text("用于发现文件是否被改过，平时不需要关心。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Button("查看 Skill 原始说明") { showRawSource = true }
+
+                riskSummary
+
+                DisclosureGroup(isExpanded: $showDetails) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(spacing: 11) {
+                            Image(systemName: "doc.richtext.fill")
+                                .font(.title3)
+                                .foregroundStyle(.blue)
+                                .frame(width: 34, height: 34)
+                                .background(.background, in: RoundedRectangle(cornerRadius: 9))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("SKILL.md").font(.callout.weight(.semibold))
+                                Text(mainMarkdownSubtitle).font(.caption2).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("预览") { showRawSource = true }
+                        }
+                        .padding(11)
+                        .background(.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 11))
+
+                        HStack {
+                            Text("完整目录").font(.callout.weight(.semibold))
+                            Spacer()
+                            Text("文件只读展示").font(.caption2).foregroundStyle(.tertiary)
+                        }
+                        if isLoadingDirectory {
+                            ProgressView("正在读取目录…")
+                                .frame(maxWidth: .infinity, minHeight: 120)
+                        } else if directoryEntries.isEmpty {
+                            ContentUnavailableView("无法读取目录", systemImage: "folder.badge.questionmark")
+                                .frame(minHeight: 140)
+                        } else {
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 1) {
+                                    Label(skill.canonicalName, systemImage: "folder.fill")
+                                        .font(.caption.weight(.semibold))
+                                        .padding(.horizontal, 9)
+                                        .padding(.vertical, 6)
+                                    ForEach(directoryEntries) { entry in
+                                        SkillDirectoryRow(entry: entry)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(5)
+                            }
+                            .frame(maxHeight: 240)
+                            .background(.quaternary.opacity(0.24), in: RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.separator.opacity(0.45)))
+                        }
+                        Text("内容校验码 \(String(skill.fingerprint.prefix(12)))… · 用于发现文件是否被改过")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                     }
-                    .padding(.top, 8)
+                    .padding(.top, 12)
+                } label: {
+                    HStack {
+                        Text("查看 Skill 详情").font(.headline)
+                        Spacer()
+                        Text("\(skill.riskReport.scannedFileCount) 个文件")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
+                .padding(14)
+                .background(.background, in: RoundedRectangle(cornerRadius: 13))
+                .overlay(RoundedRectangle(cornerRadius: 13).stroke(.separator.opacity(0.55)))
             }
-            .padding(24)
+            .padding(26)
         }
         .sheet(isPresented: $showRawSource) {
             SkillRawSourceView(model: model, skill: skill, isPresented: $showRawSource)
+        }
+        .task(id: skill.id) {
+            isLoadingDirectory = true
+            directoryEntries = await model.skillDirectory(skill)
+            isLoadingDirectory = false
         }
         .confirmationDialog(
             confirmationTitle,
@@ -362,6 +483,59 @@ private struct SkillDetailView: View {
             }
         } message: { choice in
             Text(confirmationMessage(for: choice))
+        }
+    }
+
+    private var mainMarkdownSubtitle: String {
+        guard let fileSize = mainMarkdown?.fileSize else { return "主说明文件" }
+        return "主说明文件 · \(ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file))"
+    }
+
+    @ViewBuilder
+    private var riskSummary: some View {
+        if skill.riskReport.findings.isEmpty {
+            HStack(alignment: .top, spacing: 11) {
+                Image(systemName: "checkmark.shield.fill")
+                    .font(.title3)
+                    .foregroundStyle(.green)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("没有发现需要阻止的内容")
+                        .font(.headline)
+                        .foregroundStyle(.green)
+                    Text("SkillBox 只查看文件，不会运行里面的内容。仍建议只使用你信任的来源。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(.green.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
+            .overlay(RoundedRectangle(cornerRadius: 13).stroke(.green.opacity(0.15)))
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("使用前检查")
+                    .font(.headline)
+                ForEach(skill.riskReport.findings.prefix(6)) { finding in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text(riskTitle(finding.category)).font(.callout.weight(.medium))
+                            Spacer()
+                            Text(riskLevel(finding.severity))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(finding.severity >= .high ? .red : finding.severity == .caution ? .orange : .secondary)
+                        }
+                        Text("\(riskAdvice(finding.severity)) 位置：\(finding.relativePath)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text("SkillBox 只查看文件，不会运行里面的内容。静态检查无法保证绝对安全。")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(14)
+            .background(.orange.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
+            .overlay(RoundedRectangle(cornerRadius: 13).stroke(.orange.opacity(0.15)))
         }
     }
 
@@ -421,6 +595,54 @@ private struct SkillDetailView: View {
     }
 }
 
+private struct SkillDirectoryRow: View {
+    let entry: SkillDirectoryEntry
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon)
+                .foregroundStyle(iconColor)
+                .frame(width: 15)
+            Text(entry.name)
+                .lineLimit(1)
+            Spacer()
+            if let fileSize = entry.fileSize, entry.kind != .directory {
+                Text(ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .font(.caption)
+        .padding(.leading, CGFloat(entry.depth) * 18)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .foregroundStyle(isMainMarkdown ? Color.blue : Color.primary)
+        .contentShape(Rectangle())
+    }
+
+    private var isMainMarkdown: Bool {
+        entry.relativePath.caseInsensitiveCompare("SKILL.md") == .orderedSame
+    }
+
+    private var icon: String {
+        switch entry.kind {
+        case .directory: "folder.fill"
+        case .markdown: "doc.richtext"
+        case .symbolicLink: "link"
+        case .file: "doc"
+        }
+    }
+
+    private var iconColor: Color {
+        if isMainMarkdown { return .blue }
+        switch entry.kind {
+        case .directory: return Color(nsColor: .secondaryLabelColor)
+        case .markdown: return Color.indigo
+        case .symbolicLink: return Color.orange
+        case .file: return Color(nsColor: .secondaryLabelColor)
+        }
+    }
+}
+
 private struct SkillRawSourceView: View {
     @ObservedObject var model: AppModel
     let skill: SkillRecord
@@ -432,8 +654,8 @@ private struct SkillRawSourceView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Skill 原始说明").font(.title2.bold())
-                    Text(skill.displayName).foregroundStyle(.secondary)
+                    Text("SKILL.md 预览").font(.title2.bold())
+                    Text("\(skill.displayName) · 只读").foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("完成") { isPresented = false }

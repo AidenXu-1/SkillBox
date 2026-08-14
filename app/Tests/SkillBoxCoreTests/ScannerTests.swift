@@ -63,6 +63,25 @@ struct ScannerTests {
         let after = try directorySnapshot(fixture.root)
         #expect(before == after)
     }
+
+    @Test("Skill directory listing includes every file without following symlinks")
+    func directoryListing() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.remove() }
+        let skill = try fixture.makeSkill(root: "root", directory: "demo", name: "demo", body: "body")
+        let references = skill.appendingPathComponent("references")
+        try FileManager.default.createDirectory(at: references, withIntermediateDirectories: true)
+        try "details".write(to: references.appendingPathComponent("guide.md"), atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(atPath: skill.appendingPathComponent("outside").path, withDestinationPath: "../../outside")
+
+        let entries = try SkillDirectoryReader().entries(at: skill)
+
+        #expect(entries.map(\.relativePath) == ["outside", "references", "references/guide.md", "SKILL.md"])
+        #expect(entries.first { $0.relativePath == "references" }?.kind == .directory)
+        #expect(entries.first { $0.relativePath == "references/guide.md" }?.depth == 1)
+        #expect(entries.first { $0.relativePath == "SKILL.md" }?.kind == .markdown)
+        #expect(entries.first { $0.relativePath == "outside" }?.kind == .symbolicLink)
+    }
 }
 
 @Suite("Risk analysis")

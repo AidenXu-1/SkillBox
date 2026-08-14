@@ -316,6 +316,13 @@ final class AppModel: ObservableObject {
         }.value
     }
 
+    func skillDirectory(_ skill: SkillRecord) async -> [SkillDirectoryEntry] {
+        let url = await store.contentURL(for: skill)
+        return await Task.detached(priority: .userInitiated) {
+            (try? SkillDirectoryReader().entries(at: url)) ?? []
+        }.value
+    }
+
     private func preview(provider: any SourceProvider, locator: String) async {
         guard let candidates = await loadPreview(provider: provider, locator: locator) else { return }
         activeConflict = nil

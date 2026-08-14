@@ -255,34 +255,56 @@
     .skill-item small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .risk-badge { padding: 3px 7px; border-radius: 10px; color: var(--green); background: var(--green-soft); font-size: 8px; font-weight: 680; }
     .risk-badge.warn { color: var(--orange); background: var(--orange-soft); }
-    .skill-detail { overflow: auto; padding: 22px 24px; }
-    .detail-head { display: flex; align-items: flex-start; gap: 14px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
-    .detail-head .skill-mark { width: 44px; height: 44px; border-radius: 12px; font-size: 14px; }
+    .skill-detail { overflow: auto; padding: 26px 28px 34px; }
+    .detail-head { display: flex; align-items: flex-start; gap: 14px; padding-bottom: 15px; }
+    .detail-head .skill-mark { width: 48px; height: 48px; border-radius: 14px; font-size: 15px; }
     .detail-title { flex: 1; min-width: 0; }
-    .detail-title h2 { margin: 0; font-size: 18px; letter-spacing: -.02em; }
-    .detail-title p { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
-    .metadata { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; margin: 16px 0; }
-    .meta-box { padding: 11px; border-radius: 10px; background: var(--surface-soft); }
-    .meta-box span { display: block; color: var(--quiet); font-size: 9px; }
-    .meta-box strong { display: block; margin-top: 5px; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .detail-title h2 { margin: 0; font-size: 20px; letter-spacing: -.025em; }
+    .detail-title p { max-width: 570px; margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .detail-head-actions { display: flex; gap: 7px; }
+    .detail-meta-line { display: flex; align-items: center; gap: 8px; padding-bottom: 17px; color: var(--muted); font-size: 9px; border-bottom: 1px solid var(--line); }
+    .detail-meta-line span { display: inline-flex; align-items: center; gap: 5px; }
+    .detail-meta-line span + span::before { content: "·"; margin-right: 3px; color: #bcc3ce; }
     .section-title { display: flex; align-items: center; gap: 7px; margin: 18px 0 9px; font-size: 11px; font-weight: 690; }
     .section-title .count { padding: 2px 6px; border-radius: 9px; background: #edf0f5; color: var(--muted); font-size: 8px; }
     .install-chips { display: flex; flex-wrap: wrap; gap: 7px; }
     .install-chip { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 9px; font-size: 9px; }
     .install-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
     .code-preview { margin: 0; padding: 15px; border: 1px solid var(--line); border-radius: 11px; background: #f6f7fa; color: #354057; font: 10px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
-    .risk-panel { padding: 12px; border: 1px solid rgba(20,136,94,.15); border-radius: 11px; background: var(--green-soft); }
+    .risk-panel { display: flex; gap: 10px; align-items: flex-start; padding: 13px 14px; border: 1px solid rgba(20,136,94,.14); border-radius: 12px; background: #f5fbf8; }
+    .risk-symbol { width: 25px; height: 25px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%; color: white; background: var(--green); font-size: 11px; font-weight: 760; }
     .risk-panel strong { display: block; color: #176c4f; font-size: 11px; }
-    .risk-panel p { margin: 5px 0 0; color: #497867; font-size: 9px; line-height: 1.5; }
-    .quick-panel { margin: 16px 0; padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-soft); }
-    .quick-panel h3 { margin: 0 0 10px; font-size: 11px; }
+    .risk-panel p { margin: 4px 0 0; color: #5b756b; font-size: 9px; line-height: 1.5; }
+    .quick-panel { margin: 17px 0; padding: 15px; border: 1px solid rgba(40,103,232,.14); border-radius: 13px; background: #f6f9ff; }
+    .quick-head { display: flex; align-items: flex-start; gap: 14px; }
+    .quick-copy { flex: 1; }
+    .quick-copy h3 { margin: 0; font-size: 11px; }
+    .quick-copy p { margin: 5px 0 0; color: var(--muted); font-size: 9px; line-height: 1.45; }
     .quick-actions { display: flex; align-items: center; gap: 7px; }
-    .quick-actions .danger-link { margin-left: auto; border-color: rgba(201,58,72,.25); color: var(--red); }
-    .quick-note { margin: 9px 0 0; color: var(--muted); font-size: 9px; line-height: 1.45; }
-    .tech-row { margin-top: 14px; padding: 12px 13px; border: 1px solid var(--line); border-radius: 11px; background: white; }
-    .tech-row summary { cursor: pointer; font-size: 10px; font-weight: 650; }
-    .tech-content { display: flex; align-items: center; gap: 10px; padding-top: 10px; color: var(--muted); font-size: 9px; }
-    .tech-content .button { margin-left: auto; }
+    .manage-line { display: flex; align-items: center; margin-top: 13px; padding-top: 11px; border-top: 1px solid rgba(40,103,232,.10); color: var(--muted); font-size: 9px; }
+    .manage-line .danger-link { margin-left: auto; border: 0; box-shadow: none; color: var(--red); background: transparent; }
+    .skill-details { margin-top: 16px; border: 1px solid var(--line); border-radius: 13px; background: white; overflow: hidden; }
+    .skill-details summary { display: flex; align-items: center; gap: 9px; padding: 14px 15px; cursor: pointer; font-size: 11px; font-weight: 680; list-style: none; }
+    .skill-details summary::-webkit-details-marker { display: none; }
+    .skill-details summary::before { content: "›"; color: var(--quiet); font-size: 17px; line-height: 1; transition: transform .14s ease; }
+    .skill-details[open] summary::before { transform: rotate(90deg); }
+    .skill-details summary small { margin-left: auto; color: var(--quiet); font-size: 9px; font-weight: 500; }
+    .skill-detail-content { padding: 0 15px 15px; border-top: 1px solid var(--line); }
+    .main-file-row { display: flex; align-items: center; gap: 11px; margin: 13px 0; padding: 11px 12px; border-radius: 11px; background: var(--blue-soft); }
+    .file-glyph { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 8px; color: var(--blue); background: white; font-size: 12px; font-weight: 740; }
+    .main-file-copy { flex: 1; min-width: 0; }
+    .main-file-copy strong { display: block; font-size: 10px; }
+    .main-file-copy span { display: block; margin-top: 3px; color: var(--muted); font-size: 8px; }
+    .directory-label { display: flex; align-items: center; margin: 15px 0 8px; font-size: 10px; font-weight: 670; }
+    .directory-label span { margin-left: auto; color: var(--quiet); font-size: 8px; font-weight: 500; }
+    .file-tree { max-height: 210px; overflow: auto; padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: #fafbfc; }
+    .file-row { display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 7px; border-radius: 7px; color: #3d4759; font-size: 9px; }
+    .file-row:hover { background: white; }
+    .file-row.depth-1 { padding-left: 24px; }
+    .file-row.depth-2 { padding-left: 41px; }
+    .file-icon { width: 14px; color: #8a94a4; text-align: center; }
+    .file-row.main { color: var(--blue); font-weight: 650; }
+    .file-meta { margin: 12px 2px 0; color: var(--quiet); font-size: 8px; }
 
     .matrix-wrap { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: white; box-shadow: var(--shadow-card); }
     .matrix-top { display: flex; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--line); background: #fafbfc; }
@@ -504,12 +526,12 @@
               <button class="skill-item"><span class="skill-mark purple">M</span><span><strong>museframe</strong><small>小红书视觉内容生产</small></span><span class="risk-badge">低风险</span></button>
               <button class="skill-item"><span class="skill-mark green">O</span><span><strong>obsidian</strong><small>Obsidian 知识库操作</small></span><span class="risk-badge warn">需注意</span></button>
             </div></div>
-            <article class="skill-detail"><div class="detail-head"><span class="skill-mark" id="detailMark">W</span><div class="detail-title"><h2 id="detailName">wechat-layout-publisher</h2><p id="detailDescription">公众号定稿、配图排版、可复制 HTML 与发布归档工作流。</p></div><button class="button">在 Finder 中显示</button></div>
-              <div class="metadata"><div class="meta-box"><span>来自</span><strong id="detailSource">本地项目 · 已检查</strong></div><div class="meta-box"><span>内容校验</span><strong id="detailHash">已记录</strong></div><div class="meta-box"><span>最近更新</span><strong id="detailDate">今天 09:18</strong></div></div>
-              <div class="quick-panel"><h3>快速操作</h3><div class="quick-actions"><button class="button primary" id="openDeploy">安装到全部可用应用</button><button class="button">从所有应用卸载</button><button class="button danger-link">删除这份 Skill</button></div><p class="quick-note">全部安装只会使用已经找到且可以写入的应用位置；下一步仍会让你检查改动。</p></div>
+            <article class="skill-detail"><div class="detail-head"><span class="skill-mark" id="detailMark">W</span><div class="detail-title"><h2 id="detailName">wechat-layout-publisher</h2><p id="detailDescription">公众号定稿、配图排版、可复制 HTML 与发布归档工作流。</p></div><div class="detail-head-actions"><button class="button">在 Finder 中显示</button><button class="button" aria-label="更多操作">•••</button></div></div>
+              <div class="detail-meta-line"><span id="detailSource">本地项目 · 已检查</span><span>12 个文件</span><span id="detailDate">今天 09:18 更新</span></div>
+              <div class="quick-panel"><div class="quick-head"><div class="quick-copy"><h3>安装到你的 AI 应用</h3><p>只会选择已经找到且可以写入的位置，继续后先给你看安装清单。</p></div><div class="quick-actions"><button class="button primary" id="openDeploy">安装到全部可用应用</button><button class="button">全部卸载</button></div></div><div class="manage-line"><span>已安装到 3 个应用</span><button class="button danger-link">删除这份 Skill</button></div></div>
               <div class="section-title">已安装到 <span class="count">3</span></div><div class="install-chips"><span class="install-chip"><i></i>Codex</span><span class="install-chip"><i></i>Claude Code</span><span class="install-chip"><i></i>HanaAgent</span></div>
-              <div class="section-title">使用前检查</div><div class="risk-panel"><strong>没有发现需要阻止的内容</strong><p>SkillBox 只检查文件，不会运行它。说明文字中提到了网络命令，添加时不会自动执行。</p></div>
-              <details class="tech-row"><summary>查看技术信息</summary><div class="tech-content"><span>内容校验码 8c91…72af，用于发现文件是否被改过。</span><button class="button">查看 Skill 原始说明</button></div></details>
+              <div class="section-title">使用前检查</div><div class="risk-panel"><span class="risk-symbol">✓</span><div><strong>没有发现需要阻止的内容</strong><p>SkillBox 只查看文件，不会运行里面的内容。仍建议只使用你信任的来源。</p></div></div>
+              <details class="skill-details" open><summary>查看 Skill 详情 <small>12 个文件</small></summary><div class="skill-detail-content"><div class="main-file-row"><span class="file-glyph">M↓</span><div class="main-file-copy"><strong>SKILL.md</strong><span>主说明文件 · 8.6 KB</span></div><button class="button" id="openMarkdownPreview">预览</button></div><div class="directory-label">完整目录 <span>文件只读展示</span></div><div class="file-tree"><div class="file-row"><span class="file-icon">▾</span><strong>wechat-layout-publisher</strong></div><div class="file-row depth-1 main"><span class="file-icon">M↓</span>SKILL.md</div><div class="file-row depth-1"><span class="file-icon">▸</span>assets</div><div class="file-row depth-2"><span class="file-icon">◻</span>cover-guide.png</div><div class="file-row depth-1"><span class="file-icon">▾</span>references</div><div class="file-row depth-2"><span class="file-icon">M↓</span>layout-rules.md</div><div class="file-row depth-2"><span class="file-icon">M↓</span>publishing-checklist.md</div><div class="file-row depth-1"><span class="file-icon">▸</span>scripts</div></div><div class="file-meta">内容校验码 <span id="detailHash">8c91…72af</span> · 用于发现文件是否被改过</div></div></details>
             </article>
           </div>
         </section>
@@ -568,6 +590,22 @@
 
     <div class="scrim" id="deployScrim" role="dialog" aria-modal="true" aria-labelledby="deployTitle"><section class="modal" style="max-width:650px"><header class="modal-head"><strong id="deployTitle">安装到全部可用应用？</strong><button class="modal-close" data-close="deploy" aria-label="关闭">×</button></header><div class="modal-body"><p class="version-intro">将为 Codex、ZCode、WorkBuddy、HanaAgent 准备安装。未找到的 Claude Code、Cursor、Kimi Code、Gemini CLI、OpenCode 会被跳过，也不会创建文件夹。</p><div class="block-note"><strong>下一步仍会显示安装清单</strong><span>只有你确认清单后，SkillBox 才会复制文件。</span></div></div><footer class="modal-foot"><button class="button" data-close="deploy">取消</button><span class="spacer"></span><button class="button primary">继续，查看安装清单</button></footer></section></div>
 
+    <div class="scrim" id="markdownScrim" role="dialog" aria-modal="true" aria-labelledby="markdownTitle"><section class="modal" style="max-width:760px"><header class="modal-head"><div><strong id="markdownTitle">SKILL.md 预览</strong><div style="margin-top:4px;color:var(--muted);font-size:9px">wechat-layout-publisher · 只读</div></div><button class="modal-close" data-close="markdown" aria-label="关闭">×</button></header><div class="modal-body"><pre class="code-preview" style="max-height:480px;overflow:auto">---
+name: wechat-layout-publisher
+description: 公众号定稿、配图排版与发布归档工作流
+---
+
+# WeChat Layout Publisher
+
+用于把已经确认的文章整理成可复制、可发布、可归档的公众号版本。
+
+## 工作步骤
+
+1. 检查文章内容与配图计划
+2. 生成适合公众号的 HTML 排版
+3. 用户确认后创建草稿
+4. 发布后保存归档记录</pre></div><footer class="modal-foot"><span class="spacer"></span><button class="button primary" data-close="markdown">完成</button></footer></section></div>
+
     <div class="toast" id="toast" role="status"><span class="toast-check">✓</span><span class="toast-copy"><strong>安装完成，更新了 4 个位置</strong><span>备份将至少保留 30 天</span></span><button data-go="records">查看最近操作</button><button id="undoToast">恢复到操作前</button></div>
   </main>
 
@@ -609,6 +647,7 @@
     const sync = document.getElementById('syncScrim');
     const conflict = document.getElementById('conflictScrim');
     const deploy = document.getElementById('deployScrim');
+    const markdown = document.getElementById('markdownScrim');
     function openOnboarding() { onboarding.classList.add('open'); document.getElementById('onboardNext').focus(); }
     document.getElementById('replayOnboarding').addEventListener('click', openOnboarding);
     document.getElementById('replayOnboardingSettings').addEventListener('click', openOnboarding);
@@ -616,7 +655,9 @@
     document.querySelectorAll('[data-close="sync"]').forEach(button => button.addEventListener('click', () => sync.classList.remove('open')));
     document.querySelectorAll('[data-close="conflict"]').forEach(button => button.addEventListener('click', () => conflict.classList.remove('open')));
     document.querySelectorAll('[data-close="deploy"]').forEach(button => button.addEventListener('click', () => deploy.classList.remove('open')));
+    document.querySelectorAll('[data-close="markdown"]').forEach(button => button.addEventListener('click', () => markdown.classList.remove('open')));
     document.getElementById('openDeploy').addEventListener('click', () => deploy.classList.add('open'));
+    document.getElementById('openMarkdownPreview').addEventListener('click', () => markdown.classList.add('open'));
     document.querySelectorAll('.conflict-trigger').forEach(button => button.addEventListener('click', () => conflict.classList.add('open')));
     document.querySelectorAll('.version-choice').forEach(button => button.addEventListener('click', () => {
       document.querySelectorAll('.version-choice').forEach(choice => choice.classList.remove('selected'));
@@ -668,6 +709,7 @@
     if (query.get('sync') === '1') { showPage('agents'); sync.classList.add('open'); }
     if (query.get('conflict') === '1') { showPage('overview'); conflict.classList.add('open'); }
     if (query.get('deploy') === '1') { showPage('library'); deploy.classList.add('open'); }
+    if (query.get('markdown') === '1') { showPage('library'); markdown.classList.add('open'); }
   </script>
 </body>
 </html>

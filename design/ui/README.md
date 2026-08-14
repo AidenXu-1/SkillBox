@@ -22,6 +22,9 @@
 - [Skill 快速操作 v4](skillbox-actions-v4-skill-detail.png)
 - [全局安装确认 v4](skillbox-actions-v4-global-install.png)
 - [自定义安装 v4](skillbox-actions-v4-custom-install.png)
+- [Skill 详情布局 v5 说明](skillbox-detail-v5.md)
+- [Skill 详情布局 v5](skillbox-detail-v5.png)
+- [主 Markdown 预览 v5](skillbox-markdown-preview-v5.png)
 
 ## 可视化交付要求
 

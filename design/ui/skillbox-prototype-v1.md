@@ -27,6 +27,8 @@
 - 全部安装只包含已经找到且可以写入的位置。未安装的应用会被明确跳过，也不会创建它的目录。
 - 删除 Skill 前单独确认；仍有已管理副本时先引导全部卸载。删除后的原件移入本机可恢复目录。
 - 技术信息只显示轻量摘要；完整原始说明按需在独立窗口中加载，避免展开长文本时卡顿。
+- v5 将技术入口改为「查看 Skill 详情」；展开后先显示主 `SKILL.md` 预览入口，再展示完整只读目录和内容校验码。
+- Skill 详情重新分为身份信息、安装操作、安全状态和内容详情四层；删除操作降低视觉权重，但仍保留在主要操作卡中。
 
 ## 视觉语言
 
@@ -62,7 +64,10 @@
 - 全局安装确认 v4：`skillbox-actions-v4-global-install.png`
 - 自定义安装 v4：`skillbox-actions-v4-custom-install.png`
 - v4 设计说明：`skillbox-actions-v4.md`
+- Skill 详情布局 v5：`skillbox-detail-v5.png`
+- 主 Markdown 预览 v5：`skillbox-markdown-preview-v5.png`
+- v5 设计说明：`skillbox-detail-v5.md`
 
 ## 当前确认项
 
-整体气质、导航结构和交互方向已经用户确认。v4 根据真实使用反馈补齐 Skill 的全部安装、全部卸载和可恢复删除，并阻止向未安装应用创建目录；真实 SwiftUI 鼠标验收仍待 Computer Use 通道恢复后补做。
+整体气质、导航结构和交互方向已经用户确认。v5 根据真实使用反馈重排 Skill 详情的信息层级，并补齐完整目录与主 Markdown 预览；真实 SwiftUI 鼠标验收仍待 Computer Use 通道恢复后补做。
