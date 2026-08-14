@@ -36,8 +36,12 @@ public actor SkillUpdateCoordinator {
         let updated = try await store.updateSkill(id: skillID, with: candidate)
         do {
             let fullPlan = try planner.makePlan(snapshot: await store.currentSnapshot(), libraryRoot: store.root)
-            let relevant = fullPlan.actions.filter { $0.skillID == skillID && managedDestinations.contains($0.destinationPath) }
-            guard relevant.contains(where: { [.create, .update, .remove, .takeover].contains($0.kind) }) else {
+            let relevant = fullPlan.actions.filter {
+                $0.skillID == skillID &&
+                managedDestinations.contains($0.destinationPath) &&
+                $0.kind != .remove
+            }
+            guard relevant.contains(where: { $0.kind == .update }) else {
                 return .init(record: updated, transaction: nil, blockedActions: relevant.filter { $0.kind == .blocked })
             }
             var transaction = try await executor.execute(plan: .init(actions: relevant), store: store)

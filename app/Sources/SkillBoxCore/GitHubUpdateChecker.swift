@@ -44,7 +44,8 @@ public actor GitHubUpdateChecker {
             }
             try await store.updateSourceState(state)
             return state
-        } catch GitHubSourceError.authenticationRequired {
+        } catch GitHubSourceError.authenticationRequired,
+                GitHubSourceError.repositoryUnavailableOrUnauthorized {
             state.status = .authenticationRequired
             state.lastCheckedAt = now()
             try await store.updateSourceState(state)

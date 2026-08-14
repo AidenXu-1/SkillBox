@@ -21,9 +21,12 @@ final class AppModel: ObservableObject {
     @Published var githubTrackingMode: GitHubTrackingMode = .latestStableRelease
     @Published var pendingGitHubVersion: GitHubRemoteVersion?
     @Published var pendingUpdateChanges: [SkillFileChange] = []
+    @Published var pendingUpdateBeforeMarkdown = ""
+    @Published var pendingUpdateAfterMarkdown = ""
     @Published var githubAuthorization: GitHubDeviceAuthorization?
     @Published var isGitHubConnected = false
     @Published var githubLoginStatus = ""
+    @Published var githubAuthorizedRepositories: [GitHubRepositorySummary] = []
 
     let libraryRoot: URL
     private let store: LibraryStore
@@ -42,6 +45,7 @@ final class AppModel: ObservableObject {
     private var githubLoginTask: Task<Void, Never>?
 
     var githubClientID: String { Bundle.main.object(forInfoDictionaryKey: "SkillBoxGitHubClientID") as? String ?? "" }
+    var isGitHubConfigured: Bool { !githubClientID.isEmpty }
     var githubInstallURL: URL? {
         guard let value = Bundle.main.object(forInfoDictionaryKey: "SkillBoxGitHubInstallURL") as? String else { return nil }
         return URL(string: value)
@@ -72,6 +76,7 @@ final class AppModel: ObservableObject {
         await reload()
         await scanInstalledSkills()
         isGitHubConnected = await githubSession.isConnected()
+        if isGitHubConnected { await refreshGitHubRepositories() }
         await checkAllGitHubUpdatesIfStale()
     }
 
@@ -198,6 +203,10 @@ final class AppModel: ObservableObject {
             guard let candidate = matching.first else { throw GitHubSourceError.noSkillsFound }
             let current = await store.contentURL(for: skill)
             pendingUpdateChanges = try SkillDiffAnalyzer().compare(before: current, after: candidate.sourceURL)
+            async let beforeMarkdown = readMarkdown(at: current.appendingPathComponent("SKILL.md"))
+            async let afterMarkdown = readMarkdown(at: candidate.sourceURL.appendingPathComponent("SKILL.md"))
+            pendingUpdateBeforeMarkdown = await beforeMarkdown
+            pendingUpdateAfterMarkdown = await afterMarkdown
             pendingGitHubVersion = remote
             activeConflict = nil
             updatingSkillID = skill.id
@@ -251,6 +260,8 @@ final class AppModel: ObservableObject {
             pendingCandidates = []
             selectedCandidateIDs = []
             pendingUpdateChanges = []
+            pendingUpdateBeforeMarkdown = ""
+            pendingUpdateAfterMarkdown = ""
             pendingGitHubVersion = nil
             updatingSkillID = nil
             statusMessage = result.transaction.map { "已更新并安装到 \($0.backups.count) 个应用" } ?? "已更新「我的 Skills」中的原件"
@@ -269,6 +280,36 @@ final class AppModel: ObservableObject {
         catch { present(error) }
     }
 
+    func checkAllGitHubUpdates() async {
+        let states = snapshot.sourceStates.filter(\.checkingEnabled)
+        guard !states.isEmpty else {
+            noticeMessage = "目前没有正在检查更新的 GitHub Skill。"
+            return
+        }
+        isBusy = true
+        statusMessage = "正在检查 GitHub 更新…"
+        defer { isBusy = false }
+        var updateCount = 0
+        var unavailableCount = 0
+        for state in states {
+            do {
+                switch try await githubUpdateChecker.check(skillID: state.skillID)?.status {
+                case .updateAvailable: updateCount += 1
+                case .authenticationRequired, .unavailable: unavailableCount += 1
+                default: break
+                }
+            } catch {
+                unavailableCount += 1
+            }
+        }
+        await reload()
+        if unavailableCount > 0 {
+            statusMessage = "检查完成：\(updateCount) 个更新，\(unavailableCount) 个来源暂时不可用"
+        } else {
+            statusMessage = updateCount == 0 ? "所有 GitHub Skills 都是最新内容" : "发现 \(updateCount) 个 Skill 有新版本"
+        }
+    }
+
     func cancelCandidatePreview() {
         cleanupGitHubCandidates(pendingCandidates)
         pendingCandidates = []
@@ -277,6 +318,8 @@ final class AppModel: ObservableObject {
         updatingSkillID = nil
         pendingGitHubVersion = nil
         pendingUpdateChanges = []
+        pendingUpdateBeforeMarkdown = ""
+        pendingUpdateAfterMarkdown = ""
     }
 
     func beginGitHubLogin() async {
@@ -307,7 +350,24 @@ final class AppModel: ObservableObject {
             isGitHubConnected = false
             githubAuthorization = nil
             githubLoginStatus = ""
+            githubAuthorizedRepositories = []
         } catch { present(error) }
+    }
+
+    func refreshGitHubRepositories() async {
+        guard isGitHubConnected else {
+            githubAuthorizedRepositories = []
+            return
+        }
+        do {
+            githubAuthorizedRepositories = try await githubProvider.authorizedRepositories()
+        } catch GitHubSourceError.authenticationRequired {
+            isGitHubConnected = false
+            githubAuthorizedRepositories = []
+            githubLoginStatus = "连接已失效，请重新连接 GitHub"
+        } catch {
+            githubLoginStatus = "暂时无法读取已授权仓库：\(error.localizedDescription)"
+        }
     }
 
     func toggleAssignment(skill: SkillRecord, target: AgentTarget) async {
@@ -623,6 +683,12 @@ final class AppModel: ObservableObject {
         if !eligible.isEmpty { await reload() }
     }
 
+    private func readMarkdown(at url: URL) async -> String {
+        await Task.detached(priority: .userInitiated) {
+            (try? String(contentsOf: url, encoding: .utf8)) ?? "这个版本没有可预览的 SKILL.md"
+        }.value
+    }
+
     private func sourceState(skillID: UUID, skillPath: String?, remote: GitHubRemoteVersion) -> GitHubSourceState {
         .init(
             skillID: skillID,
@@ -654,6 +720,7 @@ final class AppModel: ObservableObject {
                     isGitHubConnected = true
                     githubLoginStatus = "已连接 GitHub"
                     githubAuthorization = nil
+                    await refreshGitHubRepositories()
                     return
                 case .expired:
                     githubLoginStatus = "验证码已过期，请重新连接"

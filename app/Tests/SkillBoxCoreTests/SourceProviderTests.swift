@@ -66,6 +66,20 @@ struct SourceProviderTests {
         removeRetainedGitHubTemporaryDirectory(for: candidate.sourceURL)
     }
 
+    @Test("GitHub settings show repositories actually authorized to the app")
+    func authorizedRepositories() async throws {
+        let provider = GitHubSourceProvider(
+            session: AuthorizedRepositoryFixture.session(),
+            tokenProvider: FixedTokenProvider()
+        )
+
+        let repositories = try await provider.authorizedRepositories()
+
+        #expect(repositories.map(\.fullName) == ["example/private-skill", "example/public-skill"])
+        #expect(repositories.first?.isPrivate == true)
+        #expect(AuthorizedRepositoryMockURLProtocol.receivedAuthorization == "Bearer test-token")
+    }
+
     @Test("Public repository archives are previewed without executing content")
     func githubPreview() async throws {
         let fixture = try GitHubArchiveFixture()
@@ -117,6 +131,44 @@ struct SourceProviderTests {
         await #expect(throws: GitHubSourceError.self) {
             try await provider.preview(locator: "example/skills")
         }
+    }
+}
+
+private struct FixedTokenProvider: GitHubAccessTokenProvider {
+    func accessToken() async throws -> String? { "test-token" }
+}
+
+private final class AuthorizedRepositoryMockURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var receivedAuthorization: String?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.receivedAuthorization = request.value(forHTTPHeaderField: "Authorization")
+        let payload: String
+        switch request.url?.path {
+        case "/user/installations":
+            payload = #"{"installations":[{"id":91}]}"#
+        case "/user/installations/91/repositories":
+            payload = #"{"repositories":[{"id":2,"full_name":"example/public-skill","private":false},{"id":1,"full_name":"example/private-skill","private":true}]}"#
+        default:
+            payload = #"{}"#
+        }
+        let data = Data(payload.utf8)
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+private enum AuthorizedRepositoryFixture {
+    static func session() -> URLSession {
+        AuthorizedRepositoryMockURLProtocol.receivedAuthorization = nil
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AuthorizedRepositoryMockURLProtocol.self]
+        return URLSession(configuration: configuration)
     }
 }
 

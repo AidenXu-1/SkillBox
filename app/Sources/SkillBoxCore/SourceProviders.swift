@@ -67,6 +67,7 @@ public enum GitHubSourceError: LocalizedError {
     case noSkillsFound
     case noStableRelease
     case authenticationRequired
+    case repositoryUnavailableOrUnauthorized
     case skillPathMissing(String)
 
     public var errorDescription: String? {
@@ -82,6 +83,7 @@ public enum GitHubSourceError: LocalizedError {
         case .noSkillsFound: "这个仓库里没有找到可以添加的 Skill"
         case .noStableRelease: "这个仓库还没有正式 Release，可以改为跟随默认分支"
         case .authenticationRequired: "这个仓库需要 GitHub 授权才能查看"
+        case .repositoryUnavailableOrUnauthorized: "找不到这个仓库，或者 SkillBox 还没有访问权限"
         case .skillPathMissing: "GitHub 上找不到原来的 Skill 目录"
         }
     }
@@ -111,7 +113,12 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         trackingMode: GitHubTrackingMode
     ) async throws -> GitHubRemoteVersion {
         let repository = try RepositoryName(repositoryFullName)
-        let info: RepositoryResponse = try await requestAPI(path: "/repos/\(repository.owner)/\(repository.name)")
+        let info: RepositoryResponse
+        do {
+            info = try await requestAPI(path: "/repos/\(repository.owner)/\(repository.name)")
+        } catch GitHubSourceError.requestFailed(404) {
+            throw GitHubSourceError.repositoryUnavailableOrUnauthorized
+        }
         let revision: String
         let versionIdentifier: String
         let versionName: String
@@ -230,6 +237,34 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
             trackingMode: trackingMode
         )
         return try await downloadSnapshot(version: version, skillPath: reference.skillPath, locator: locator)
+    }
+
+    public func authorizedRepositories() async throws -> [GitHubRepositorySummary] {
+        guard try await tokenProvider.accessToken() != nil else {
+            throw GitHubSourceError.authenticationRequired
+        }
+        let installations: InstallationsResponse = try await requestAPI(path: "/user/installations")
+        var repositories: [Int64: GitHubRepositorySummary] = [:]
+        for installation in installations.installations {
+            var page = 1
+            while true {
+                let response: InstallationRepositoriesResponse = try await requestAPI(
+                    path: "/user/installations/\(installation.id)/repositories?per_page=100&page=\(page)"
+                )
+                for repository in response.repositories {
+                    repositories[repository.id] = .init(
+                        id: repository.id,
+                        fullName: repository.fullName,
+                        isPrivate: repository.isPrivate
+                    )
+                }
+                guard response.repositories.count == 100 else { break }
+                page += 1
+            }
+        }
+        return repositories.values.sorted {
+            $0.fullName.localizedCaseInsensitiveCompare($1.fullName) == .orderedAscending
+        }
     }
 
     public func downloadSnapshot(
@@ -431,6 +466,26 @@ private struct RepositoryResponse: Decodable {
         case defaultBranch = "default_branch"
         case isPrivate = "private"
     }
+}
+
+private struct InstallationsResponse: Decodable {
+    struct Installation: Decodable { var id: Int64 }
+    var installations: [Installation]
+}
+
+private struct InstallationRepositoriesResponse: Decodable {
+    struct Repository: Decodable {
+        var id: Int64
+        var fullName: String
+        var isPrivate: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case fullName = "full_name"
+            case isPrivate = "private"
+        }
+    }
+    var repositories: [Repository]
 }
 
 private struct ReleaseResponse: Decodable {

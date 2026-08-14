@@ -7,6 +7,16 @@
 
 ## 2026-08-15
 
+- ✅ 用户确认 GitHub v7 原型后，已将新交互正式接入 SwiftUI：GitHub 导入可选“最新正式 Release”或“默认分支”，并在下载前明确说明是完整版本。
+- ✅ Skill 详情新增 GitHub 来源卡片，覆盖有新版本、已忽略、停止检查、需要首次核对、失去权限、来源不可用与已是最新；文字、主按钮和更多菜单均可操作。
+- ✅ 新增正式更新预览页：展示新增/修改/移除文件、风险变化、`SKILL.md` 前后对照、原有安装位置及阻止原因，并提供“只更新我的 Skills”和“更新并安装到原有应用”。
+- ✅ 设置页接入 GitHub Device Flow，可查看 GitHub App 实际授权的公开/私人仓库、管理仓库权限和断开连接；断开前明确说明本地 Skill 不会删除。
+- ✅ “检查全部更新”已放入「我的 Skills」页头；手动停止的来源不会发起请求，授权失效与普通无更新不会混为同一结果。
+- ✅ 补齐两个产品边界：设置页只展示 GitHub 真实授权仓库；更新 Skill 不会把“已取消选择但尚未确认卸载”的位置顺带删除。
+- ✅ 自动化测试增至 40 项，Swift 并发构建、release 打包、`Info.plist` 与 Hardened Runtime ad-hoc 签名校验通过。
+- 📌 真实前台验收时首次读取到了旧进程画面；正常退出旧进程后，Computer Use 连续返回 `Sky Computer Use native pipe closed before response`，因此新 SwiftUI 的真实鼠标、键盘、VoiceOver 和减少动态效果仍保留为独立验收门，本次未用其他自动点击方式绕过。
+- 📌 私人仓库真实登录、授权仓库回读与网络更新仍需 GitHub App 的公开 Client ID 和安装地址；本次未写入任何真实 Agent 目录。
+
 - ✅ 将 GitHub 正式纳入 Skill 更新源：新 Skill 可选择跟随“最新正式 Release”或“默认分支”，旧 GitHub Skill 升级后默认跟随原分支并标记“需要核对一次”。
 - ✅ 持久化数据升级为 Schema v2，新增仓库编号、Skill 子目录、当前版本、Commit SHA、目录 SHA、上次检查时间、忽略版本、停止检查与授权状态；升级不下载、不替换现有内容。
 - ✅ 拆分“查看是否有新版本”和“确认后下载”；前者只请求版本与目录信息，后者按 Release Tag 或已解析的 Commit SHA 下载完整快照，不使用 Release 附件。
@@ -16,7 +26,7 @@
 - ✅ 完成 GitHub Device Flow 和 macOS 钥匙串基础能力；仅在 App 中保存公开 Client ID，Access Token 与 Refresh Token 不进入 JSON、日志或操作记录，授权被撤销时保留本地 Skill 并暂停检查。
 - ✅ 交付 GitHub v7 可操作原型和 5 张截图，覆盖账号连接、导入方式、新版本、更新差异、授权失效；鼠标点击与页面跳转自动验证通过。
 - ✅ 自动化测试增至 38 项，release 应用重新打包，`Info.plist` 校验和 Hardened Runtime ad-hoc 签名完整性检查通过。
-- 📌 正式 SwiftUI 页面尚未接入这套新交互，按项目规则等待用户先确认 v7 原型；私人仓库真实验收仍需 GitHub App 的公开 Client ID 与安装地址。
+- ✅ 用户已确认 v7 原型，正式 SwiftUI 接入情况见本日最新记录。
 
 ## 2026-08-14
 

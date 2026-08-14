@@ -241,6 +241,32 @@ struct SyncTests {
         #expect(installedText.contains("v1"))
     }
 
+    @Test("Updating a Skill never turns a pending deselection into an uninstall")
+    func combinedUpdateDoesNotExecutePendingRemoval() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let original = try await store.importCandidate(fixture.candidate(name: "demo", body: "v1"))
+        let targetRoot = fixture.root.appendingPathComponent("target")
+        try FileManager.default.createDirectory(at: targetRoot, withIntermediateDirectories: true)
+        let target = AgentTarget(kind: .custom, displayName: "Test", path: targetRoot.path, detectionStatus: .available, writeStatus: .writable, isCustom: true)
+        try await store.replaceTargets([target])
+        try await store.replaceAssignments([.init(skillID: original.id, targetID: target.id, installationDirectoryName: "demo")])
+        let planner = DefaultSyncPlanner()
+        let executor = TransactionalSyncExecutor()
+        _ = try await executor.execute(plan: planner.makePlan(snapshot: await store.currentSnapshot(), libraryRoot: fixture.storeRoot), store: store)
+
+        try await store.replaceAssignments([.init(skillID: original.id, targetID: target.id, installationDirectoryName: "demo", isDesired: false)])
+        try FileManager.default.removeItem(at: fixture.sourceRoot.appendingPathComponent("demo"))
+        let update = try fixture.candidate(name: "demo", body: "v2")
+        let result = try await SkillUpdateCoordinator(executor: executor).updateAndDeploy(skillID: original.id, candidate: update, store: store)
+
+        #expect(result.transaction == nil)
+        let installedText = try String(contentsOf: targetRoot.appendingPathComponent("demo/SKILL.md"), encoding: .utf8)
+        #expect(installedText.contains("v1"))
+        #expect(await store.currentSnapshot().installations.count == 1)
+    }
+
     @Test("Plan, execute and undo preserve ownership boundaries")
     func executeAndUndo() async throws {
         let fixture = try SyncFixture()

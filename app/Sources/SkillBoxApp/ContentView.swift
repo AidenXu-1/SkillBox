@@ -26,6 +26,7 @@ struct ContentView: View {
     @State private var selectedSkillID: UUID?
     @State private var showGitHub = false
     @State private var showImportPreview = false
+    @State private var showUpdatePreview = false
     @State private var showSyncPreview = false
     @State private var showCustomTarget = false
     @State private var customTargetName = "其他应用"
@@ -67,7 +68,8 @@ struct ContentView: View {
                         selectedSkillID: $selectedSkillID,
                         showSyncPreview: $showSyncPreview,
                         importLocal: chooseLocalFolder,
-                        importGitHub: { showGitHub = true }
+                        importGitHub: { showGitHub = true },
+                        openSettings: { selection = .settings }
                     )
                 case .agents:
                     AgentsView(
@@ -88,11 +90,21 @@ struct ContentView: View {
         .sheet(isPresented: $model.showOnboarding) { OnboardingView(model: model) }
         .sheet(isPresented: $showGitHub) { GitHubImportView(model: model, isPresented: $showGitHub) }
         .sheet(isPresented: $showImportPreview) { ImportPreviewView(model: model, isPresented: $showImportPreview) }
+        .sheet(isPresented: $showUpdatePreview) { UpdatePreviewView(model: model, isPresented: $showUpdatePreview) }
         .sheet(isPresented: $showSyncPreview) { SyncPreviewView(model: model, isPresented: $showSyncPreview) }
         .sheet(isPresented: $showCustomTarget) { CustomTargetView(model: model, isPresented: $showCustomTarget, name: $customTargetName) }
         .alert("操作未完成", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) { Button("知道了") { model.errorMessage = nil } } message: { Text(model.errorMessage ?? "") }
         .alert("提示", isPresented: Binding(get: { model.noticeMessage != nil }, set: { if !$0 { model.noticeMessage = nil } })) { Button("知道了") { model.noticeMessage = nil } } message: { Text(model.noticeMessage ?? "") }
-        .onChange(of: model.pendingCandidates) { _, candidates in if !candidates.isEmpty { showImportPreview = true } }
+        .onChange(of: model.pendingCandidates) { _, candidates in
+            guard !candidates.isEmpty else { return }
+            if model.updatingSkillID == nil {
+                showUpdatePreview = false
+                showImportPreview = true
+            } else {
+                showImportPreview = false
+                showUpdatePreview = true
+            }
+        }
     }
 
     private var statusLabel: some View {
@@ -189,7 +201,9 @@ private struct LibraryView: View {
     @ObservedObject var model: AppModel
     @Binding var selectedSkillID: UUID?
     @Binding var showSyncPreview: Bool
-    let importLocal: () -> Void; let importGitHub: () -> Void
+    let importLocal: () -> Void
+    let importGitHub: () -> Void
+    let openSettings: () -> Void
     var selected: SkillRecord? { model.snapshot.skills.first { $0.id == selectedSkillID } ?? model.snapshot.skills.first }
     var body: some View {
         VStack(spacing: 0) {
@@ -197,6 +211,15 @@ private struct LibraryView: View {
                 PageHeader(eyebrow: "集中管理", title: "我的 Skills", subtitle: "每个 Skill 在这里保留一份，再由你决定安装到哪些应用。")
                 Spacer()
                 if !model.snapshot.skills.isEmpty {
+                    if !model.snapshot.sourceStates.isEmpty {
+                        Button {
+                            Task { await model.checkAllGitHubUpdates() }
+                        } label: {
+                            Label("检查全部更新", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                        .disabled(model.isBusy)
+                    }
                     Button("从电脑添加", action: importLocal)
                     Button("从 GitHub 添加", action: importGitHub).buttonStyle(.borderedProminent)
                 }
@@ -206,7 +229,7 @@ private struct LibraryView: View {
                 ContentUnavailableView {
                     Label("还没有添加 Skill", systemImage: "shippingbox")
                 } description: {
-                    Text("从电脑文件夹或公开 GitHub 地址添加，确认前只会查看内容。")
+                    Text("从电脑文件夹或公开、私人 GitHub 仓库添加，确认前只会查看内容。")
                 } actions: {
                     HStack {
                         Button("从电脑添加", action: importLocal)
@@ -221,7 +244,12 @@ private struct LibraryView: View {
                     SkillOrganizerSidebar(model: model, selectedSkillID: $selectedSkillID)
                         .frame(minWidth: 280, idealWidth: 330)
                     if let selected {
-                        SkillDetailView(model: model, skill: selected, showSyncPreview: $showSyncPreview) {
+                        SkillDetailView(
+                            model: model,
+                            skill: selected,
+                            showSyncPreview: $showSyncPreview,
+                            openSettings: openSettings
+                        ) {
                             selectedSkillID = model.snapshot.skills.first?.id
                         }
                             .frame(minWidth: 480)
@@ -569,6 +597,155 @@ private struct SkillBoxHoverButtonBody: View {
     }
 }
 
+private struct GitHubSourceCard: View {
+    @ObservedObject var model: AppModel
+    let skill: SkillRecord
+    let openSettings: () -> Void
+
+    private var state: GitHubSourceState? {
+        model.snapshot.sourceStates.first { $0.skillID == skill.id }
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 13) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundStyle(color)
+                .frame(width: 38, height: 38)
+                .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Text(title).font(.headline)
+                    if let version = state?.availableVersionName, state?.status == .updateAvailable || state?.status == .ignored {
+                        Text(version)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(color.opacity(0.11), in: Capsule())
+                    }
+                }
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 12)
+            Button(primaryTitle, action: primaryAction)
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: state?.status == .updateAvailable ? .primary : .secondary))
+                .disabled(model.isBusy || state == nil)
+            if let state {
+                Menu {
+                    if state.status == .updateAvailable {
+                        Button("忽略这个版本") {
+                            Task { await model.ignoreAvailableUpdate(skill) }
+                        }
+                    }
+                    if state.checkingEnabled {
+                        Button("停止检查更新") {
+                            Task { await model.setUpdateChecking(false, for: skill) }
+                        }
+                    } else {
+                        Button("重新开启更新检查") {
+                            Task { await model.setUpdateChecking(true, for: skill) }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .help("更多更新选项")
+                .accessibilityLabel("更多更新选项")
+            }
+        }
+        .padding(14)
+        .background(color.opacity(0.045), in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(color.opacity(0.17)))
+        .accessibilityElement(children: .contain)
+    }
+
+    private var title: String {
+        switch state?.status {
+        case .updateAvailable: "发现新版本"
+        case .ignored: "这个版本已忽略"
+        case .checkingStopped: "已停止检查更新"
+        case .authenticationRequired: "需要重新连接 GitHub"
+        case .unavailable: "暂时无法检查更新"
+        case .needsInitialCheck: "需要核对一次来源"
+        case .current: "GitHub 来源已是最新"
+        case nil: "GitHub 更新来源尚未准备好"
+        }
+    }
+
+    private var subtitle: String {
+        switch state?.status {
+        case .updateAvailable: "先查看文件变化，再决定是否更新和重新安装。"
+        case .ignored: "这次不再提醒；GitHub 出现下一个版本时仍会告诉你。"
+        case .checkingStopped: "SkillBox 不会再访问这个仓库，可随时重新开启。"
+        case .authenticationRequired: "本地内容仍然保留，重新授权后才能继续检查。"
+        case .unavailable: "仓库或网络暂时不可用，本地内容没有变化。"
+        case .needsInitialCheck: "这份旧记录来自升级前，需要你手动检查一次。"
+        case .current:
+            if let checked = state?.lastCheckedAt {
+                "上次检查：\(checked.formatted(date: .abbreviated, time: .shortened))"
+            } else {
+                "点击即可只检查版本信息，不会下载仓库。"
+            }
+        case nil: "重新添加来源后即可开始检查更新。"
+        }
+    }
+
+    private var primaryTitle: String {
+        switch state?.status {
+        case .updateAvailable, .ignored: "查看这次更新"
+        case .checkingStopped: "重新开启"
+        case .authenticationRequired: "前往设置"
+        default: "检查更新"
+        }
+    }
+
+    private var icon: String {
+        switch state?.status {
+        case .updateAvailable: "arrow.down.circle.fill"
+        case .ignored: "eye.slash.fill"
+        case .checkingStopped: "pause.circle.fill"
+        case .authenticationRequired: "person.crop.circle.badge.exclamationmark"
+        case .unavailable: "wifi.exclamationmark"
+        case .needsInitialCheck: "questionmark.circle.fill"
+        case .current: "checkmark.circle.fill"
+        case nil: "link.badge.plus"
+        }
+    }
+
+    private var color: Color {
+        switch state?.status {
+        case .updateAvailable: .blue
+        case .ignored, .checkingStopped, .needsInitialCheck: .orange
+        case .authenticationRequired, .unavailable: .red
+        case .current: .green
+        case nil: .secondary
+        }
+    }
+
+    private func primaryAction() {
+        switch state?.status {
+        case .updateAvailable, .ignored:
+            Task { await model.previewAvailableUpdate(skill) }
+        case .checkingStopped:
+            Task {
+                await model.setUpdateChecking(true, for: skill)
+                await model.checkForUpdate(skill)
+            }
+        case .authenticationRequired:
+            openSettings()
+        default:
+            Task { await model.checkForUpdate(skill) }
+        }
+    }
+}
+
 private struct SkillDetailView: View {
     private enum Confirmation: String, Identifiable {
         case installEverywhere
@@ -582,6 +759,7 @@ private struct SkillDetailView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let skill: SkillRecord
     @Binding var showSyncPreview: Bool
+    let openSettings: () -> Void
     let onDeleted: () -> Void
     @State private var showRawSource = false
     @State private var showDetails = true
@@ -622,10 +800,6 @@ private struct SkillDetailView: View {
                             .lineLimit(3)
                     }
                     Spacer()
-                    if skill.source.kind == .github {
-                        Button("检查更新") { Task { await model.checkForUpdate(skill) } }
-                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                    }
                     Button("在 Finder 中显示") { Task { model.reveal(await model.contentURL(for: skill)) } }
                         .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                 }
@@ -638,6 +812,10 @@ private struct SkillDetailView: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+                if skill.source.kind == .github {
+                    GitHubSourceCard(model: model, skill: skill, openSettings: openSettings)
+                }
                 Divider()
 
                 VStack(alignment: .leading, spacing: 13) {
@@ -1146,7 +1324,114 @@ private struct HistoryView: View {
 
 private struct SettingsView: View {
     @ObservedObject var model: AppModel
-    var body: some View { Form { Section("数据与隐私") { LabeledContent("SkillBox 保存位置", value: model.libraryRoot.path); LabeledContent("联网", value: "只在你从 GitHub 添加或检查更新时"); LabeledContent("使用数据收集", value: "不收集") }; Section("安全承诺") { Label("查看 Skill 时不会运行里面的文件", systemImage: "checkmark.shield"); Label("已有文件不会被悄悄替换", systemImage: "hand.raised"); Label("如果其他软件改过文件，SkillBox 会先停下来提醒你", systemImage: "exclamationmark.triangle") }; Section { Button("重新查看欢迎说明") { model.showOnboarding = true }; Button("在访达中打开保存位置") { model.reveal(model.libraryRoot) } } }.formStyle(.grouped).padding(.top, 12) }
+    @State private var confirmDisconnect = false
+
+    var body: some View {
+        Form {
+            Section("GitHub 账号") {
+                if model.isGitHubConnected {
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.green)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("已连接 GitHub").font(.headline)
+                            Text("私人仓库令牌只保存在这台 Mac 的钥匙串中。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("管理仓库权限") { model.manageGitHubRepositories() }
+                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                        Button("断开连接", role: .destructive) { confirmDisconnect = true }
+                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .destructiveText))
+                    }
+
+                    if model.githubAuthorizedRepositories.isEmpty {
+                        Text("GitHub App 目前没有返回已授权仓库。你可以在 GitHub 中选择允许 SkillBox 访问的仓库。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("已授权仓库").font(.callout.weight(.semibold))
+                                Spacer()
+                                Text("\(model.githubAuthorizedRepositories.count) 个")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            ForEach(model.githubAuthorizedRepositories) { repository in
+                                HStack(spacing: 9) {
+                                    Image(systemName: repository.isPrivate ? "lock.fill" : "globe")
+                                        .foregroundStyle(repository.isPrivate ? .orange : .blue)
+                                        .frame(width: 18)
+                                    Text(repository.fullName)
+                                    Spacer()
+                                    Text(repository.isPrivate ? "私人" : "公开")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 11) {
+                        Label("连接后可以添加和跟踪私人仓库", systemImage: "link.circle.fill")
+                            .font(.headline)
+                        Text("公开仓库不需要登录。SkillBox 只申请读取你选择的仓库内容，不会获得写入权限。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if model.isGitHubConfigured {
+                            Button("连接 GitHub") { Task { await model.beginGitHubLogin() } }
+                                .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                                .disabled(model.isBusy)
+                        } else {
+                            Label("当前测试包还没有配置 GitHub App Client ID，公开仓库仍可使用。", systemImage: "hammer")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    if let authorization = model.githubAuthorization {
+                        GitHubDeviceAuthorizationCard(model: model, authorization: authorization)
+                    }
+                }
+                if !model.githubLoginStatus.isEmpty {
+                    Text(model.githubLoginStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Section("数据与隐私") {
+                LabeledContent("SkillBox 保存位置", value: model.libraryRoot.path)
+                LabeledContent("联网", value: "只在添加 GitHub 来源或检查更新时")
+                LabeledContent("使用数据收集", value: "不收集")
+            }
+            Section("安全承诺") {
+                Label("查看 Skill 时不会运行里面的文件", systemImage: "checkmark.shield")
+                Label("已有文件不会被悄悄替换", systemImage: "hand.raised")
+                Label("如果其他软件改过文件，SkillBox 会先停下来提醒你", systemImage: "exclamationmark.triangle")
+            }
+            Section {
+                Button("重新查看欢迎说明") { model.showOnboarding = true }
+                Button("在访达中打开保存位置") { model.reveal(model.libraryRoot) }
+            }
+        }
+        .formStyle(.grouped)
+        .padding(.top, 12)
+        .task {
+            if model.isGitHubConnected && model.githubAuthorizedRepositories.isEmpty {
+                await model.refreshGitHubRepositories()
+            }
+        }
+        .confirmationDialog("断开 GitHub？", isPresented: $confirmDisconnect) {
+            Button("断开连接", role: .destructive) { Task { await model.disconnectGitHub() } }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("SkillBox 会删除钥匙串中的登录信息。本地 Skills 和已经安装的副本都会保留。")
+        }
+    }
 }
 
 private struct OnboardingView: View {
@@ -1157,8 +1442,117 @@ private struct OnboardingView: View {
 private struct PromiseRow: View { let title: String; let detail: String; var body: some View { HStack(alignment: .top, spacing: 12) { Image(systemName: "checkmark").foregroundStyle(.green).frame(width: 24, height: 24).background(.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 7)); VStack(alignment: .leading, spacing: 3) { Text(title).font(.headline); Text(detail).font(.caption).foregroundStyle(.secondary) } } } }
 
 private struct GitHubImportView: View {
-    @ObservedObject var model: AppModel; @Binding var isPresented: Bool
-    var body: some View { VStack(alignment: .leading, spacing: 18) { Text("从 GitHub 添加 Skill").font(.title2.bold()); Text("粘贴一个公开 GitHub 仓库地址。SkillBox 会先下载到临时位置并检查内容，你确认前不会加入「我的 Skills」。").foregroundStyle(.secondary); TextField("https://github.com/owner/repo", text: $model.githubURL).textFieldStyle(.roundedBorder); HStack { Button("取消") { isPresented = false }; Spacer(); Button("查看可添加的 Skills") { isPresented = false; Task { await model.previewGitHub() } }.buttonStyle(.borderedProminent).disabled(model.githubURL.isEmpty) } }.padding(28).frame(width: 570) }
+    @ObservedObject var model: AppModel
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("从 GitHub 添加 Skill").font(.title2.bold())
+                    Text("选择要长期跟随的版本来源，再下载完整内容供你确认。")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if model.isGitHubConnected {
+                    Label("已连接", systemImage: "checkmark.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.green)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("仓库地址").font(.callout.weight(.semibold))
+                TextField("https://github.com/owner/repo", text: $model.githubURL)
+                    .textFieldStyle(.roundedBorder)
+                Text("可以直接粘贴仓库首页或某个 Skill 子目录地址。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 9) {
+                Text("以后从哪里判断新版本").font(.callout.weight(.semibold))
+                Picker("版本来源", selection: $model.githubTrackingMode) {
+                    Text("最新正式 Release").tag(GitHubTrackingMode.latestStableRelease)
+                    Text("默认分支").tag(GitHubTrackingMode.defaultBranch)
+                }
+                .pickerStyle(.segmented)
+                Text(trackingExplanation)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 12))
+
+            if !model.isGitHubConnected {
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("私人仓库需要连接 GitHub").font(.callout.weight(.semibold))
+                    Text("公开仓库可以直接继续。登录只授予 SkillBox 读取你在 GitHub 中选择的仓库。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if model.isGitHubConfigured {
+                        Button("连接 GitHub") { Task { await model.beginGitHubLogin() } }
+                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                    }
+                    if let authorization = model.githubAuthorization {
+                        GitHubDeviceAuthorizationCard(model: model, authorization: authorization)
+                    }
+                }
+            }
+
+            HStack {
+                Button("取消") {
+                    model.cancelCandidatePreview()
+                    isPresented = false
+                }
+                Spacer()
+                Button {
+                    isPresented = false
+                    Task { await model.previewGitHub() }
+                } label: {
+                    Label("下载完整版本并预览", systemImage: "arrow.down.circle")
+                }
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                .disabled(model.githubURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isBusy)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(28)
+        .frame(width: 620)
+    }
+
+    private var trackingExplanation: String {
+        switch model.githubTrackingMode {
+        case .latestStableRelease:
+            "适合对外发布的 Skill。只提醒正式 Release，草稿版和预发布版不会出现；仓库没有 Release 时会请你改选默认分支。"
+        case .defaultBranch:
+            "适合持续开发的 Skill。每次检查都会锁定当时的完整 Commit，README 或其他 Skill 的变化不会误报。"
+        }
+    }
+}
+
+private struct GitHubDeviceAuthorizationCard: View {
+    @ObservedObject var model: AppModel
+    let authorization: GitHubDeviceAuthorization
+
+    var body: some View {
+        HStack(spacing: 13) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("验证码").font(.caption).foregroundStyle(.secondary)
+                Text(authorization.userCode)
+                    .font(.system(.title3, design: .monospaced, weight: .bold))
+                    .textSelection(.enabled)
+            }
+            Spacer()
+            Button("复制并打开 GitHub") { model.openGitHubAuthorization() }
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+        }
+        .padding(12)
+        .background(.blue.opacity(0.07), in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).stroke(.blue.opacity(0.16)))
+        .accessibilityElement(children: .contain)
+        .accessibilityHint("复制验证码并在浏览器中完成 GitHub 登录")
+    }
 }
 
 private struct ImportPreviewView: View {
@@ -1249,6 +1643,255 @@ private struct ImportPreviewView: View {
             .disabled(candidate.riskReport.isBlocked)
         }
         .frame(minHeight: 320)
+    }
+}
+
+private struct UpdatePreviewView: View {
+    @ObservedObject var model: AppModel
+    @Binding var isPresented: Bool
+
+    private var skill: SkillRecord? {
+        guard let id = model.updatingSkillID else { return nil }
+        return model.snapshot.skills.first { $0.id == id }
+    }
+
+    private var candidate: SkillCandidate? { model.pendingCandidates.first }
+
+    private var canUpdate: Bool {
+        guard let candidate else { return false }
+        return !candidate.riskReport.isBlocked && model.selectedCandidateIDs.contains(candidate.id)
+    }
+
+    private var installedDestinations: [ManagedInstallation] {
+        guard let skill else { return [] }
+        return model.snapshot.installations.filter { $0.skillID == skill.id }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.title)
+                    .foregroundStyle(.blue)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("查看这次更新").font(.title2.bold())
+                    Text(headerSubtitle).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("关闭") {
+                    model.cancelCandidatePreview()
+                    isPresented = false
+                }
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                .keyboardShortcut(.cancelAction)
+            }
+            .padding(24)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(spacing: 12) {
+                        UpdateMetric(title: "新增", value: changeCount(.added), color: .green)
+                        UpdateMetric(title: "修改", value: changeCount(.modified), color: .blue)
+                        UpdateMetric(title: "移除", value: changeCount(.removed), color: .orange)
+                        UpdateMetric(title: "原有安装", value: installedDestinations.count, color: .purple)
+                    }
+
+                    riskChangeCard
+
+                    GroupBox("文件变化") {
+                        if model.pendingUpdateChanges.isEmpty {
+                            ContentUnavailableView(
+                                "文件内容没有变化",
+                                systemImage: "checkmark.circle",
+                                description: Text("版本名称发生变化，但这个 Skill 目录的内容相同。")
+                            )
+                            .frame(minHeight: 120)
+                        } else {
+                            LazyVStack(spacing: 0) {
+                                ForEach(model.pendingUpdateChanges, id: \.path) { change in
+                                    HStack(spacing: 10) {
+                                        Image(systemName: changeIcon(change.kind))
+                                            .foregroundStyle(changeColor(change.kind))
+                                            .frame(width: 20)
+                                        Text(change.path)
+                                            .font(.system(.caption, design: .monospaced))
+                                            .lineLimit(1)
+                                        Spacer()
+                                        Text(changeLabel(change.kind))
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(changeColor(change.kind))
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 8)
+                                    if change.path != model.pendingUpdateChanges.last?.path { Divider() }
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+
+                    GroupBox("SKILL.md 更新前后") {
+                        HStack(alignment: .top, spacing: 12) {
+                            markdownPreview(title: "当前版本", text: model.pendingUpdateBeforeMarkdown)
+                            markdownPreview(title: "新版本", text: model.pendingUpdateAfterMarkdown)
+                        }
+                        .padding(.vertical, 5)
+                    }
+
+                    if !installedDestinations.isEmpty {
+                        GroupBox("更新并安装时会处理这些位置") {
+                            VStack(spacing: 0) {
+                                ForEach(installedDestinations, id: \.destinationPath) { installation in
+                                    destinationRow(installation)
+                                    if installation.destinationPath != installedDestinations.last?.destinationPath { Divider() }
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+
+                    Label(
+                        "确认后会先保留旧版本。中央原件和可更新的应用副本会一起处理；中途失败会恢复已经改动的内容。",
+                        systemImage: "arrow.uturn.backward.circle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                .padding(24)
+            }
+
+            Divider()
+            HStack(spacing: 10) {
+                Button("取消") {
+                    model.cancelCandidatePreview()
+                    isPresented = false
+                }
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                Spacer()
+                if installedDestinations.isEmpty {
+                    Button("更新我的 Skills") { apply(deployToExisting: false) }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                        .disabled(!canUpdate || model.isBusy)
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("只更新我的 Skills") { apply(deployToExisting: false) }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                        .disabled(!canUpdate || model.isBusy)
+                    Button("更新并安装到原有应用") { apply(deployToExisting: true) }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                        .disabled(!canUpdate || model.isBusy)
+                        .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(18)
+        }
+        .frame(width: 940, height: 760)
+        .interactiveDismissDisabled()
+    }
+
+    private var headerSubtitle: String {
+        let name = skill?.displayName ?? "这份 Skill"
+        let version = model.pendingGitHubVersion?.versionName ?? "新版本"
+        return "\(name) · \(version) · 下载的是这个版本的完整快照"
+    }
+
+    @ViewBuilder
+    private var riskChangeCard: some View {
+        if let skill, let candidate {
+            let becameRiskier = candidate.riskReport.highestSeverity > skill.riskReport.highestSeverity
+            HStack(alignment: .top, spacing: 11) {
+                Image(systemName: candidate.riskReport.isBlocked ? "xmark.shield.fill" : becameRiskier ? "exclamationmark.shield.fill" : "checkmark.shield.fill")
+                    .font(.title3)
+                    .foregroundStyle(candidate.riskReport.isBlocked ? .red : becameRiskier ? .orange : .green)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(candidate.riskReport.isBlocked ? "新版本已被安全检查阻止" : becameRiskier ? "新版本出现了更高风险提示" : "没有发现更高的风险级别")
+                        .font(.headline)
+                    Text("新版本检查了 \(candidate.riskReport.scannedFileCount) 个文件，发现 \(candidate.riskReport.findings.count) 项提示。SkillBox 不会运行其中任何文件。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(13)
+            .background((candidate.riskReport.isBlocked ? Color.red : becameRiskier ? Color.orange : Color.green).opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    private func markdownPreview(title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            ReadOnlyTextView(text: text)
+                .frame(height: 220)
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(.separator.opacity(0.45)))
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func destinationRow(_ installation: ManagedInstallation) -> some View {
+        let target = model.snapshot.targets.first { $0.id == installation.targetID }
+        let action = model.syncPlan?.actions.first { $0.destinationPath == installation.destinationPath }
+        let canWrite = target?.detectionStatus == .available && target?.writeStatus == .writable
+        let pendingRemoval = action?.kind == .remove
+        let blocked = action?.kind == .blocked || !canWrite
+        let skipped = blocked || pendingRemoval
+        return HStack(spacing: 10) {
+            Image(systemName: skipped ? "exclamationmark.circle.fill" : "arrow.down.circle.fill")
+                .foregroundStyle(skipped ? .orange : .blue)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(target?.displayName ?? "已移除的应用").font(.callout.weight(.medium))
+                Text(pendingRemoval ? "已取消选择，等待你单独确认卸载" : blocked ? "保持旧版本，不会覆盖" : "内容未被外部修改，可以更新")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(skipped ? "暂不处理" : "将更新")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(skipped ? .orange : .blue)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 8)
+    }
+
+    private func apply(deployToExisting: Bool) {
+        isPresented = false
+        Task { await model.applyPendingUpdate(deployToExisting: deployToExisting) }
+    }
+
+    private func changeCount(_ kind: SkillFileChangeKind) -> Int {
+        model.pendingUpdateChanges.count { $0.kind == kind }
+    }
+
+    private func changeLabel(_ kind: SkillFileChangeKind) -> String {
+        switch kind { case .added: "新增"; case .modified: "修改"; case .removed: "移除" }
+    }
+
+    private func changeIcon(_ kind: SkillFileChangeKind) -> String {
+        switch kind { case .added: "plus.circle.fill"; case .modified: "pencil.circle.fill"; case .removed: "minus.circle.fill" }
+    }
+
+    private func changeColor(_ kind: SkillFileChangeKind) -> Color {
+        switch kind { case .added: .green; case .modified: .blue; case .removed: .orange }
+    }
+}
+
+private struct UpdateMetric: View {
+    let title: String
+    let value: Int
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Text("\(value)").font(.headline)
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity)
+        .background(.quaternary.opacity(0.24), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 

@@ -175,6 +175,18 @@ public struct GitHubSnapshot: Sendable {
     }
 }
 
+public struct GitHubRepositorySummary: Codable, Hashable, Identifiable, Sendable {
+    public var id: Int64
+    public var fullName: String
+    public var isPrivate: Bool
+
+    public init(id: Int64, fullName: String, isPrivate: Bool) {
+        self.id = id
+        self.fullName = fullName
+        self.isPrivate = isPrivate
+    }
+}
+
 public enum RiskSeverity: Int, Codable, CaseIterable, Comparable, Sendable {
     case info = 0
     case caution = 1

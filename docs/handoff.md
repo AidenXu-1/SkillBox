@@ -5,9 +5,9 @@
 
 ## 当前状态快照
 
-- **阶段**：GitHub 更新核心完成，正式 UI 接入前
-- **最近在做**：Schema v2、Release/默认分支跟踪、Device Flow、钥匙串、差异预览和联合更新事务
-- **下一步**：用户确认 GitHub v7 原型后接入正式 SwiftUI；然后配置 GitHub App 做公开/私人仓库与真实鼠标验收
+- **阶段**：GitHub 版本跟踪核心与正式 SwiftUI 已接入，真实外部验收前
+- **最近在做**：GitHub 来源卡片、Release/默认分支导入、差异对照、授权仓库设置与联合更新界面
+- **下一步**：配置 GitHub App 的公开 Client ID/安装地址，完成公开+私人仓库真实验收；Computer Use 通道恢复后补鼠标、键盘、VoiceOver 和减少动态效果验收
 
 ## 怎么把环境跑起来
 
@@ -24,9 +24,10 @@ swift test
 ## 现在卡在哪 / 待决策
 
 - 真实 Agent 写入尚未授权，不得用自动化测试代替这个验收门槛。
-- GitHub v7 原型尚待用户确认；未确认前不得将新页面接入正式 SwiftUI。
+- GitHub v7 原型已得到用户确认，正式 SwiftUI 已接入。
 - 私人仓库需先注册 GitHub App，构建仅接收公开 Client ID 和安装地址；不得放入 Client Secret、私钥或个人 Token。
-- 尚未做真实私人仓库授权、真实鼠标/VoiceOver 验收、Developer ID 签名、公证和 DMG。
+- 尚未做真实私人仓库授权、真实鼠标/键盘/VoiceOver/减少动态效果验收、Developer ID 签名、公证和 DMG。
+- Computer Use 退出旧 SkillBox 进程后连续返回 `Sky Computer Use native pipe closed before response`；通道恢复前不要宣称新 SwiftUI 已通过真实前台验收。
 
 ## 容易踩的坑 / 注意事项
 
