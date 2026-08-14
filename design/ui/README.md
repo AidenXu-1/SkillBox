@@ -25,6 +25,10 @@
 - [Skill 详情布局 v5 说明](skillbox-detail-v5.md)
 - [Skill 详情布局 v5](skillbox-detail-v5.png)
 - [主 Markdown 预览 v5](skillbox-markdown-preview-v5.png)
+- [Skill 分类与交互反馈 v6 说明](skillbox-organization-v6.md)
+- [分类与拖拽区域 v6](skillbox-organizer-hover-v6.png)
+- [详情标题悬停 v6](skillbox-detail-header-hover-v6.png)
+- [新建分类文件夹 v6](skillbox-new-folder-v6.png)
 
 ## 可视化交付要求
 

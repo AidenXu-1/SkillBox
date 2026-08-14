@@ -376,19 +376,126 @@ public struct LibrarySnapshot: Codable, Sendable {
     public var assignments: [Assignment]
     public var installations: [ManagedInstallation]
     public var transactions: [SyncTransaction]
+    public var organization: SkillOrganization
 
     public init(
         skills: [SkillRecord] = [],
         targets: [AgentTarget] = [],
         assignments: [Assignment] = [],
         installations: [ManagedInstallation] = [],
-        transactions: [SyncTransaction] = []
+        transactions: [SyncTransaction] = [],
+        organization: SkillOrganization = .init()
     ) {
         self.skills = skills
         self.targets = targets
         self.assignments = assignments
         self.installations = installations
         self.transactions = transactions
+        self.organization = organization
+    }
+}
+
+public struct SkillFolder: Codable, Hashable, Identifiable, Sendable {
+    public var id: UUID
+    public var name: String
+    public var sortIndex: Int
+
+    public init(id: UUID = UUID(), name: String, sortIndex: Int) {
+        self.id = id
+        self.name = name
+        self.sortIndex = sortIndex
+    }
+}
+
+public struct SkillPlacement: Codable, Hashable, Identifiable, Sendable {
+    public var id: UUID { skillID }
+    public var skillID: UUID
+    public var folderID: UUID?
+    public var sortIndex: Int
+
+    public init(skillID: UUID, folderID: UUID? = nil, sortIndex: Int) {
+        self.skillID = skillID
+        self.folderID = folderID
+        self.sortIndex = sortIndex
+    }
+}
+
+public struct SkillOrganization: Codable, Hashable, Sendable {
+    public var folders: [SkillFolder]
+    public var placements: [SkillPlacement]
+
+    public init(folders: [SkillFolder] = [], placements: [SkillPlacement] = []) {
+        self.folders = folders
+        self.placements = placements
+    }
+
+    public mutating func normalize(skillIDs: [UUID]) {
+        let validSkillIDs = Set(skillIDs)
+        let validFolderIDs = Set(folders.map(\.id))
+        var seen = Set<UUID>()
+        placements = placements.filter { placement in
+            validSkillIDs.contains(placement.skillID) &&
+                (placement.folderID == nil || validFolderIDs.contains(placement.folderID!)) &&
+                seen.insert(placement.skillID).inserted
+        }
+        for skillID in skillIDs where !seen.contains(skillID) {
+            placements.append(.init(skillID: skillID, sortIndex: placements.filter { $0.folderID == nil }.count))
+        }
+        reindexFolders()
+        reindexAllGroups()
+    }
+
+    public mutating func moveSkill(_ skillID: UUID, to folderID: UUID?, before beforeSkillID: UUID? = nil) {
+        guard folderID == nil || folders.contains(where: { $0.id == folderID }) else { return }
+        var moved = placements.first(where: { $0.skillID == skillID }) ?? .init(skillID: skillID, sortIndex: 0)
+        placements.removeAll { $0.skillID == skillID }
+        moved.folderID = folderID
+        var destination = placements.filter { $0.folderID == folderID }.sorted { $0.sortIndex < $1.sortIndex }
+        let insertionIndex = beforeSkillID.flatMap { before in destination.firstIndex { $0.skillID == before } } ?? destination.endIndex
+        destination.insert(moved, at: insertionIndex)
+        placements.append(moved)
+        for (index, placement) in destination.enumerated() {
+            if let storedIndex = placements.firstIndex(where: { $0.skillID == placement.skillID }) {
+                placements[storedIndex].folderID = folderID
+                placements[storedIndex].sortIndex = index
+            }
+        }
+        reindexAllGroups()
+    }
+
+    public mutating func moveFolder(_ folderID: UUID, before beforeFolderID: UUID?) {
+        folders.sort { $0.sortIndex < $1.sortIndex }
+        guard let moving = folders.first(where: { $0.id == folderID }) else { return }
+        folders.removeAll { $0.id == folderID }
+        let insertionIndex = beforeFolderID.flatMap { before in folders.firstIndex { $0.id == before } } ?? folders.endIndex
+        folders.insert(moving, at: insertionIndex)
+        for index in folders.indices { folders[index].sortIndex = index }
+    }
+
+    public mutating func deleteFolder(_ folderID: UUID) {
+        folders.removeAll { $0.id == folderID }
+        for index in placements.indices where placements[index].folderID == folderID {
+            placements[index].folderID = nil
+        }
+        reindexFolders()
+        reindexAllGroups()
+    }
+
+    private mutating func reindexFolders() {
+        folders.sort { $0.sortIndex < $1.sortIndex }
+        for index in folders.indices { folders[index].sortIndex = index }
+    }
+
+    private mutating func reindexAllGroups() {
+        let groupIDs = [UUID?.none] + folders.map { Optional($0.id) }
+        for groupID in groupIDs {
+            let ordered = placements.filter { $0.folderID == groupID }.sorted { $0.sortIndex < $1.sortIndex }
+            for (index, placement) in ordered.enumerated() {
+                if let storedIndex = placements.firstIndex(where: { $0.skillID == placement.skillID }) {
+                    placements[storedIndex].sortIndex = index
+                }
+            }
+        }
     }
 }
 

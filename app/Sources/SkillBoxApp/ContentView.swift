@@ -218,7 +218,8 @@ private struct LibraryView: View {
                 .padding(.bottom, 72)
             } else {
                 HSplitView {
-                    List(model.snapshot.skills, selection: $selectedSkillID) { skill in HStack { Image(systemName: riskIcon(skill.riskReport.highestSeverity)).foregroundStyle(riskColor(skill.riskReport.highestSeverity)); VStack(alignment: .leading) { Text(skill.displayName).font(.callout.weight(.medium)); Text(skill.description).font(.caption2).foregroundStyle(.secondary).lineLimit(1) } }.tag(skill.id) }.frame(minWidth: 280, idealWidth: 330)
+                    SkillOrganizerSidebar(model: model, selectedSkillID: $selectedSkillID)
+                        .frame(minWidth: 280, idealWidth: 330)
                     if let selected {
                         SkillDetailView(model: model, skill: selected, showSyncPreview: $showSyncPreview) {
                             selectedSkillID = model.snapshot.skills.first?.id
@@ -229,9 +230,343 @@ private struct LibraryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            if selectedSkillID == nil { selectedSkillID = model.snapshot.skills.first?.id }
+        }
     }
-    private func riskIcon(_ severity: RiskSeverity) -> String { severity >= .high ? "exclamationmark.triangle.fill" : severity == .caution ? "exclamationmark.circle.fill" : "checkmark.circle.fill" }
-    private func riskColor(_ severity: RiskSeverity) -> Color { severity >= .high ? .red : severity == .caution ? .orange : .green }
+}
+
+private struct SkillOrganizerSidebar: View {
+    @ObservedObject var model: AppModel
+    @Binding var selectedSkillID: UUID?
+    @State private var collapsedFolderIDs: Set<UUID> = []
+    @State private var showNewFolder = false
+    @State private var newFolderName = ""
+
+    private var folders: [SkillFolder] { model.orderedFolders() }
+    private var uncategorized: [SkillRecord] { model.orderedSkills(in: nil) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("我的分类").font(.headline)
+                    Text("拖动 Skill 可整理和排序").font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    newFolderName = ""
+                    showNewFolder = true
+                } label: {
+                    Label("新建文件夹", systemImage: "folder.badge.plus")
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                .help("新建文件夹")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            Divider()
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 5) {
+                    OrganizerGroupHeader(title: "未分类", count: uncategorized.count, systemImage: "tray")
+                        .dropDestination(for: String.self) { items, _ in
+                            guard let skillID = firstSkillID(in: items) else { return false }
+                            Task { await model.moveSkill(skillID, to: nil) }
+                            return true
+                        }
+                    ForEach(uncategorized) { skill in
+                        SkillOrganizerRow(
+                            model: model,
+                            skill: skill,
+                            folderID: nil,
+                            selectedSkillID: $selectedSkillID
+                        )
+                    }
+                    ForEach(folders) { folder in
+                        OrganizerFolderHeader(
+                            model: model,
+                            folder: folder,
+                            count: model.orderedSkills(in: folder.id).count,
+                            isCollapsed: collapsedFolderIDs.contains(folder.id),
+                            onToggle: {
+                                if collapsedFolderIDs.contains(folder.id) { collapsedFolderIDs.remove(folder.id) }
+                                else { collapsedFolderIDs.insert(folder.id) }
+                            }
+                        )
+                        if !collapsedFolderIDs.contains(folder.id) {
+                            ForEach(model.orderedSkills(in: folder.id)) { skill in
+                                SkillOrganizerRow(
+                                    model: model,
+                                    skill: skill,
+                                    folderID: folder.id,
+                                    selectedSkillID: $selectedSkillID
+                                )
+                            }
+                        }
+                    }
+                }
+                .padding(8)
+            }
+        }
+        .background(.quaternary.opacity(0.12))
+        .alert("新建文件夹", isPresented: $showNewFolder) {
+            TextField("例如：写作、开发、运营", text: $newFolderName)
+            Button("取消", role: .cancel) {}
+            Button("创建") {
+                Task { _ = await model.createSkillFolder(named: newFolderName) }
+            }
+        } message: {
+            Text("文件夹只用于整理列表，不会移动或修改 Skill 原件。")
+        }
+    }
+
+    private func firstSkillID(in items: [String]) -> UUID? {
+        items.compactMap(OrganizerDragItem.init).compactMap(\.skillID).first
+    }
+}
+
+private struct OrganizerGroupHeader: View {
+    let title: String
+    let count: Int
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage).foregroundStyle(.secondary)
+            Text(title).font(.caption.weight(.semibold))
+            Spacer()
+            Text("\(count)").font(.caption2).foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct OrganizerFolderHeader: View {
+    @ObservedObject var model: AppModel
+    let folder: SkillFolder
+    let count: Int
+    let isCollapsed: Bool
+    let onToggle: () -> Void
+    @State private var isHovered = false
+    @State private var showRename = false
+    @State private var showDelete = false
+    @State private var renameValue = ""
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Button(action: onToggle) {
+                HStack(spacing: 8) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                    Image(systemName: "folder.fill").foregroundStyle(.blue)
+                    Text(folder.name).font(.caption.weight(.semibold))
+                    Spacer()
+                    Text("\(count)").font(.caption2).foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Menu {
+                Button("重命名") {
+                    renameValue = folder.name
+                    showRename = true
+                }
+                Button("删除文件夹", role: .destructive) { showDelete = true }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .frame(width: 22, height: 22)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .opacity(isHovered ? 1 : 0.35)
+        }
+        .padding(.leading, 8)
+        .padding(.trailing, 5)
+        .padding(.vertical, 5)
+        .background(isHovered ? Color.primary.opacity(0.055) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+        .draggable("folder:\(folder.id.uuidString)")
+        .dropDestination(for: String.self) { items, _ in
+            guard let item = items.compactMap(OrganizerDragItem.init).first else { return false }
+            switch item {
+            case let .skill(skillID): Task { await model.moveSkill(skillID, to: folder.id) }
+            case let .folder(folderID): Task { await model.moveFolder(folderID, before: folder.id) }
+            }
+            return true
+        }
+        .alert("重命名文件夹", isPresented: $showRename) {
+            TextField("文件夹名称", text: $renameValue)
+            Button("取消", role: .cancel) {}
+            Button("保存") { Task { _ = await model.renameSkillFolder(folder, to: renameValue) } }
+        }
+        .alert("删除“\(folder.name)”文件夹？", isPresented: $showDelete) {
+            Button("取消", role: .cancel) {}
+            Button("删除文件夹", role: .destructive) { Task { await model.deleteSkillFolder(folder) } }
+        } message: {
+            Text("里面的 Skill 会回到“未分类”，原件和安装状态都不会改变。")
+        }
+    }
+}
+
+private struct SkillOrganizerRow: View {
+    @ObservedObject var model: AppModel
+    let skill: SkillRecord
+    let folderID: UUID?
+    @Binding var selectedSkillID: UUID?
+    @State private var isHovered = false
+
+    private var isSelected: Bool { selectedSkillID == skill.id }
+
+    var body: some View {
+        Button { selectedSkillID = skill.id } label: {
+            HStack(spacing: 9) {
+                Image(systemName: riskIcon)
+                    .foregroundStyle(riskColor)
+                    .frame(width: 17)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(skill.displayName)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                    Text(skill.description)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "line.3.horizontal")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .opacity(isHovered ? 1 : 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: 8))
+        .onHover { isHovered = $0 }
+        .draggable("skill:\(skill.id.uuidString)")
+        .dropDestination(for: String.self) { items, _ in
+            guard let movingID = items.compactMap(OrganizerDragItem.init).compactMap(\.skillID).first,
+                  movingID != skill.id
+            else { return false }
+            Task { await model.moveSkill(movingID, to: folderID, before: skill.id) }
+            return true
+        }
+        .contextMenu {
+            Menu("移动到") {
+                Button("未分类") { Task { await model.moveSkill(skill.id, to: nil) } }
+                ForEach(model.orderedFolders()) { folder in
+                    Button(folder.name) { Task { await model.moveSkill(skill.id, to: folder.id) } }
+                }
+            }
+        }
+        .help("拖动调整顺序，或拖到文件夹中分类")
+    }
+
+    private var rowBackground: Color {
+        if isSelected { return .accentColor.opacity(0.16) }
+        if isHovered { return .primary.opacity(0.055) }
+        return .clear
+    }
+
+    private var riskIcon: String {
+        skill.riskReport.highestSeverity >= .high ? "exclamationmark.triangle.fill" : skill.riskReport.highestSeverity == .caution ? "exclamationmark.circle.fill" : "checkmark.circle.fill"
+    }
+
+    private var riskColor: Color {
+        skill.riskReport.highestSeverity >= .high ? .red : skill.riskReport.highestSeverity == .caution ? .orange : .green
+    }
+}
+
+private enum OrganizerDragItem {
+    case skill(UUID)
+    case folder(UUID)
+
+    init?(_ value: String) {
+        let parts = value.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let id = UUID(uuidString: parts[1]) else { return nil }
+        switch parts[0] {
+        case "skill": self = .skill(id)
+        case "folder": self = .folder(id)
+        default: return nil
+        }
+    }
+
+    var skillID: UUID? {
+        if case let .skill(id) = self { return id }
+        return nil
+    }
+}
+
+private struct SkillBoxHoverButtonStyle: ButtonStyle {
+    enum Kind {
+        case primary
+        case secondary
+        case destructiveText
+    }
+
+    let kind: Kind
+
+    func makeBody(configuration: Configuration) -> some View {
+        SkillBoxHoverButtonBody(configuration: configuration, kind: kind)
+    }
+}
+
+private struct SkillBoxHoverButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let kind: SkillBoxHoverButtonStyle.Kind
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
+
+    var body: some View {
+        configuration.label
+            .font(.callout.weight(kind == .primary ? .semibold : .medium))
+            .foregroundStyle(foregroundColor)
+            .padding(.horizontal, kind == .destructiveText ? 8 : 11)
+            .padding(.vertical, kind == .destructiveText ? 5 : 7)
+            .background(backgroundColor, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(borderColor, lineWidth: 1))
+            .scaleEffect(reduceMotion ? 1 : configuration.isPressed ? 0.97 : 1)
+            .opacity(isEnabled ? 1 : 0.42)
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .onHover { isHovered = $0 }
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
+    }
+
+    private var foregroundColor: Color {
+        switch kind {
+        case .primary: return .white
+        case .secondary: return .primary
+        case .destructiveText: return .red
+        }
+    }
+
+    private var backgroundColor: Color {
+        switch kind {
+        case .primary:
+            return Color.accentColor.opacity(configuration.isPressed ? 0.76 : isHovered ? 0.86 : 1)
+        case .secondary:
+            return Color.primary.opacity(configuration.isPressed ? 0.12 : isHovered ? 0.075 : 0.035)
+        case .destructiveText:
+            return Color.red.opacity(configuration.isPressed ? 0.16 : isHovered ? 0.10 : 0)
+        }
+    }
+
+    private var borderColor: Color {
+        switch kind {
+        case .primary: return .clear
+        case .secondary: return Color(nsColor: .separatorColor).opacity(isHovered ? 0.9 : 0.55)
+        case .destructiveText: return isHovered ? Color.red.opacity(0.22) : .clear
+        }
+    }
 }
 
 private struct SkillDetailView: View {
@@ -244,6 +579,7 @@ private struct SkillDetailView: View {
     }
 
     @ObservedObject var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let skill: SkillRecord
     @Binding var showSyncPreview: Bool
     let onDeleted: () -> Void
@@ -251,6 +587,7 @@ private struct SkillDetailView: View {
     @State private var showDetails = true
     @State private var directoryEntries: [SkillDirectoryEntry] = []
     @State private var isLoadingDirectory = true
+    @State private var isDetailsHeaderHovered = false
     @State private var confirmation: Confirmation?
 
     private var availableTargets: [AgentTarget] { model.availableTargets() }
@@ -287,8 +624,10 @@ private struct SkillDetailView: View {
                     Spacer()
                     if skill.source.kind == .github {
                         Button("检查更新") { Task { await model.checkForUpdate(skill) } }
+                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                     }
                     Button("在 Finder 中显示") { Task { model.reveal(await model.contentURL(for: skill)) } }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                 }
                 HStack(spacing: 8) {
                     Label(skill.source.displayName, systemImage: "tray.full")
@@ -317,12 +656,13 @@ private struct SkillDetailView: View {
                             } label: {
                                 Label("安装到全部可用应用", systemImage: "square.and.arrow.down")
                             }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
                             Button {
                                 confirmation = .uninstallEverywhere
                             } label: {
                                 Text("全部卸载")
                             }
+                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                             .disabled(!hasInstallations && !hasDesiredAssignments)
                         }
                     }
@@ -335,8 +675,7 @@ private struct SkillDetailView: View {
                         Button("删除这份 Skill", role: .destructive) {
                             confirmation = hasInstallations ? .uninstallBeforeDelete : .delete
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.red)
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .destructiveText))
                     }
                 }
                 .padding(15)
@@ -364,7 +703,35 @@ private struct SkillDetailView: View {
 
                 riskSummary
 
-                DisclosureGroup(isExpanded: $showDetails) {
+                VStack(spacing: 0) {
+                    Button {
+                        if reduceMotion { showDetails.toggle() }
+                        else {
+                            withAnimation(.easeOut(duration: 0.14)) { showDetails.toggle() }
+                        }
+                    } label: {
+                        HStack(spacing: 9) {
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .rotationEffect(.degrees(showDetails ? 90 : 0))
+                                .foregroundStyle(isDetailsHeaderHovered ? Color.blue : Color.secondary)
+                            Text("查看 Skill 详情").font(.headline)
+                            Spacer()
+                            Text("\(skill.riskReport.scannedFileCount) 个文件")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .background(isDetailsHeaderHovered ? Color.blue.opacity(0.07) : .clear)
+                    .onHover { isDetailsHeaderHovered = $0 }
+                    .help(showDetails ? "收起 Skill 详情" : "展开 Skill 详情")
+
+                    if showDetails {
+                        Divider()
                     VStack(alignment: .leading, spacing: 14) {
                         HStack(spacing: 11) {
                             Image(systemName: "doc.richtext.fill")
@@ -378,6 +745,7 @@ private struct SkillDetailView: View {
                             }
                             Spacer()
                             Button("预览") { showRawSource = true }
+                                .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                         }
                         .padding(11)
                         .background(.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 11))
@@ -415,17 +783,10 @@ private struct SkillDetailView: View {
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
-                    .padding(.top, 12)
-                } label: {
-                    HStack {
-                        Text("查看 Skill 详情").font(.headline)
-                        Spacer()
-                        Text("\(skill.riskReport.scannedFileCount) 个文件")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                    .padding(14)
+                    .transition(.opacity)
                     }
                 }
-                .padding(14)
                 .background(.background, in: RoundedRectangle(cornerRadius: 13))
                 .overlay(RoundedRectangle(cornerRadius: 13).stroke(.separator.opacity(0.55)))
             }
@@ -660,6 +1021,7 @@ private struct SkillRawSourceView: View {
                 Spacer()
                 Button("完成") { isPresented = false }
                     .keyboardShortcut(.defaultAction)
+                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
             }
             if isLoading {
                 ProgressView("正在读取…")

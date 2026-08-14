@@ -77,6 +77,13 @@ public actor LibraryStore {
         try persist()
     }
 
+    public func replaceOrganization(_ organization: SkillOrganization) throws {
+        var normalized = organization
+        normalized.normalize(skillIDs: snapshot.skills.map(\.id))
+        snapshot.organization = normalized
+        try persist()
+    }
+
     public func importCandidate(_ candidate: SkillCandidate) throws -> SkillRecord {
         guard !candidate.riskReport.isBlocked else { throw LibraryStoreError.blockedImport }
         guard try fingerprinter.fingerprint(directory: candidate.sourceURL) == candidate.fingerprint else {
@@ -109,8 +116,10 @@ public actor LibraryStore {
             contentRelativePath: "Library/\(id.uuidString)/content"
         )
         snapshot.skills.append(record)
+        snapshot.organization.normalize(skillIDs: snapshot.skills.map(\.id))
         do { try persist() } catch {
             snapshot.skills.removeAll { $0.id == id }
+            snapshot.organization.placements.removeAll { $0.skillID == id }
             try? fileManager.removeItem(at: recordRoot)
             throw error
         }
@@ -177,6 +186,7 @@ public actor LibraryStore {
         try fileManager.moveItem(at: recordRoot, to: archived)
         snapshot.skills.removeAll { $0.id == id }
         snapshot.assignments.removeAll { $0.skillID == id }
+        snapshot.organization.placements.removeAll { $0.skillID == id }
         do {
             try persist()
         } catch {
@@ -207,6 +217,7 @@ public actor LibraryStore {
         try write(snapshot.assignments, name: "assignments.json")
         try write(snapshot.installations, name: "installations.json")
         try write(snapshot.transactions, name: "transactions.json")
+        try write(snapshot.organization, name: "organization.json")
     }
 
     private func write<T: Codable & Sendable>(_ value: T, name: String) throws {
@@ -232,12 +243,16 @@ public actor LibraryStore {
                 return fallback
             }
         }
+        let skills = try load([SkillRecord].self, name: "catalog.json", fallback: [])
+        var organization = try load(SkillOrganization.self, name: "organization.json", fallback: .init())
+        organization.normalize(skillIDs: skills.map(\.id))
         return try LibrarySnapshot(
-            skills: load([SkillRecord].self, name: "catalog.json", fallback: []),
+            skills: skills,
             targets: load([AgentTarget].self, name: "targets.json", fallback: []),
             assignments: load([Assignment].self, name: "assignments.json", fallback: []),
             installations: load([ManagedInstallation].self, name: "installations.json", fallback: []),
-            transactions: load([SyncTransaction].self, name: "transactions.json", fallback: [])
+            transactions: load([SyncTransaction].self, name: "transactions.json", fallback: []),
+            organization: organization
         )
     }
 }

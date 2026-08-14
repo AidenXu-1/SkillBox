@@ -263,6 +263,68 @@ final class AppModel: ObservableObject {
         snapshot.targets.filter { !isAvailableForInstallation($0) }
     }
 
+    func orderedFolders() -> [SkillFolder] {
+        snapshot.organization.folders.sorted { $0.sortIndex < $1.sortIndex }
+    }
+
+    func orderedSkills(in folderID: UUID?) -> [SkillRecord] {
+        let skills = Dictionary(uniqueKeysWithValues: snapshot.skills.map { ($0.id, $0) })
+        return snapshot.organization.placements
+            .filter { $0.folderID == folderID }
+            .sorted { $0.sortIndex < $1.sortIndex }
+            .compactMap { skills[$0.skillID] }
+    }
+
+    func createSkillFolder(named name: String) async -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            noticeMessage = "请先输入文件夹名称。"
+            return false
+        }
+        guard !snapshot.organization.folders.contains(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) else {
+            noticeMessage = "已经有一个同名文件夹。"
+            return false
+        }
+        var organization = snapshot.organization
+        organization.folders.append(.init(name: trimmed, sortIndex: organization.folders.count))
+        return await saveOrganization(organization)
+    }
+
+    func renameSkillFolder(_ folder: SkillFolder, to name: String) async -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            noticeMessage = "文件夹名称不能为空。"
+            return false
+        }
+        guard !snapshot.organization.folders.contains(where: { $0.id != folder.id && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) else {
+            noticeMessage = "已经有一个同名文件夹。"
+            return false
+        }
+        var organization = snapshot.organization
+        guard let index = organization.folders.firstIndex(where: { $0.id == folder.id }) else { return false }
+        organization.folders[index].name = trimmed
+        return await saveOrganization(organization)
+    }
+
+    func deleteSkillFolder(_ folder: SkillFolder) async {
+        var organization = snapshot.organization
+        organization.deleteFolder(folder.id)
+        _ = await saveOrganization(organization)
+    }
+
+    func moveSkill(_ skillID: UUID, to folderID: UUID?, before beforeSkillID: UUID? = nil) async {
+        var organization = snapshot.organization
+        organization.moveSkill(skillID, to: folderID, before: beforeSkillID)
+        _ = await saveOrganization(organization)
+    }
+
+    func moveFolder(_ folderID: UUID, before beforeFolderID: UUID?) async {
+        guard folderID != beforeFolderID else { return }
+        var organization = snapshot.organization
+        organization.moveFolder(folderID, before: beforeFolderID)
+        _ = await saveOrganization(organization)
+    }
+
     func authorize(action: SyncAction, replacement: Bool) async {
         var assignments = snapshot.assignments
         guard let index = assignments.firstIndex(where: { $0.skillID == action.skillID && $0.targetID == action.targetID }) else { return }
@@ -412,6 +474,17 @@ final class AppModel: ObservableObject {
         assignment.allowTakeover = false
         assignment.allowReplacement = false
         assignment.authorizedDestinationFingerprint = nil
+    }
+
+    private func saveOrganization(_ organization: SkillOrganization) async -> Bool {
+        do {
+            try await store.replaceOrganization(organization)
+            await reload()
+            return true
+        } catch {
+            present(error)
+            return false
+        }
     }
 
     private func present(_ error: Error) {

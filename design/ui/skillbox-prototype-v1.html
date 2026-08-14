@@ -237,13 +237,28 @@
     .timeline-row time { margin-left: auto; color: var(--quiet); font-size: 9px; }
 
     .library-layout { height: calc(100% - 86px); min-height: 520px; display: grid; grid-template-columns: 340px minmax(0, 1fr); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: white; box-shadow: var(--shadow-card); }
-    .library-list { min-width: 0; border-right: 1px solid var(--line); background: #fafbfc; display: grid; grid-template-rows: auto minmax(0,1fr); }
+    .library-list { min-width: 0; border-right: 1px solid var(--line); background: #fafbfc; display: grid; grid-template-rows: auto auto minmax(0,1fr); }
     .filter-bar { padding: 12px; border-bottom: 1px solid var(--line); }
     .filter-input { width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); outline: none; }
     .filter-input:focus { border-color: rgba(40,103,232,.5); box-shadow: 0 0 0 3px var(--blue-soft); }
     .filters { display: flex; gap: 6px; margin-top: 9px; }
     .filter-pill { border: 0; border-radius: 12px; padding: 4px 8px; background: #eef1f5; color: var(--muted); font-size: 9px; }
     .filter-pill.active { color: var(--blue); background: var(--blue-soft); font-weight: 650; }
+    .organizer-toolbar { display: flex; align-items: center; padding: 10px 12px 7px; }
+    .organizer-toolbar strong { font-size: 10px; }
+    .organizer-toolbar span { display: block; margin-top: 2px; color: var(--quiet); font-size: 8px; }
+    .organizer-toolbar .button { margin-left: auto; width: 28px; height: 28px; padding: 0; }
+    .organizer-group { display: flex; align-items: center; gap: 7px; min-height: 30px; padding: 0 12px; color: var(--muted); font-size: 9px; font-weight: 680; }
+    .organizer-group .count { margin-left: auto; color: var(--quiet); font-size: 8px; font-weight: 500; }
+    .folder-header { display: flex; align-items: center; gap: 7px; min-height: 34px; margin: 4px 7px 2px; padding: 0 8px; border-radius: 8px; color: var(--ink); font-size: 9px; font-weight: 680; }
+    .folder-header:hover, .folder-header.drag-over { background: rgba(40,63,107,.07); }
+    .folder-header .folder-icon { color: var(--blue); }
+    .folder-header .count { margin-left: auto; color: var(--quiet); font-size: 8px; font-weight: 500; }
+    .folder-header .more { opacity: .25; }
+    .folder-header:hover .more { opacity: 1; }
+    .skill-item.in-folder { padding-left: 28px; }
+    .skill-item[draggable="true"] { cursor: grab; }
+    .skill-item.drag-over { box-shadow: inset 0 2px var(--blue); }
     .skill-list-scroll { overflow: auto; }
     .skill-item { width: 100%; display: grid; grid-template-columns: 36px minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 12px; border: 0; border-bottom: 1px solid rgba(31,46,76,.07); background: transparent; text-align: left; cursor: default; }
     .skill-item:hover { background: #f5f7fa; }
@@ -285,6 +300,7 @@
     .manage-line .danger-link { margin-left: auto; border: 0; box-shadow: none; color: var(--red); background: transparent; }
     .skill-details { margin-top: 16px; border: 1px solid var(--line); border-radius: 13px; background: white; overflow: hidden; }
     .skill-details summary { display: flex; align-items: center; gap: 9px; padding: 14px 15px; cursor: pointer; font-size: 11px; font-weight: 680; list-style: none; }
+    .skill-details summary:hover { color: var(--blue); background: var(--blue-soft); }
     .skill-details summary::-webkit-details-marker { display: none; }
     .skill-details summary::before { content: "›"; color: var(--quiet); font-size: 17px; line-height: 1; transition: transform .14s ease; }
     .skill-details[open] summary::before { transform: rotate(90deg); }
@@ -518,20 +534,23 @@
           <div class="page-head"><div><div class="eyebrow">集中管理</div><h1>我的 Skills</h1><p class="lead">每个 Skill 在这里保留一份，再由你决定安装到哪些应用。</p></div><div class="head-actions"><button class="button">从电脑添加</button><button class="button primary">从 GitHub 添加</button></div></div>
           <div class="prototype-empty"><div class="empty-copy"><div class="empty-symbol">□</div><h2>还没有添加 Skill</h2><p>从电脑文件夹或公开 GitHub 地址添加，确认前只会查看内容。</p><div class="empty-actions"><button class="button">从电脑添加</button><button class="button primary">从 GitHub 添加</button></div></div></div>
           <div class="library-layout">
-            <div class="library-list"><div class="filter-bar"><input class="filter-input" aria-label="筛选 Skills" placeholder="筛选 68 个 Skills"><div class="filters"><button class="filter-pill active">全部</button><button class="filter-pill">需处理 3</button><button class="filter-pill">GitHub 27</button></div></div><div class="skill-list-scroll">
-              <button class="skill-item active" data-skill="wechat"><span class="skill-mark">W</span><span><strong>wechat-layout-publisher</strong><small>公众号排版与发布工作流</small></span><span class="risk-badge">低风险</span></button>
-              <button class="skill-item" data-skill="agent"><span class="skill-mark purple">A</span><span><strong>agent-team</strong><small>多 Agent 团队协作治理</small></span><span class="risk-badge warn">有改动</span></button>
-              <button class="skill-item" data-skill="writing"><span class="skill-mark green">H</span><span><strong>human-writing</strong><small>通用中文创作与改稿</small></span><span class="risk-badge warn">2 个版本</span></button>
-              <button class="skill-item"><span class="skill-mark">V</span><span><strong>vercel-react-best-practices</strong><small>React 与 Next.js 性能规则</small></span><span class="risk-badge">低风险</span></button>
-              <button class="skill-item"><span class="skill-mark purple">M</span><span><strong>museframe</strong><small>小红书视觉内容生产</small></span><span class="risk-badge">低风险</span></button>
-              <button class="skill-item"><span class="skill-mark green">O</span><span><strong>obsidian</strong><small>Obsidian 知识库操作</small></span><span class="risk-badge warn">需注意</span></button>
+            <div class="library-list"><div class="filter-bar"><input class="filter-input" aria-label="筛选 Skills" placeholder="筛选 68 个 Skills"><div class="filters"><button class="filter-pill active">全部</button><button class="filter-pill">需处理 3</button><button class="filter-pill">GitHub 27</button></div></div><div class="organizer-toolbar"><div><strong>我的分类</strong><span>拖动 Skill 可整理和排序</span></div><button class="button" id="openFolder" aria-label="新建文件夹">＋</button></div><div class="skill-list-scroll" id="organizerList">
+              <div class="organizer-group" data-folder-id="uncategorized">▣ 未分类 <span class="count">1</span></div>
+              <button class="skill-item" draggable="true" data-skill="writing"><span class="skill-mark green">H</span><span><strong>human-writing</strong><small>通用中文创作与改稿</small></span><span class="risk-badge warn">2 个版本</span></button>
+              <div class="folder-header" draggable="true" data-folder-id="content">⌄ <span class="folder-icon">▰</span>内容创作 <span class="count">3</span><span class="more">•••</span></div>
+              <button class="skill-item in-folder active" draggable="true" data-skill="wechat"><span class="skill-mark">W</span><span><strong>wechat-layout-publisher</strong><small>公众号排版与发布工作流</small></span><span class="risk-badge">低风险</span></button>
+              <button class="skill-item in-folder" draggable="true"><span class="skill-mark purple">M</span><span><strong>museframe</strong><small>小红书视觉内容生产</small></span><span class="risk-badge">低风险</span></button>
+              <button class="skill-item in-folder" draggable="true"><span class="skill-mark green">O</span><span><strong>obsidian</strong><small>Obsidian 知识库操作</small></span><span class="risk-badge warn">需注意</span></button>
+              <div class="folder-header" draggable="true" data-folder-id="product">⌄ <span class="folder-icon">▰</span>产品开发 <span class="count">2</span><span class="more">•••</span></div>
+              <button class="skill-item in-folder" draggable="true" data-skill="agent"><span class="skill-mark purple">A</span><span><strong>agent-team</strong><small>多 Agent 团队协作治理</small></span><span class="risk-badge warn">有改动</span></button>
+              <button class="skill-item in-folder" draggable="true"><span class="skill-mark">V</span><span><strong>vercel-react-best-practices</strong><small>React 与 Next.js 性能规则</small></span><span class="risk-badge">低风险</span></button>
             </div></div>
             <article class="skill-detail"><div class="detail-head"><span class="skill-mark" id="detailMark">W</span><div class="detail-title"><h2 id="detailName">wechat-layout-publisher</h2><p id="detailDescription">公众号定稿、配图排版、可复制 HTML 与发布归档工作流。</p></div><div class="detail-head-actions"><button class="button">在 Finder 中显示</button><button class="button" aria-label="更多操作">•••</button></div></div>
               <div class="detail-meta-line"><span id="detailSource">本地项目 · 已检查</span><span>12 个文件</span><span id="detailDate">今天 09:18 更新</span></div>
               <div class="quick-panel"><div class="quick-head"><div class="quick-copy"><h3>安装到你的 AI 应用</h3><p>只会选择已经找到且可以写入的位置，继续后先给你看安装清单。</p></div><div class="quick-actions"><button class="button primary" id="openDeploy">安装到全部可用应用</button><button class="button">全部卸载</button></div></div><div class="manage-line"><span>已安装到 3 个应用</span><button class="button danger-link">删除这份 Skill</button></div></div>
               <div class="section-title">已安装到 <span class="count">3</span></div><div class="install-chips"><span class="install-chip"><i></i>Codex</span><span class="install-chip"><i></i>Claude Code</span><span class="install-chip"><i></i>HanaAgent</span></div>
               <div class="section-title">使用前检查</div><div class="risk-panel"><span class="risk-symbol">✓</span><div><strong>没有发现需要阻止的内容</strong><p>SkillBox 只查看文件，不会运行里面的内容。仍建议只使用你信任的来源。</p></div></div>
-              <details class="skill-details" open><summary>查看 Skill 详情 <small>12 个文件</small></summary><div class="skill-detail-content"><div class="main-file-row"><span class="file-glyph">M↓</span><div class="main-file-copy"><strong>SKILL.md</strong><span>主说明文件 · 8.6 KB</span></div><button class="button" id="openMarkdownPreview">预览</button></div><div class="directory-label">完整目录 <span>文件只读展示</span></div><div class="file-tree"><div class="file-row"><span class="file-icon">▾</span><strong>wechat-layout-publisher</strong></div><div class="file-row depth-1 main"><span class="file-icon">M↓</span>SKILL.md</div><div class="file-row depth-1"><span class="file-icon">▸</span>assets</div><div class="file-row depth-2"><span class="file-icon">◻</span>cover-guide.png</div><div class="file-row depth-1"><span class="file-icon">▾</span>references</div><div class="file-row depth-2"><span class="file-icon">M↓</span>layout-rules.md</div><div class="file-row depth-2"><span class="file-icon">M↓</span>publishing-checklist.md</div><div class="file-row depth-1"><span class="file-icon">▸</span>scripts</div></div><div class="file-meta">内容校验码 <span id="detailHash">8c91…72af</span> · 用于发现文件是否被改过</div></div></details>
+              <details class="skill-details" open><summary><span>查看 Skill 详情</span><small>12 个文件</small></summary><div class="skill-detail-content"><div class="main-file-row"><span class="file-glyph">M↓</span><div class="main-file-copy"><strong>SKILL.md</strong><span>主说明文件 · 8.6 KB</span></div><button class="button" id="openMarkdownPreview">预览</button></div><div class="directory-label">完整目录 <span>文件只读展示</span></div><div class="file-tree"><div class="file-row"><span class="file-icon">▾</span><strong>wechat-layout-publisher</strong></div><div class="file-row depth-1 main"><span class="file-icon">M↓</span>SKILL.md</div><div class="file-row depth-1"><span class="file-icon">▸</span>assets</div><div class="file-row depth-2"><span class="file-icon">◻</span>cover-guide.png</div><div class="file-row depth-1"><span class="file-icon">▾</span>references</div><div class="file-row depth-2"><span class="file-icon">M↓</span>layout-rules.md</div><div class="file-row depth-2"><span class="file-icon">M↓</span>publishing-checklist.md</div><div class="file-row depth-1"><span class="file-icon">▸</span>scripts</div></div><div class="file-meta">内容校验码 <span id="detailHash">8c91…72af</span> · 用于发现文件是否被改过</div></div></details>
             </article>
           </div>
         </section>
@@ -606,6 +625,8 @@ description: 公众号定稿、配图排版与发布归档工作流
 3. 用户确认后创建草稿
 4. 发布后保存归档记录</pre></div><footer class="modal-foot"><span class="spacer"></span><button class="button primary" data-close="markdown">完成</button></footer></section></div>
 
+    <div class="scrim" id="folderScrim" role="dialog" aria-modal="true" aria-labelledby="folderTitle"><section class="modal" style="max-width:480px"><header class="modal-head"><strong id="folderTitle">新建文件夹</strong><button class="modal-close" data-close="folder" aria-label="关闭">×</button></header><div class="modal-body"><p class="version-intro">文件夹只用于整理列表，不会移动或修改 Skill 原件。</p><input class="filter-input" id="folderName" aria-label="文件夹名称" placeholder="例如：写作、开发、运营"></div><footer class="modal-foot"><button class="button" data-close="folder">取消</button><span class="spacer"></span><button class="button primary" id="createFolder">创建</button></footer></section></div>
+
     <div class="toast" id="toast" role="status"><span class="toast-check">✓</span><span class="toast-copy"><strong>安装完成，更新了 4 个位置</strong><span>备份将至少保留 30 天</span></span><button data-go="records">查看最近操作</button><button id="undoToast">恢复到操作前</button></div>
   </main>
 
@@ -648,6 +669,7 @@ description: 公众号定稿、配图排版与发布归档工作流
     const conflict = document.getElementById('conflictScrim');
     const deploy = document.getElementById('deployScrim');
     const markdown = document.getElementById('markdownScrim');
+    const folder = document.getElementById('folderScrim');
     function openOnboarding() { onboarding.classList.add('open'); document.getElementById('onboardNext').focus(); }
     document.getElementById('replayOnboarding').addEventListener('click', openOnboarding);
     document.getElementById('replayOnboardingSettings').addEventListener('click', openOnboarding);
@@ -656,8 +678,43 @@ description: 公众号定稿、配图排版与发布归档工作流
     document.querySelectorAll('[data-close="conflict"]').forEach(button => button.addEventListener('click', () => conflict.classList.remove('open')));
     document.querySelectorAll('[data-close="deploy"]').forEach(button => button.addEventListener('click', () => deploy.classList.remove('open')));
     document.querySelectorAll('[data-close="markdown"]').forEach(button => button.addEventListener('click', () => markdown.classList.remove('open')));
+    document.querySelectorAll('[data-close="folder"]').forEach(button => button.addEventListener('click', () => folder.classList.remove('open')));
     document.getElementById('openDeploy').addEventListener('click', () => deploy.classList.add('open'));
     document.getElementById('openMarkdownPreview').addEventListener('click', () => markdown.classList.add('open'));
+    document.getElementById('openFolder').addEventListener('click', () => { folder.classList.add('open'); document.getElementById('folderName').focus(); });
+    document.getElementById('createFolder').addEventListener('click', () => {
+      const input = document.getElementById('folderName');
+      const name = input.value.trim();
+      if (!name) { input.focus(); return; }
+      const header = document.createElement('div');
+      header.className = 'folder-header';
+      header.dataset.folderId = `custom-${Date.now()}`;
+      header.innerHTML = `⌄ <span class="folder-icon">▰</span>${name}<span class="count">0</span><span class="more">•••</span>`;
+      document.getElementById('organizerList').appendChild(header);
+      input.value = '';
+      folder.classList.remove('open');
+    });
+
+    let draggedSkill = null;
+    document.querySelectorAll('.skill-item[draggable="true"]').forEach(item => {
+      item.addEventListener('dragstart', () => { draggedSkill = item; });
+      item.addEventListener('dragover', event => { event.preventDefault(); item.classList.add('drag-over'); });
+      item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
+      item.addEventListener('drop', event => {
+        event.preventDefault(); item.classList.remove('drag-over');
+        if (draggedSkill && draggedSkill !== item) item.parentNode.insertBefore(draggedSkill, item);
+      });
+    });
+    document.querySelectorAll('[data-folder-id]').forEach(target => {
+      target.addEventListener('dragover', event => { event.preventDefault(); target.classList.add('drag-over'); });
+      target.addEventListener('dragleave', () => target.classList.remove('drag-over'));
+      target.addEventListener('drop', event => {
+        event.preventDefault(); target.classList.remove('drag-over');
+        if (!draggedSkill) return;
+        target.insertAdjacentElement('afterend', draggedSkill);
+        draggedSkill.classList.toggle('in-folder', target.dataset.folderId !== 'uncategorized');
+      });
+    });
     document.querySelectorAll('.conflict-trigger').forEach(button => button.addEventListener('click', () => conflict.classList.add('open')));
     document.querySelectorAll('.version-choice').forEach(button => button.addEventListener('click', () => {
       document.querySelectorAll('.version-choice').forEach(choice => choice.classList.remove('selected'));

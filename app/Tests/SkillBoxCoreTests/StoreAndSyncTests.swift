@@ -109,6 +109,35 @@ struct LibraryStoreTests {
         }
         #expect(await store.currentSnapshot().skills.count == 1)
     }
+
+    @Test("Skill folders and drag order persist without moving Skill content")
+    func organizationPersists() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let first = try await store.importCandidate(fixture.candidate(name: "first", body: "one"))
+        let second = try await store.importCandidate(fixture.candidate(name: "second", body: "two"))
+        let work = SkillFolder(name: "工作", sortIndex: 0)
+        let personal = SkillFolder(name: "个人", sortIndex: 1)
+        var organization = SkillOrganization(folders: [work, personal])
+        organization.normalize(skillIDs: [first.id, second.id])
+        organization.moveSkill(second.id, to: work.id)
+        organization.moveSkill(first.id, to: work.id, before: second.id)
+        organization.moveFolder(personal.id, before: work.id)
+        try await store.replaceOrganization(organization)
+
+        let reloaded = try LibraryStore(root: fixture.storeRoot)
+        var persisted = await reloaded.currentSnapshot().organization
+        #expect(persisted.folders.map(\.name) == ["个人", "工作"])
+        #expect(persisted.placements.filter { $0.folderID == work.id }.sorted { $0.sortIndex < $1.sortIndex }.map(\.skillID) == [first.id, second.id])
+        #expect(FileManager.default.fileExists(atPath: fixture.storeRoot.appendingPathComponent(first.contentRelativePath).path))
+
+        persisted.deleteFolder(work.id)
+        try await reloaded.replaceOrganization(persisted)
+        let afterDelete = await reloaded.currentSnapshot()
+        #expect(afterDelete.skills.count == 2)
+        #expect(afterDelete.organization.placements.allSatisfy { $0.folderID == nil })
+    }
 }
 
 @Suite("Transactional sync")
