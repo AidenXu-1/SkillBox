@@ -22,8 +22,8 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
                 severity: .blocked,
                 category: .invalidFormat,
                 relativePath: "SKILL.md",
-                title: "缺少 SKILL.md",
-                evidence: "目录不符合标准 Skill 结构"
+                title: "缺少 Skill 必需的说明文件",
+                evidence: "这个文件夹不是完整的 Skill"
             ))
         }
 
@@ -45,7 +45,7 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
                     severity: escapes ? .blocked : .caution,
                     category: escapes ? .pathEscape : .symlink,
                     relativePath: relative,
-                    title: escapes ? "软链接指向 Skill 目录之外" : "包含软链接",
+                    title: escapes ? "文件连接指向 Skill 文件夹之外" : "包含指向其他文件的连接",
                     evidence: destination
                 ))
                 continue
@@ -59,8 +59,8 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
                     severity: .high,
                     category: .oversizedFile,
                     relativePath: relative,
-                    title: "文件体积异常",
-                    evidence: "\(size) bytes"
+                    title: "有文件体积较大",
+                    evidence: ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
                 ))
             }
 
@@ -72,7 +72,7 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
                     severity: .caution,
                     category: .executableFile,
                     relativePath: relative,
-                    title: "文件具有执行权限",
+                    title: "包含可以直接运行的文件",
                     evidence: String(format: "%o", permissions)
                 ))
             }
@@ -83,8 +83,8 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
                     severity: .high,
                     category: .binaryFile,
                     relativePath: relative,
-                    title: "包含二进制内容",
-                    evidence: "静态检查无法解释此文件行为"
+                    title: "包含无法直接阅读的程序文件",
+                    evidence: "SkillBox 无法仅通过文字判断它的用途"
                 ))
                 continue
             }
@@ -103,11 +103,11 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
         findings: inout [RiskFinding]
     ) {
         let patterns: [(RiskCategory, String, RiskSeverity, String)] = [
-            (.network, #"\b(curl|wget)\b|https?://"#, .caution, "包含网络访问或下载模式"),
-            (.privilege, #"\bsudo\b|chmod\s+[0-7]*7"#, .high, "包含提权或宽泛权限模式"),
-            (.deletion, #"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\b|FileManager\.default\.removeItem"#, .high, "包含递归删除模式"),
-            (.credentialAccess, #"\.ssh|\.aws|keychain|security\s+find-|GH_TOKEN|GITHUB_TOKEN|API_KEY"#, .high, "可能访问凭据或密钥"),
-            (.dynamicExecution, #"\beval\s*\(|exec\s*\(|child_process|Process\s*\("#, .high, "包含动态执行或启动进程模式"),
+            (.network, #"\b(curl|wget)\b|https?://"#, .caution, "可能访问网络或下载文件"),
+            (.privilege, #"\bsudo\b|chmod\s+[0-7]*7"#, .high, "可能请求更高的系统权限"),
+            (.deletion, #"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\b|FileManager\.default\.removeItem"#, .high, "可能删除文件夹中的内容"),
+            (.credentialAccess, #"\.ssh|\.aws|keychain|security\s+find-|GH_TOKEN|GITHUB_TOKEN|API_KEY"#, .high, "可能读取账号信息或密钥"),
+            (.dynamicExecution, #"\beval\s*\(|exec\s*\(|child_process|Process\s*\("#, .high, "可能启动其他程序或命令"),
         ]
 
         for (category, pattern, scriptSeverity, title) in patterns {
@@ -118,8 +118,8 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
                 severity: isDocumentation ? .info : scriptSeverity,
                 category: category,
                 relativePath: relativePath,
-                title: isDocumentation ? "文档中说明了相关命令" : title,
-                evidence: isDocumentation ? "仅在文本说明中发现，不代表导入时会执行" : "请在导入前人工检查该文件"
+                title: isDocumentation ? "说明文字中提到了相关命令" : title,
+                evidence: isDocumentation ? "只在说明文字里发现，添加时不会运行" : "建议在添加前查看这个文件"
             ))
         }
     }

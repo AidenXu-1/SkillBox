@@ -100,9 +100,9 @@ public enum PathSafetyError: LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case let .unsafeTarget(path):
-            "不能把过于宽泛的目录设为 Skills 目标：\(path)"
+            "这个文件夹范围太大，请选择应用专门用来保存 Skills 的文件夹：\(path)"
         case let .targetInsideLibrary(path):
-            "目标目录不能位于 SkillBox 中央仓库内部：\(path)"
+            "这个文件夹在 SkillBox 自己的保存位置里，请选择应用的 Skills 文件夹：\(path)"
         }
     }
 }

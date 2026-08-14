@@ -11,7 +11,7 @@ final class AppModel: ObservableObject {
     @Published var selectedCandidateIDs: Set<String> = []
     @Published var syncPlan: SyncPlan?
     @Published var isBusy = false
-    @Published var statusMessage = "准备盘点"
+    @Published var statusMessage = "准备查看本机 Skills"
     @Published var errorMessage: String?
     @Published var showOnboarding = false
     @Published var githubURL = ""
@@ -30,7 +30,7 @@ final class AppModel: ObservableObject {
         do {
             store = try LibraryStore(root: libraryRoot)
         } catch {
-            fatalError("无法初始化 SkillBox 中央仓库：\(error.localizedDescription)")
+            fatalError("无法准备 SkillBox 的本地保存位置：\(error.localizedDescription)")
         }
         showOnboarding = !UserDefaults.standard.bool(forKey: "SkillBoxOnboardingCompleted")
         Task { await bootstrap() }
@@ -40,7 +40,7 @@ final class AppModel: ObservableObject {
         let recoveryWarnings = await store.recoveryWarnings
         if !recoveryWarnings.isEmpty {
             errorMessage = recoveryWarnings.joined(separator: "\n")
-            statusMessage = "已保护无法读取的旧数据"
+            statusMessage = "旧数据无法读取，原文件已保留"
         }
         let persisted = await store.currentSnapshot()
         let builtin = BuiltinAgentAdapters.all.map { $0.makeTarget(homeDirectory: homeDirectory, fileManager: .default) }
@@ -57,7 +57,7 @@ final class AppModel: ObservableObject {
 
     func scanInstalledSkills() async {
         isBusy = true
-        statusMessage = "正在只读盘点…"
+        statusMessage = "正在查看本机 Skills…"
         defer { isBusy = false }
         let targetRoots = snapshot.targets.map { URL(fileURLWithPath: $0.path) }
         let universal = ["~/.agents/skills", "~/.config/agents/skills"].map { PathSafety.resolveTildePath($0, homeDirectory: homeDirectory) }
@@ -67,9 +67,9 @@ final class AppModel: ObservableObject {
         }
         let sourceNames = Dictionary(uniqueKeysWithValues: snapshot.targets.map { ($0.path, $0.displayName) })
         scanResult = await scanner.scan(roots: roots, sourceName: { root in
-            sourceNames[root.path] ?? "通用目录"
+            sourceNames[root.path] ?? "其他通用位置"
         })
-        statusMessage = "只读盘点完成，没有修改 Agent 文件"
+        statusMessage = "查看完成，没有改动任何文件"
     }
 
     func finishOnboarding() {
@@ -123,7 +123,7 @@ final class AppModel: ObservableObject {
         if matching.first?.fingerprint == skill.fingerprint {
             cleanupGitHubCandidates(all)
             updatingSkillID = nil
-            statusMessage = "已经是 GitHub 最新版本"
+            statusMessage = "这份 Skill 已经是 GitHub 上的最新内容"
         } else {
             pendingCandidates = matching
             selectedCandidateIDs = Set(matching.filter { !$0.riskReport.isBlocked }.map(\.id))
@@ -144,7 +144,7 @@ final class AppModel: ObservableObject {
             pendingCandidates = []
             selectedCandidateIDs = []
             updatingSkillID = nil
-            statusMessage = "已导入中央仓库"
+            statusMessage = "已加入「我的 Skills」"
             await reload()
         } catch { present(error) }
     }
@@ -207,7 +207,7 @@ final class AppModel: ObservableObject {
         defer { isBusy = false }
         do {
             let result = try await executor.execute(plan: syncPlan, store: store)
-            statusMessage = "同步完成：\(result.backups.count) 项变更"
+            statusMessage = "安装完成：更新了 \(result.backups.count) 个位置"
             await reload()
             await scanInstalledSkills()
         } catch { present(error) }
@@ -218,7 +218,7 @@ final class AppModel: ObservableObject {
         defer { isBusy = false }
         do {
             _ = try await executor.undo(transactionID: transaction.id, store: store)
-            statusMessage = "已撤销事务"
+            statusMessage = "已恢复到操作前"
             await reload()
             await scanInstalledSkills()
         } catch { present(error) }

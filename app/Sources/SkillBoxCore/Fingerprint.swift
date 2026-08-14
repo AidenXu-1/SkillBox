@@ -7,8 +7,8 @@ public enum FingerprintError: LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case let .missingDirectory(path): "Skill 目录不存在：\(path)"
-        case let .unsupportedItem(path): "无法读取 Skill 文件：\(path)"
+        case let .missingDirectory(path): "找不到这份 Skill 的文件夹：\(path)"
+        case let .unsupportedItem(path): "SkillBox 无法读取这个文件：\(path)"
         }
     }
 }

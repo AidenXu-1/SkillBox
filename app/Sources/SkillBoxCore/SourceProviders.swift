@@ -51,15 +51,15 @@ public enum GitHubSourceError: LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .invalidURL: "GitHub 地址格式不正确"
-        case .unsupportedHost: "第一版只支持 github.com 的公开仓库"
-        case let .requestFailed(code): "GitHub 请求失败（HTTP \(code)）"
-        case .downloadTooLarge: "下载内容超过 10 MiB 上限"
-        case .archiveTooLarge: "解压内容超过 25 MiB 上限"
-        case .tooManyFiles: "仓库文件数超过 1000 个上限"
-        case let .unsafeArchivePath(path): "压缩包包含危险路径：\(path)"
-        case let .extractionFailed(message): "无法安全解压：\(message)"
-        case .noSkillsFound: "仓库中没有找到有效的 SKILL.md"
+        case .invalidURL: "这个 GitHub 地址无法识别，请检查后重试"
+        case .unsupportedHost: "目前只能从 github.com 的公开仓库添加"
+        case .requestFailed: "暂时无法从 GitHub 获取内容，请稍后重试"
+        case .downloadTooLarge: "GitHub 下载的文件太大，目前最多约 10 MB"
+        case .archiveTooLarge: "这个仓库展开后太大，目前最多约 25 MB"
+        case .tooManyFiles: "这个仓库文件太多，目前最多 1000 个"
+        case .unsafeArchivePath: "这个仓库包含不安全的文件位置，已停止添加"
+        case .extractionFailed: "下载的内容无法安全打开"
+        case .noSkillsFound: "这个仓库里没有找到可以添加的 Skill"
         }
     }
 }

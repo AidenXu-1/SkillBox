@@ -8,10 +8,10 @@ public enum FileOperationError: LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case let .unsafeSymlink(path): "检测到越界软链接：\(path)"
-        case let .sourceMissing(path): "源目录不存在：\(path)"
-        case .fingerprintMismatch: "复制后的内容指纹与中央原件不一致"
-        case let .invalidRelativePath(path): "检测到非法相对路径：\(path)"
+        case let .unsafeSymlink(path): "发现一个指向 Skill 文件夹外的文件连接，已停止：\(path)"
+        case let .sourceMissing(path): "找不到要复制的 Skill 文件夹：\(path)"
+        case .fingerprintMismatch: "复制后的内容校验没有通过。为了保护原文件，操作已停止"
+        case let .invalidRelativePath(path): "发现不安全的文件位置，已停止：\(path)"
         }
     }
 }

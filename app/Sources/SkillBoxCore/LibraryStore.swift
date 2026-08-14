@@ -9,11 +9,11 @@ public enum LibraryStoreError: LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case let .unsupportedSchema(version): "无法读取 schemaVersion \(version) 的 SkillBox 数据"
-        case .blockedImport: "该 Skill 含有阻断风险，不能导入"
-        case .candidateChanged: "Skill 在导入前发生变化，请重新扫描"
-        case .duplicateRecord: "中央仓库已包含相同 Skill 版本"
-        case .duplicateDesiredDestination: "同一 Agent 的同一安装位置只能选择一个 Skill 版本"
+        case .unsupportedSchema: "这份 SkillBox 数据来自更新的应用版本，当前应用暂时无法读取"
+        case .blockedImport: "这份 Skill 有严重风险，为了安全已阻止添加"
+        case .candidateChanged: "Skill 在你确认前发生了变化，请重新查看"
+        case .duplicateRecord: "「我的 Skills」中已经有相同内容"
+        case .duplicateDesiredDestination: "同一个应用里，同名 Skill 一次只能选择一份"
         }
     }
 }
@@ -197,7 +197,7 @@ public actor LibraryStore {
                 try fileManager.createDirectory(at: recovery, withIntermediateDirectories: true)
                 let archived = recovery.appendingPathComponent("\(Int(Date().timeIntervalSince1970))-\(name)")
                 try fileManager.moveItem(at: url, to: archived)
-                warnings.append("\(name) 无法读取，原文件已移到 \(archived.path)")
+                warnings.append("SkillBox 的一份旧记录无法读取。原文件已安全保留在：\(archived.path)")
                 return fallback
             }
         }

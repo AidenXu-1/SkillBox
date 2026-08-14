@@ -11,6 +11,9 @@
 - [资产总览截图](skillbox-prototype-v1-overview.png)
 - [首次盘点截图](skillbox-prototype-v1-onboarding.png)
 - [同步预览截图](skillbox-prototype-v1-sync-preview.png)
+- [通俗文案版·总览](skillbox-copy-v2-overview.png)
+- [通俗文案版·欢迎页](skillbox-copy-v2-onboarding.png)
+- [通俗文案版·安装确认](skillbox-copy-v2-install-preview.png)
 
 ## 可视化交付要求
 
