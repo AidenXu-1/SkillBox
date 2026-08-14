@@ -8,6 +8,9 @@ public enum LibraryStoreError: LocalizedError {
     case duplicateDesiredDestination
     case skillNotFound
     case skillStillInstalled
+    case targetNotFound
+    case builtinTarget
+    case targetStillInstalled
 
     public var errorDescription: String? {
         switch self {
@@ -18,6 +21,9 @@ public enum LibraryStoreError: LocalizedError {
         case .duplicateDesiredDestination: "同一个应用里，同名 Skill 一次只能选择一份"
         case .skillNotFound: "在「我的 Skills」中找不到这份内容"
         case .skillStillInstalled: "这份 Skill 仍安装在应用中，请先从所有应用卸载"
+        case .targetNotFound: "找不到这个安装位置"
+        case .builtinTarget: "内置应用位置不能删除"
+        case .targetStillInstalled: "这个位置仍有 Skill 由 SkillBox 管理，请先卸载后再移除"
         }
     }
 }
@@ -98,6 +104,40 @@ public actor LibraryStore {
             snapshot.sourceStates[index] = state
         } else {
             snapshot.sourceStates.append(state)
+        }
+        try persist()
+    }
+
+    public func recordGitHubSourceUpdate(_ state: GitHubSourceState, transactionID: UUID) throws {
+        guard let transactionIndex = snapshot.transactions.firstIndex(where: { $0.id == transactionID }),
+              snapshot.transactions[transactionIndex].libraryUpdate != nil
+        else { throw LibraryStoreError.skillNotFound }
+        let previousSnapshot = snapshot
+        let previousState = snapshot.sourceStates.first { $0.skillID == state.skillID }
+        snapshot.transactions[transactionIndex].libraryUpdate?.previousSourceState = previousState
+        snapshot.transactions[transactionIndex].libraryUpdate?.updatedSourceVersionIdentifier = state.currentVersionIdentifier
+        if let sourceIndex = snapshot.sourceStates.firstIndex(where: { $0.skillID == state.skillID }) {
+            snapshot.sourceStates[sourceIndex] = state
+        } else {
+            snapshot.sourceStates.append(state)
+        }
+        do { try persist() } catch {
+            snapshot = previousSnapshot
+            throw error
+        }
+    }
+
+    public func restoreGitHubSourceState(_ backup: LibraryUpdateBackup) throws {
+        guard backup.previousSourceState != nil || backup.updatedSourceVersionIdentifier != nil else { return }
+        let skillID = backup.previousRecord.id
+        if let previous = backup.previousSourceState {
+            if let index = snapshot.sourceStates.firstIndex(where: { $0.skillID == skillID }) {
+                snapshot.sourceStates[index] = previous
+            } else {
+                snapshot.sourceStates.append(previous)
+            }
+        } else {
+            snapshot.sourceStates.removeAll { $0.skillID == skillID }
         }
         try persist()
     }
@@ -218,8 +258,8 @@ public actor LibraryStore {
         root.appendingPathComponent(skill.contentRelativePath)
     }
 
-    public func deleteSkill(id: UUID) throws -> URL {
-        guard snapshot.skills.contains(where: { $0.id == id }) else {
+    public func deleteSkill(id: UUID) throws -> DeletedSkillBackup {
+        guard let record = snapshot.skills.first(where: { $0.id == id }) else {
             throw LibraryStoreError.skillNotFound
         }
         guard !snapshot.installations.contains(where: { $0.skillID == id }) else {
@@ -228,6 +268,13 @@ public actor LibraryStore {
 
         let recordRoot = libraryDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
         let archived = deletedDirectory.appendingPathComponent("\(Int(Date().timeIntervalSince1970))-\(id.uuidString)", isDirectory: true)
+        let deletion = DeletedSkillBackup(
+            record: record,
+            archivedURL: archived,
+            assignments: snapshot.assignments.filter { $0.skillID == id },
+            placement: snapshot.organization.placements.first { $0.skillID == id },
+            sourceState: snapshot.sourceStates.first { $0.skillID == id }
+        )
         let previousSnapshot = snapshot
         try fileManager.moveItem(at: recordRoot, to: archived)
         snapshot.skills.removeAll { $0.id == id }
@@ -241,7 +288,45 @@ public actor LibraryStore {
             try? fileManager.moveItem(at: archived, to: recordRoot)
             throw error
         }
-        return archived
+        return deletion
+    }
+
+    public func restoreDeletedSkill(_ deletion: DeletedSkillBackup) throws -> SkillRecord {
+        guard !snapshot.skills.contains(where: { $0.id == deletion.record.id }) else {
+            throw LibraryStoreError.duplicateRecord
+        }
+        guard fileManager.fileExists(atPath: deletion.archivedURL.path) else {
+            throw LibraryStoreError.skillNotFound
+        }
+        let recordRoot = libraryDirectory.appendingPathComponent(deletion.record.id.uuidString, isDirectory: true)
+        let previousSnapshot = snapshot
+        try fileManager.moveItem(at: deletion.archivedURL, to: recordRoot)
+        snapshot.skills.append(deletion.record)
+        snapshot.assignments.append(contentsOf: deletion.assignments)
+        if let placement = deletion.placement { snapshot.organization.placements.append(placement) }
+        if let sourceState = deletion.sourceState { snapshot.sourceStates.append(sourceState) }
+        snapshot.organization.normalize(skillIDs: snapshot.skills.map(\.id))
+        do {
+            try persist()
+        } catch {
+            snapshot = previousSnapshot
+            try? fileManager.moveItem(at: recordRoot, to: deletion.archivedURL)
+            throw error
+        }
+        return deletion.record
+    }
+
+    public func removeCustomTarget(id: UUID) throws {
+        guard let target = snapshot.targets.first(where: { $0.id == id }) else {
+            throw LibraryStoreError.targetNotFound
+        }
+        guard target.isCustom else { throw LibraryStoreError.builtinTarget }
+        guard !snapshot.installations.contains(where: { $0.targetID == id }) else {
+            throw LibraryStoreError.targetStillInstalled
+        }
+        snapshot.targets.removeAll { $0.id == id }
+        snapshot.assignments.removeAll { $0.targetID == id }
+        try persist()
     }
 
     public func recordTransaction(_ transaction: SyncTransaction) throws {

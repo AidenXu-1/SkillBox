@@ -3,6 +3,12 @@ import Combine
 import Foundation
 import SkillBoxCore
 
+struct SkillBoxOperationProgress: Equatable {
+    var title: String
+    var detail: String
+    var canCancel: Bool
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var snapshot = LibrarySnapshot()
@@ -27,6 +33,9 @@ final class AppModel: ObservableObject {
     @Published var isGitHubConnected = false
     @Published var githubLoginStatus = ""
     @Published var githubAuthorizedRepositories: [GitHubRepositorySummary] = []
+    @Published var operationProgress: SkillBoxOperationProgress?
+    @Published private(set) var lastDeletedSkill: DeletedSkillBackup?
+    @Published var canRetryGitHubWithDefaultBranch = false
 
     let libraryRoot: URL
     private let store: LibraryStore
@@ -43,6 +52,7 @@ final class AppModel: ObservableObject {
     private lazy var githubProvider = GitHubSourceProvider(tokenProvider: githubSession)
     private lazy var githubUpdateChecker = GitHubUpdateChecker(checker: githubProvider, store: store)
     private var githubLoginTask: Task<Void, Never>?
+    private var remoteOperationTask: Task<Void, Never>?
 
     var githubClientID: String { Bundle.main.object(forInfoDictionaryKey: "SkillBoxGitHubClientID") as? String ?? "" }
     var isGitHubConfigured: Bool { !githubClientID.isEmpty }
@@ -159,13 +169,37 @@ final class AppModel: ObservableObject {
         activeConflict = nil
         updatingSkillID = nil
         isBusy = true
-        defer { isBusy = false }
+        operationProgress = .init(title: "正在获取完整版本", detail: "连接 GitHub、下载文件并进行使用前检查…", canCancel: true)
+        defer {
+            isBusy = false
+            operationProgress = nil
+        }
         do {
             let result = try await githubProvider.preview(locator: githubURL, trackingMode: githubTrackingMode)
+            canRetryGitHubWithDefaultBranch = false
             pendingGitHubVersion = result.version
             pendingCandidates = result.candidates
             selectedCandidateIDs = Set(result.candidates.filter { !$0.riskReport.isBlocked }.map(\.id))
-        } catch { present(error) }
+        } catch GitHubSourceError.noStableRelease {
+            canRetryGitHubWithDefaultBranch = true
+            errorMessage = GitHubSourceError.noStableRelease.localizedDescription
+            statusMessage = "这个仓库还没有正式 Release"
+        } catch {
+            if isCancellation(error) { statusMessage = "已取消 GitHub 下载" }
+            else { present(error) }
+        }
+    }
+
+    func startGitHubPreview() {
+        remoteOperationTask?.cancel()
+        remoteOperationTask = Task { await previewGitHub() }
+    }
+
+    func retryGitHubUsingDefaultBranch() {
+        canRetryGitHubWithDefaultBranch = false
+        errorMessage = nil
+        githubTrackingMode = .defaultBranch
+        startGitHubPreview()
     }
 
     func checkForUpdate(_ skill: SkillRecord) async {
@@ -188,7 +222,11 @@ final class AppModel: ObservableObject {
     func previewAvailableUpdate(_ skill: SkillRecord) async {
         guard let state = snapshot.sourceStates.first(where: { $0.skillID == skill.id }) else { return }
         isBusy = true
-        defer { isBusy = false }
+        operationProgress = .init(title: "正在准备更新", detail: "下载新版本并比较文件、说明和风险变化…", canCancel: true)
+        defer {
+            isBusy = false
+            operationProgress = nil
+        }
         do {
             let remote = try await githubProvider.checkRemoteVersion(
                 repositoryFullName: state.repositoryFullName,
@@ -212,7 +250,23 @@ final class AppModel: ObservableObject {
             updatingSkillID = skill.id
             pendingCandidates = [candidate]
             selectedCandidateIDs = candidate.riskReport.isBlocked ? [] : [candidate.id]
-        } catch { present(error) }
+        } catch {
+            if isCancellation(error) { statusMessage = "已取消更新检查" }
+            else { present(error) }
+        }
+    }
+
+    func startAvailableUpdatePreview(_ skill: SkillRecord) {
+        remoteOperationTask?.cancel()
+        remoteOperationTask = Task { await previewAvailableUpdate(skill) }
+    }
+
+    func cancelRemoteOperation() {
+        remoteOperationTask?.cancel()
+        remoteOperationTask = nil
+        operationProgress = nil
+        isBusy = false
+        statusMessage = "已取消当前操作"
     }
 
     func importSelectedCandidates() async {
@@ -255,7 +309,12 @@ final class AppModel: ObservableObject {
             let result = deployToExisting
                 ? try await updateCoordinator.updateAndDeploy(skillID: skillID, candidate: candidate, store: store)
                 : try await updateCoordinator.updateCentralOnly(skillID: skillID, candidate: candidate, store: store)
-            try await store.updateSourceState(sourceState(skillID: skillID, skillPath: candidate.source.skillPath, remote: remote))
+            let updatedSourceState = sourceState(skillID: skillID, skillPath: candidate.source.skillPath, remote: remote)
+            if let transaction = result.transaction {
+                try await store.recordGitHubSourceUpdate(updatedSourceState, transactionID: transaction.id)
+            } else {
+                try await store.updateSourceState(updatedSourceState)
+            }
             cleanupGitHubCandidates(pendingCandidates)
             pendingCandidates = []
             selectedCandidateIDs = []
@@ -278,6 +337,30 @@ final class AppModel: ObservableObject {
     func setUpdateChecking(_ enabled: Bool, for skill: SkillRecord) async {
         do { try await githubUpdateChecker.setCheckingEnabled(enabled, skillID: skill.id); await reload() }
         catch { present(error) }
+    }
+
+    func setGitHubTrackingMode(_ mode: GitHubTrackingMode, for skill: SkillRecord) async {
+        guard var state = snapshot.sourceStates.first(where: { $0.skillID == skill.id }), state.trackingMode != mode else { return }
+        state.trackingMode = mode
+        state.availableVersionIdentifier = nil
+        state.availableVersionName = nil
+        state.availableCommitSHA = nil
+        state.availableTreeSHA = nil
+        state.ignoredVersionIdentifier = nil
+        state.status = .needsInitialCheck
+        do {
+            try await store.updateSourceState(state)
+            statusMessage = mode == .latestStableRelease ? "以后跟随最新正式 Release" : "以后跟随仓库默认分支"
+            await reload()
+        } catch { present(error) }
+    }
+
+    func openGitHubSource(_ skill: SkillRecord) {
+        guard let url = URL(string: skill.source.locator), url.host?.lowercased() == "github.com" else {
+            noticeMessage = "这份 Skill 没有可打开的 GitHub 地址。"
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     func checkAllGitHubUpdates() async {
@@ -330,6 +413,14 @@ final class AppModel: ObservableObject {
         } catch { present(error) }
     }
 
+    func connectPrivateGitHub() async {
+        guard isGitHubConfigured else {
+            noticeMessage = "这个测试版本还没有启用私人仓库连接。公开仓库仍可直接添加；启用私人仓库需要先为 SkillBox 配置 GitHub 登录。"
+            return
+        }
+        await beginGitHubLogin()
+    }
+
     func openGitHubAuthorization() {
         guard let authorization = githubAuthorization else { return }
         NSPasteboard.general.clearContents()
@@ -341,7 +432,7 @@ final class AppModel: ObservableObject {
 
     func manageGitHubRepositories() {
         if let githubInstallURL { NSWorkspace.shared.open(githubInstallURL) }
-        else { noticeMessage = "当前测试包还没有配置 GitHub App 安装地址" }
+        else { noticeMessage = "这个测试版本暂时不能更改仓库权限，本地 Skills 不受影响。" }
     }
 
     func disconnectGitHub() async {
@@ -430,14 +521,28 @@ final class AppModel: ObservableObject {
 
     func deleteSkill(_ skill: SkillRecord) async -> Bool {
         do {
-            _ = try await store.deleteSkill(id: skill.id)
-            statusMessage = "已从「我的 Skills」删除，原内容保存在「已删除」文件夹"
+            lastDeletedSkill = try await store.deleteSkill(id: skill.id)
+            statusMessage = "已删除 \(skill.displayName)，可以立即撤销"
             await reload()
             return true
         } catch {
             present(error)
             return false
         }
+    }
+
+    func restoreLastDeletedSkill() async {
+        guard let deletion = lastDeletedSkill else { return }
+        do {
+            let restored = try await store.restoreDeletedSkill(deletion)
+            lastDeletedSkill = nil
+            statusMessage = "已恢复 \(restored.displayName)"
+            await reload()
+        } catch { present(error) }
+    }
+
+    func dismissDeleteUndo() {
+        lastDeletedSkill = nil
     }
 
     func hasManagedInstallation(for skill: SkillRecord) -> Bool {
@@ -547,11 +652,55 @@ final class AppModel: ObservableObject {
     }
 
     func addCustomTarget(name: String, url: URL) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            noticeMessage = "请先输入应用名称。"
+            return
+        }
         do {
             try PathSafety.validateCustomTarget(url, homeDirectory: homeDirectory, libraryRoot: libraryRoot)
+            guard !snapshot.targets.contains(where: { $0.path == url.standardizedFileURL.path }) else {
+                noticeMessage = "这个文件夹已经添加过了。"
+                return
+            }
             var targets = snapshot.targets
-            targets.append(.init(kind: .custom, displayName: name, path: url.standardizedFileURL.path, detectionStatus: .available, writeStatus: FileManager.default.isWritableFile(atPath: url.path) ? .writable : .readOnly, isCustom: true))
+            targets.append(.init(kind: .custom, displayName: trimmed, path: url.standardizedFileURL.path, detectionStatus: .available, writeStatus: FileManager.default.isWritableFile(atPath: url.path) ? .writable : .readOnly, isCustom: true))
             try await store.replaceTargets(targets)
+            await reload()
+        } catch { present(error) }
+    }
+
+    func updateCustomTarget(_ target: AgentTarget, name: String, url: URL) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard target.isCustom else { return }
+        guard !trimmed.isEmpty else {
+            noticeMessage = "请先输入应用名称。"
+            return
+        }
+        do {
+            try PathSafety.validateCustomTarget(url, homeDirectory: homeDirectory, libraryRoot: libraryRoot)
+            if target.path != url.standardizedFileURL.path,
+               snapshot.installations.contains(where: { $0.targetID == target.id })
+            {
+                noticeMessage = "这个位置仍有 Skill 由 SkillBox 管理。请先卸载，再更换文件夹。"
+                return
+            }
+            var targets = snapshot.targets
+            guard let index = targets.firstIndex(where: { $0.id == target.id }) else { return }
+            targets[index].displayName = trimmed
+            targets[index].path = url.standardizedFileURL.path
+            targets[index].detectionStatus = .available
+            targets[index].writeStatus = FileManager.default.isWritableFile(atPath: url.path) ? .writable : .readOnly
+            try await store.replaceTargets(targets)
+            statusMessage = "已更新安装位置"
+            await reload()
+        } catch { present(error) }
+    }
+
+    func removeCustomTarget(_ target: AgentTarget) async {
+        do {
+            try await store.removeCustomTarget(id: target.id)
+            statusMessage = "已移除 \(target.displayName) 的安装位置"
             await reload()
         } catch { present(error) }
     }
@@ -739,5 +888,10 @@ final class AppModel: ObservableObject {
     private func present(_ error: Error) {
         errorMessage = error.localizedDescription
         statusMessage = "操作未完成"
+    }
+
+    private func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        return (error as? URLError)?.code == .cancelled
     }
 }

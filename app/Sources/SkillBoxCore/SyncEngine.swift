@@ -210,6 +210,11 @@ public actor TransactionalSyncExecutor: SyncExecutor {
             guard snapshot.skills.first(where: { $0.id == libraryUpdate.previousRecord.id })?.fingerprint == libraryUpdate.updatedFingerprint else {
                 throw SyncExecutorError.undoWouldOverwrite("SkillBox 中的原件")
             }
+            if let expectedVersion = libraryUpdate.updatedSourceVersionIdentifier,
+               snapshot.sourceStates.first(where: { $0.skillID == libraryUpdate.previousRecord.id })?.currentVersionIdentifier != expectedVersion
+            {
+                throw SyncExecutorError.undoWouldOverwrite("GitHub 更新记录")
+            }
         }
         for backup in transaction.backups.reversed() {
             let destination = URL(fileURLWithPath: backup.destinationPath)
@@ -221,7 +226,10 @@ public actor TransactionalSyncExecutor: SyncExecutor {
             }
         }
         for backup in transaction.backups.reversed() { try restore(backup: backup, transactionRoot: transactionRoot) }
-        if let libraryUpdate = transaction.libraryUpdate { _ = try await store.restoreSkillVersion(libraryUpdate) }
+        if let libraryUpdate = transaction.libraryUpdate {
+            _ = try await store.restoreSkillVersion(libraryUpdate)
+            try await store.restoreGitHubSourceState(libraryUpdate)
+        }
         var installations = snapshot.installations
         for backup in transaction.backups {
             installations.removeAll { $0.destinationPath == backup.destinationPath }

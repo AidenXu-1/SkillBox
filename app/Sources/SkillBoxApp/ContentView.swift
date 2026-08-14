@@ -5,7 +5,7 @@ import SwiftUI
 private enum SidebarItem: String, CaseIterable, Identifiable {
     case overview = "总览"
     case library = "我的 Skills"
-    case agents = "自定义安装"
+    case agents = "安装到应用"
     case history = "最近操作"
     case settings = "设置"
     var id: String { rawValue }
@@ -30,6 +30,7 @@ struct ContentView: View {
     @State private var showSyncPreview = false
     @State private var showCustomTarget = false
     @State private var customTargetName = "其他应用"
+    @State private var editingCustomTarget: AgentTarget?
 
     var body: some View {
         NavigationSplitView {
@@ -39,11 +40,8 @@ struct ContentView: View {
             .navigationTitle("SkillBox")
             .navigationSplitViewColumnWidth(min: 190, ideal: 220)
             .safeAreaInset(edge: .bottom) {
-                VStack(alignment: .leading, spacing: 5) {
-                    statusLabel
-                    Text("已找到 \(model.snapshot.targets.filter { $0.detectionStatus == .available }.count) 个应用位置")
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
+                Text("已找到 \(model.snapshot.targets.filter { $0.detectionStatus == .available }.count) 个应用位置")
+                    .font(.caption2).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(12)
             }
         } detail: {
@@ -69,14 +67,19 @@ struct ContentView: View {
                         showSyncPreview: $showSyncPreview,
                         importLocal: chooseLocalFolder,
                         importGitHub: { showGitHub = true },
-                        openSettings: { selection = .settings }
+                        openSettings: { selection = .settings },
+                        connectGitHub: {
+                            selection = .settings
+                            if model.isGitHubConfigured { Task { await model.connectPrivateGitHub() } }
+                        }
                     )
                 case .agents:
                     AgentsView(
                         model: model,
                         showSyncPreview: $showSyncPreview,
                         addCustom: { showCustomTarget = true },
-                        addSkill: { selection = .library }
+                        addSkill: { selection = .library },
+                        editCustom: { editingCustomTarget = $0 }
                     )
                 case .history: HistoryView(model: model)
                 case .settings: SettingsView(model: model)
@@ -84,7 +87,17 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .navigationTitle(selection?.rawValue ?? "SkillBox")
-            .toolbar { Button { Task { await model.scanInstalledSkills() } } label: { Label("重新查看", systemImage: "arrow.clockwise") }.disabled(model.isBusy) }
+            .toolbar {
+                Button { Task { await model.scanInstalledSkills() } } label: {
+                    Label("重新扫描本机 Skills", systemImage: "arrow.clockwise")
+                }
+                .help("重新扫描本机 Skills，不会修改任何文件")
+                .disabled(model.isBusy)
+            }
+            .overlay(alignment: .bottomLeading) {
+                StatusPill(model: model)
+                    .padding(18)
+            }
         }
         .frame(minWidth: 1100, minHeight: 720)
         .sheet(isPresented: $model.showOnboarding) { OnboardingView(model: model) }
@@ -93,7 +106,21 @@ struct ContentView: View {
         .sheet(isPresented: $showUpdatePreview) { UpdatePreviewView(model: model, isPresented: $showUpdatePreview) }
         .sheet(isPresented: $showSyncPreview) { SyncPreviewView(model: model, isPresented: $showSyncPreview) }
         .sheet(isPresented: $showCustomTarget) { CustomTargetView(model: model, isPresented: $showCustomTarget, name: $customTargetName) }
-        .alert("操作未完成", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) { Button("知道了") { model.errorMessage = nil } } message: { Text(model.errorMessage ?? "") }
+        .sheet(item: $editingCustomTarget) { target in
+            EditCustomTargetView(model: model, target: target, isPresented: Binding(
+                get: { editingCustomTarget != nil },
+                set: { if !$0 { editingCustomTarget = nil } }
+            ))
+        }
+        .alert("操作未完成", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
+            if model.canRetryGitHubWithDefaultBranch {
+                Button("改用默认分支继续") { model.retryGitHubUsingDefaultBranch() }
+            }
+            Button("取消", role: .cancel) {
+                model.canRetryGitHubWithDefaultBranch = false
+                model.errorMessage = nil
+            }
+        } message: { Text(model.errorMessage ?? "") }
         .alert("提示", isPresented: Binding(get: { model.noticeMessage != nil }, set: { if !$0 { model.noticeMessage = nil } })) { Button("知道了") { model.noticeMessage = nil } } message: { Text(model.noticeMessage ?? "") }
         .onChange(of: model.pendingCandidates) { _, candidates in
             guard !candidates.isEmpty else { return }
@@ -105,12 +132,17 @@ struct ContentView: View {
                 showUpdatePreview = true
             }
         }
-    }
-
-    private var statusLabel: some View {
-        let icon = model.isBusy ? "arrow.triangle.2.circlepath" : "checkmark.circle.fill"
-        let color: Color = model.isBusy ? .secondary : .green
-        return Label(model.statusMessage, systemImage: icon).font(.caption).foregroundStyle(color)
+        .overlay {
+            if let progress = model.operationProgress {
+                OperationProgressView(model: model, progress: progress)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let deletion = model.lastDeletedSkill {
+                DeleteUndoToast(model: model, deletion: deletion)
+                    .padding(.bottom, 22)
+            }
+        }
     }
 
     private func chooseLocalFolder() {
@@ -118,6 +150,72 @@ struct ContentView: View {
         panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
         panel.prompt = "查看可添加的 Skills"
         if panel.runModal() == .OK, let url = panel.url { Task { await model.previewLocalFolder(url) } }
+    }
+}
+
+private struct StatusPill: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        Label(model.statusMessage, systemImage: model.isBusy ? "arrow.triangle.2.circlepath" : "checkmark.circle.fill")
+            .font(.caption)
+            .foregroundStyle(model.isBusy ? Color.secondary : Color.green)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().stroke(.separator.opacity(0.35)))
+            .accessibilityLabel("当前状态：\(model.statusMessage)")
+    }
+}
+
+private struct OperationProgressView: View {
+    @ObservedObject var model: AppModel
+    let progress: SkillBoxOperationProgress
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.12).ignoresSafeArea()
+            VStack(spacing: 14) {
+                ProgressView().controlSize(.large)
+                Text(progress.title).font(.headline)
+                Text(progress.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                if progress.canCancel {
+                    Button("取消") { model.cancelRemoteOperation() }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                }
+            }
+            .padding(24)
+            .frame(width: 350)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .shadow(color: .black.opacity(0.16), radius: 24, y: 10)
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct DeleteUndoToast: View {
+    @ObservedObject var model: AppModel
+    let deletion: DeletedSkillBackup
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "trash").foregroundStyle(.secondary)
+            Text("已删除 \(deletion.record.displayName)").font(.callout.weight(.medium))
+            Button("撤销") { Task { await model.restoreLastDeletedSkill() } }
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+            Button { model.dismissDeleteUndo() } label: { Image(systemName: "xmark") }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("关闭")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().stroke(.separator.opacity(0.4)))
+        .shadow(color: .black.opacity(0.10), radius: 16, y: 5)
     }
 }
 
@@ -136,13 +234,17 @@ private struct OverviewView: View {
     let goTo: (SidebarItem) -> Void
     let reviewConflict: (ConflictGroup) -> Void
     let reviewAllConflicts: () -> Void
+    private var updateCount: Int { model.snapshot.sourceStates.count { $0.status == .updateAvailable } }
+    private var sourceAttentionCount: Int {
+        model.snapshot.sourceStates.count { $0.status == .authenticationRequired || $0.status == .unavailable }
+    }
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 20) {
-            HStack(alignment: .top) { PageHeader(eyebrow: "当前情况", title: "你的 Skills 一目了然", subtitle: "这里汇总本机已找到、已加入 SkillBox 和需要你选择的内容。") ; Spacer(); Button("把找到的 Skills 加入管理", action: reviewAllConflicts).disabled(model.scanResult?.candidates.isEmpty != false); Button("选择安装位置") { goTo(.agents) }.buttonStyle(.borderedProminent) }
+            HStack(alignment: .top) { PageHeader(eyebrow: "当前情况", title: "你的 Skills 一目了然", subtitle: "本机查看到 \(model.scanResult?.candidates.count ?? 0) 份内容；这里优先显示需要你处理的事情。") ; Spacer(); Button("把找到的 Skills 加入管理", action: reviewAllConflicts).disabled(model.scanResult?.candidates.isEmpty != false); if updateCount > 0 { Button("查看 \(updateCount) 个更新") { goTo(.library) } }; Button("选择安装位置") { goTo(.agents) }.buttonStyle(.borderedProminent) }
             HStack(spacing: 12) {
                 MetricCard(title: "已加入 SkillBox", value: "\(model.snapshot.skills.count)", note: "集中保存在本机", color: .blue)
-                MetricCard(title: "本机找到", value: "\(model.scanResult?.candidates.count ?? 0)", note: "只查看，没有改动", color: .green)
-                MetricCard(title: "需要选择", value: "\(model.scanResult?.conflicts.count ?? 0)", note: "名字相同但内容不同", color: .orange)
+                MetricCard(title: "可以更新", value: "\(updateCount)", note: "由你确认后才下载", color: updateCount > 0 ? .blue : .green)
+                MetricCard(title: "需要处理", value: "\((model.scanResult?.conflicts.count ?? 0) + sourceAttentionCount)", note: "内容冲突或来源失效", color: (model.scanResult?.conflicts.isEmpty != false && sourceAttentionCount == 0) ? .green : .orange)
                 MetricCard(title: "已找到的应用", value: "\(model.snapshot.targets.filter { $0.detectionStatus == .available }.count)", note: "共支持 9 款应用", color: .green)
             }
             GroupBox("需要你选择") { VStack(alignment: .leading, spacing: 0) {
@@ -204,6 +306,9 @@ private struct LibraryView: View {
     let importLocal: () -> Void
     let importGitHub: () -> Void
     let openSettings: () -> Void
+    let connectGitHub: () -> Void
+    @State private var searchText = ""
+    @State private var filter: SkillListFilter = .all
     var selected: SkillRecord? { model.snapshot.skills.first { $0.id == selectedSkillID } ?? model.snapshot.skills.first }
     var body: some View {
         VStack(spacing: 0) {
@@ -220,8 +325,20 @@ private struct LibraryView: View {
                         .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                         .disabled(model.isBusy)
                     }
-                    Button("从电脑添加", action: importLocal)
-                    Button("从 GitHub 添加", action: importGitHub).buttonStyle(.borderedProminent)
+                    if !model.isGitHubConnected {
+                        Button(action: connectGitHub) {
+                            Label("连接私人 GitHub", systemImage: "lock.open")
+                        }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                    }
+                    Menu {
+                        Button("从电脑文件夹添加", action: importLocal)
+                        Button("从 GitHub 仓库添加", action: importGitHub)
+                    } label: {
+                        Label("添加 Skill", systemImage: "plus")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
                 }
             }
             .padding(28)
@@ -235,13 +352,21 @@ private struct LibraryView: View {
                         Button("从电脑添加", action: importLocal)
                         Button("从 GitHub 添加", action: importGitHub)
                             .buttonStyle(.borderedProminent)
+                        if !model.isGitHubConnected {
+                            Button("连接私人 GitHub", action: connectGitHub)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.bottom, 72)
             } else {
                 HSplitView {
-                    SkillOrganizerSidebar(model: model, selectedSkillID: $selectedSkillID)
+                    SkillOrganizerSidebar(
+                        model: model,
+                        selectedSkillID: $selectedSkillID,
+                        searchText: $searchText,
+                        filter: $filter
+                    )
                         .frame(minWidth: 280, idealWidth: 330)
                     if let selected {
                         SkillDetailView(
@@ -264,15 +389,27 @@ private struct LibraryView: View {
     }
 }
 
+private enum SkillListFilter: String, CaseIterable, Identifiable {
+    case all = "全部"
+    case updates = "有更新"
+    case installed = "已安装"
+    case attention = "需要处理"
+
+    var id: String { rawValue }
+}
+
 private struct SkillOrganizerSidebar: View {
     @ObservedObject var model: AppModel
     @Binding var selectedSkillID: UUID?
+    @Binding var searchText: String
+    @Binding var filter: SkillListFilter
     @State private var collapsedFolderIDs: Set<UUID> = []
     @State private var showNewFolder = false
     @State private var newFolderName = ""
 
-    private var folders: [SkillFolder] { model.orderedFolders() }
-    private var uncategorized: [SkillRecord] { model.orderedSkills(in: nil) }
+    private var folders: [SkillFolder] { model.orderedFolders().filter { !filteredSkills(in: $0.id).isEmpty } }
+    private var uncategorized: [SkillRecord] { filteredSkills(in: nil) }
+    private var hasResults: Bool { !uncategorized.isEmpty || !folders.isEmpty }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -294,9 +431,21 @@ private struct SkillOrganizerSidebar: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 11)
+            HStack(spacing: 8) {
+                TextField("搜索 Skills", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+                Picker("筛选", selection: $filter) {
+                    ForEach(SkillListFilter.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 96)
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 10)
             Divider()
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 5) {
+                if hasResults {
+                    LazyVStack(alignment: .leading, spacing: 5) {
                     OrganizerGroupHeader(title: "未分类", count: uncategorized.count, systemImage: "tray")
                         .dropDestination(for: String.self) { items, _ in
                             guard let skillID = firstSkillID(in: items) else { return false }
@@ -323,7 +472,7 @@ private struct SkillOrganizerSidebar: View {
                             }
                         )
                         if !collapsedFolderIDs.contains(folder.id) {
-                            ForEach(model.orderedSkills(in: folder.id)) { skill in
+                            ForEach(filteredSkills(in: folder.id)) { skill in
                                 SkillOrganizerRow(
                                     model: model,
                                     skill: skill,
@@ -333,8 +482,16 @@ private struct SkillOrganizerSidebar: View {
                             }
                         }
                     }
+                    }
+                    .padding(8)
+                } else {
+                    ContentUnavailableView(
+                        "没有符合条件的 Skill",
+                        systemImage: "magnifyingglass",
+                        description: Text("换一个关键词或筛选条件试试")
+                    )
+                    .padding(.top, 44)
                 }
-                .padding(8)
             }
         }
         .background(.quaternary.opacity(0.12))
@@ -346,6 +503,27 @@ private struct SkillOrganizerSidebar: View {
             }
         } message: {
             Text("文件夹只用于整理列表，不会移动或修改 Skill 原件。")
+        }
+    }
+
+    private func filteredSkills(in folderID: UUID?) -> [SkillRecord] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return model.orderedSkills(in: folderID).filter { skill in
+            let matchesSearch = query.isEmpty ||
+                skill.displayName.lowercased().contains(query) ||
+                skill.canonicalName.lowercased().contains(query) ||
+                skill.description.lowercased().contains(query)
+            guard matchesSearch else { return false }
+            switch filter {
+            case .all: return true
+            case .updates:
+                return model.snapshot.sourceStates.first { $0.skillID == skill.id }?.status == .updateAvailable
+            case .installed:
+                return model.snapshot.installations.contains { $0.skillID == skill.id }
+            case .attention:
+                let sourceStatus = model.snapshot.sourceStates.first { $0.skillID == skill.id }?.status
+                return skill.riskReport.highestSeverity >= .caution || sourceStatus == .authenticationRequired || sourceStatus == .unavailable
+            }
         }
     }
 
@@ -466,6 +644,14 @@ private struct SkillOrganizerRow: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 4)
+                if model.snapshot.sourceStates.first(where: { $0.skillID == skill.id })?.status == .updateAvailable {
+                    Text("有更新")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.blue)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.blue.opacity(0.10), in: Capsule())
+                }
                 Image(systemName: "line.3.horizontal")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -635,6 +821,19 @@ private struct GitHubSourceCard: View {
                 .disabled(model.isBusy || state == nil)
             if let state {
                 Menu {
+                    Button("在 GitHub 打开") { model.openGitHubSource(skill) }
+                    Menu("更新来源") {
+                        Button {
+                            Task { await model.setGitHubTrackingMode(.latestStableRelease, for: skill) }
+                        } label: {
+                            Label("最新正式 Release", systemImage: state.trackingMode == .latestStableRelease ? "checkmark" : "tag")
+                        }
+                        Button {
+                            Task { await model.setGitHubTrackingMode(.defaultBranch, for: skill) }
+                        } label: {
+                            Label("默认分支", systemImage: state.trackingMode == .defaultBranch ? "checkmark" : "arrow.triangle.branch")
+                        }
+                    }
                     if state.status == .updateAvailable {
                         Button("忽略这个版本") {
                             Task { await model.ignoreAvailableUpdate(skill) }
@@ -732,7 +931,7 @@ private struct GitHubSourceCard: View {
     private func primaryAction() {
         switch state?.status {
         case .updateAvailable, .ignored:
-            Task { await model.previewAvailableUpdate(skill) }
+            model.startAvailableUpdatePreview(skill)
         case .checkingStopped:
             Task {
                 await model.setUpdateChecking(true, for: skill)
@@ -1257,10 +1456,12 @@ private struct AgentsView: View {
     @Binding var showSyncPreview: Bool
     let addCustom: () -> Void
     let addSkill: () -> Void
+    let editCustom: (AgentTarget) -> Void
+    @State private var targetToRemove: AgentTarget?
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top) {
-                PageHeader(eyebrow: "按需调整", title: "自定义安装", subtitle: "在这里逐个选择安装位置。常用的全部安装和全部卸载放在每个 Skill 的详情页。")
+                PageHeader(eyebrow: "按需调整", title: "安装到应用", subtitle: "逐个选择 Skill 要安装到哪些应用；批量安装和卸载仍在 Skill 详情中完成。")
                 Spacer()
                 Button("添加其他应用", action: addCustom)
                 if !model.snapshot.skills.isEmpty {
@@ -1282,11 +1483,32 @@ private struct AgentsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.bottom, 72)
             } else {
+                HStack(spacing: 14) {
+                    AssignmentLegend(symbol: "plus", color: .secondary, text: "未选择")
+                    AssignmentLegend(symbol: "checkmark", color: .green, text: "已选择")
+                    AssignmentLegend(symbol: "arrow.up", color: .blue, text: "等待安装或更新")
+                    AssignmentLegend(symbol: "link", color: .purple, text: "间接可用")
+                    AssignmentLegend(symbol: "nosign", color: .secondary, text: "应用不可用")
+                    AssignmentLegend(symbol: "exclamationmark", color: .orange, text: "需要处理")
+                    Spacer()
+                }
+                .padding(.horizontal, 28)
+                .padding(.bottom, 10)
                 ScrollView([.horizontal, .vertical]) {
                     Grid(horizontalSpacing: 10, verticalSpacing: 8) {
-                        GridRow { Text("我的 Skills").font(.caption.weight(.semibold)).frame(width: 210, alignment: .leading); ForEach(model.snapshot.targets) { Text($0.displayName).font(.caption2.weight(.medium)).frame(width: 72).lineLimit(2) } }
+                        GridRow {
+                            Text("我的 Skills").font(.caption.weight(.semibold)).frame(width: 210, alignment: .leading)
+                            ForEach(model.snapshot.targets) { target in
+                                TargetColumnHeader(
+                                    target: target,
+                                    edit: { editCustom(target) },
+                                    remove: { targetToRemove = target }
+                                )
+                                .frame(width: 84)
+                            }
+                        }
                         Divider().gridCellColumns(model.snapshot.targets.count + 1)
-                        ForEach(model.snapshot.skills) { skill in GridRow { Text(skill.displayName).font(.callout.weight(.medium)).frame(width: 210, alignment: .leading); ForEach(model.snapshot.targets) { target in AssignmentButton(model: model, skill: skill, target: target).frame(width: 72) } } }
+                        ForEach(model.snapshot.skills) { skill in GridRow { Text(skill.displayName).font(.callout.weight(.medium)).frame(width: 210, alignment: .leading); ForEach(model.snapshot.targets) { target in AssignmentButton(model: model, skill: skill, target: target).frame(width: 84) } } }
                     }
                     .padding()
                     .background(.background, in: RoundedRectangle(cornerRadius: 12))
@@ -1298,6 +1520,65 @@ private struct AgentsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .confirmationDialog(
+            "移除“\(targetToRemove?.displayName ?? "")”的安装位置？",
+            isPresented: Binding(get: { targetToRemove != nil }, set: { if !$0 { targetToRemove = nil } })
+        ) {
+            if let targetToRemove {
+                Button("移除安装位置", role: .destructive) {
+                    Task { await model.removeCustomTarget(targetToRemove) }
+                    self.targetToRemove = nil
+                }
+            }
+            Button("取消", role: .cancel) { targetToRemove = nil }
+        } message: {
+            Text("这不会删除应用文件夹。若这里仍有 Skill 由 SkillBox 管理，会为了安全阻止移除。")
+        }
+    }
+}
+
+private struct AssignmentLegend: View {
+    let symbol: String
+    let color: Color
+    let text: String
+
+    var body: some View {
+        Label {
+            Text(text)
+        } icon: {
+            Image(systemName: symbol)
+                .foregroundStyle(color)
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+    }
+}
+
+private struct TargetColumnHeader: View {
+    let target: AgentTarget
+    let edit: () -> Void
+    let remove: () -> Void
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Text(target.displayName)
+                .font(.caption2.weight(.medium))
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+            if target.isCustom {
+                Menu {
+                    Button("编辑名称或位置", action: edit)
+                    Button("移除安装位置", role: .destructive, action: remove)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .help("管理这个安装位置")
+            }
+        }
     }
 }
 
@@ -1315,16 +1596,104 @@ private struct AssignmentButton: View {
 
 private struct HistoryView: View {
     @ObservedObject var model: AppModel
-    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 16) { PageHeader(eyebrow: "可以反悔", title: "最近操作", subtitle: "每次安装前都会留一份备份，需要时可以恢复。"); if model.snapshot.transactions.isEmpty { ContentUnavailableView("还没有安装记录", systemImage: "clock.arrow.circlepath", description: Text("完成第一次安装后会出现在这里")) } else { ForEach(model.snapshot.transactions) { transaction in HStack { Image(systemName: transaction.status == .succeeded ? "checkmark.circle.fill" : transaction.status == .undone ? "arrow.uturn.backward.circle.fill" : "exclamationmark.circle.fill").font(.title2).foregroundStyle(transaction.status == .succeeded ? .green : .orange); VStack(alignment: .leading) { Text("改动了 \(transaction.backups.count) 个位置").font(.headline); Text("\(transactionStatus(transaction.status)) · \(transaction.createdAt.formatted())").font(.caption).foregroundStyle(.secondary) }; Spacer(); if transaction.status == .succeeded { Button("恢复到操作前") { Task { await model.undo(transaction) } } } }.padding().background(.background, in: RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.4))) } } }.padding(28) } }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                PageHeader(eyebrow: "可以反悔", title: "最近操作", subtitle: "安装、卸载和原件更新都会留在这里，需要时可以恢复。")
+                if model.snapshot.transactions.isEmpty {
+                    ContentUnavailableView("还没有操作记录", systemImage: "clock.arrow.circlepath", description: Text("第一次安装、更新或卸载完成后会出现在这里"))
+                } else {
+                    ForEach(model.snapshot.transactions) { transaction in
+                        HistoryTransactionCard(model: model, transaction: transaction)
+                    }
+                }
+            }
+            .padding(28)
+        }
+    }
+}
 
-    private func transactionStatus(_ status: TransactionStatus) -> String {
-        switch status { case .running: "正在处理"; case .succeeded: "已完成"; case .failed: "没有完成"; case .rolledBack: "已恢复到操作前"; case .undone: "已恢复"; case .undoBlocked: "发现新改动，暂未恢复" }
+private struct HistoryTransactionCard: View {
+    @ObservedObject var model: AppModel
+    let transaction: SyncTransaction
+    @State private var showDetails = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 12) {
+                Image(systemName: statusIcon)
+                    .font(.title2)
+                    .foregroundStyle(statusColor)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.headline)
+                    Text("\(statusText) · \(transaction.createdAt.formatted())")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(showDetails ? "收起详情" : "查看详情") { showDetails.toggle() }
+                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                if transaction.status == .succeeded {
+                    Button("恢复到操作前") { Task { await model.undo(transaction) } }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                }
+            }
+            if showDetails {
+                Divider()
+                VStack(alignment: .leading, spacing: 7) {
+                    if let libraryUpdate = transaction.libraryUpdate {
+                        Label("更新了“\(libraryUpdate.previousRecord.displayName)”在我的 Skills 中保存的原件", systemImage: "shippingbox")
+                    }
+                    ForEach(Array(transaction.actions.enumerated()), id: \.offset) { _, action in
+                        Label("\(actionLabel(action.kind))：\(targetName(for: action))", systemImage: action.kind == .blocked ? "exclamationmark.triangle" : "arrow.right.circle")
+                    }
+                    if !transaction.errors.isEmpty {
+                        ForEach(transaction.errors, id: \.self) { Text($0).foregroundStyle(.orange) }
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .background(.background, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.4)))
+    }
+
+    private var title: String {
+        if let update = transaction.libraryUpdate {
+            return transaction.backups.isEmpty ? "更新了 \(update.previousRecord.displayName)" : "更新并重新安装了 \(update.previousRecord.displayName)"
+        }
+        let skillNames = Set(transaction.actions.compactMap { action in
+            model.snapshot.skills.first { $0.id == action.skillID }?.displayName
+        })
+        if skillNames.count == 1, let name = skillNames.first { return "处理了 \(name) 的安装" }
+        return "处理了 \(transaction.backups.count) 个安装位置"
+    }
+
+    private var statusText: String {
+        switch transaction.status { case .running: "正在处理"; case .succeeded: "已完成"; case .failed: "没有完成"; case .rolledBack: "已恢复到操作前"; case .undone: "已恢复"; case .undoBlocked: "发现新改动，暂未恢复" }
+    }
+
+    private var statusIcon: String {
+        switch transaction.status { case .succeeded: "checkmark.circle.fill"; case .undone, .rolledBack: "arrow.uturn.backward.circle.fill"; default: "exclamationmark.circle.fill" }
+    }
+
+    private var statusColor: Color { transaction.status == .succeeded ? .green : .orange }
+
+    private func targetName(for action: SyncAction) -> String {
+        model.snapshot.targets.first { $0.id == action.targetID }?.displayName ?? "已移除的应用"
+    }
+
+    private func actionLabel(_ kind: SyncActionKind) -> String {
+        switch kind { case .create: "安装"; case .update: "更新"; case .remove: "卸载"; case .takeover: "纳入管理"; case .noChange: "无需改动"; case .blocked: "未处理" }
     }
 }
 
 private struct SettingsView: View {
     @ObservedObject var model: AppModel
     @State private var confirmDisconnect = false
+    @State private var showAllRepositories = false
 
     var body: some View {
         Form {
@@ -1360,7 +1729,7 @@ private struct SettingsView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
-                            ForEach(model.githubAuthorizedRepositories) { repository in
+                            ForEach(Array(model.githubAuthorizedRepositories.prefix(showAllRepositories ? model.githubAuthorizedRepositories.count : 6))) { repository in
                                 HStack(spacing: 9) {
                                     Image(systemName: repository.isPrivate ? "lock.fill" : "globe")
                                         .foregroundStyle(repository.isPrivate ? .orange : .blue)
@@ -1373,6 +1742,12 @@ private struct SettingsView: View {
                                 }
                                 .padding(.vertical, 2)
                             }
+                            if model.githubAuthorizedRepositories.count > 6 {
+                                Button(showAllRepositories ? "收起仓库列表" : "查看全部仓库") {
+                                    showAllRepositories.toggle()
+                                }
+                                .buttonStyle(.link)
+                            }
                         }
                         .padding(.top, 4)
                     }
@@ -1383,12 +1758,11 @@ private struct SettingsView: View {
                         Text("公开仓库不需要登录。SkillBox 只申请读取你选择的仓库内容，不会获得写入权限。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        if model.isGitHubConfigured {
-                            Button("连接 GitHub") { Task { await model.beginGitHubLogin() } }
-                                .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
-                                .disabled(model.isBusy)
-                        } else {
-                            Label("当前测试包还没有配置 GitHub App Client ID，公开仓库仍可使用。", systemImage: "hammer")
+                        Button("连接 GitHub") { Task { await model.connectPrivateGitHub() } }
+                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                            .disabled(model.isBusy)
+                        if !model.isGitHubConfigured {
+                            Label("这个测试版本尚未启用私人仓库连接，公开仓库仍可直接添加。", systemImage: "info.circle")
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                         }
@@ -1419,6 +1793,8 @@ private struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .frame(maxWidth: 820)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(.top, 12)
         .task {
             if model.isGitHubConnected && model.githubAuthorizedRepositories.isEmpty {
@@ -1468,6 +1844,11 @@ private struct GitHubImportView: View {
                 Text("可以直接粘贴仓库首页或某个 Skill 子目录地址。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                if !model.githubURL.isEmpty && !isValidGitHubURL {
+                    Label("请粘贴 github.com 的仓库地址", systemImage: "exclamationmark.circle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
             }
 
             VStack(alignment: .leading, spacing: 9) {
@@ -1490,10 +1871,8 @@ private struct GitHubImportView: View {
                     Text("公开仓库可以直接继续。登录只授予 SkillBox 读取你在 GitHub 中选择的仓库。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if model.isGitHubConfigured {
-                        Button("连接 GitHub") { Task { await model.beginGitHubLogin() } }
-                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                    }
+                    Button("连接私人 GitHub") { Task { await model.connectPrivateGitHub() } }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                     if let authorization = model.githubAuthorization {
                         GitHubDeviceAuthorizationCard(model: model, authorization: authorization)
                     }
@@ -1508,17 +1887,23 @@ private struct GitHubImportView: View {
                 Spacer()
                 Button {
                     isPresented = false
-                    Task { await model.previewGitHub() }
+                    model.startGitHubPreview()
                 } label: {
                     Label("下载完整版本并预览", systemImage: "arrow.down.circle")
                 }
                 .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
-                .disabled(model.githubURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isBusy)
+                .disabled(!isValidGitHubURL || model.isBusy)
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding(28)
         .frame(width: 620)
+    }
+
+    private var isValidGitHubURL: Bool {
+        let value = model.githubURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: value), url.host?.lowercased() == "github.com" else { return false }
+        return url.pathComponents.filter { $0 != "/" }.count >= 2
     }
 
     private var trackingExplanation: String {
@@ -1787,7 +2172,7 @@ private struct UpdatePreviewView: View {
             }
             .padding(18)
         }
-        .frame(width: 940, height: 760)
+        .frame(minWidth: 760, idealWidth: 940, maxWidth: 1080, minHeight: 620, idealHeight: 760, maxHeight: 900)
         .interactiveDismissDisabled()
     }
 
@@ -1937,4 +2322,65 @@ private struct SyncPreviewView: View {
 private struct CustomTargetView: View {
     @ObservedObject var model: AppModel; @Binding var isPresented: Bool; @Binding var name: String
     var body: some View { VStack(alignment: .leading, spacing: 16) { Text("添加其他安装位置").font(.title2.bold()); TextField("应用名称", text: $name); Text("给这个位置起个容易识别的名字，再选择该应用用来保存 Skills 的文件夹。为了安全，不能直接选整个磁盘或用户文件夹。").font(.caption).foregroundStyle(.secondary); HStack { Button("取消") { isPresented = false }; Spacer(); Button("选择文件夹…") { let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; if panel.runModal() == .OK, let url = panel.url { isPresented = false; Task { await model.addCustomTarget(name: name, url: url) } } }.buttonStyle(.borderedProminent) } }.padding(24).frame(width: 520) }
+}
+
+private struct EditCustomTargetView: View {
+    @ObservedObject var model: AppModel
+    let target: AgentTarget
+    @Binding var isPresented: Bool
+    @State private var name: String
+    @State private var selectedURL: URL
+
+    init(model: AppModel, target: AgentTarget, isPresented: Binding<Bool>) {
+        self.model = model
+        self.target = target
+        _isPresented = isPresented
+        _name = State(initialValue: target.displayName)
+        _selectedURL = State(initialValue: URL(fileURLWithPath: target.path))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 17) {
+            Text("编辑安装位置").font(.title2.bold())
+            VStack(alignment: .leading, spacing: 6) {
+                Text("应用名称").font(.callout.weight(.semibold))
+                TextField("应用名称", text: $name)
+                    .textFieldStyle(.roundedBorder)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Skills 文件夹").font(.callout.weight(.semibold))
+                Text(selectedURL.path)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+                Button("选择其他文件夹…") { chooseDirectory() }
+                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+            }
+            Text("如果这个位置仍有 Skill 由 SkillBox 管理，需要先卸载才能更换文件夹。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack {
+                Button("取消") { isPresented = false }
+                Spacer()
+                Button("保存") {
+                    isPresented = false
+                    Task { await model.updateCustomTarget(target, name: name, url: selectedURL) }
+                }
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 540)
+    }
+
+    private func chooseDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.directoryURL = selectedURL
+        if panel.runModal() == .OK, let url = panel.url { selectedURL = url }
+    }
 }

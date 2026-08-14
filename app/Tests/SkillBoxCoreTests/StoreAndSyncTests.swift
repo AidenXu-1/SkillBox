@@ -124,13 +124,60 @@ struct LibraryStoreTests {
         try await store.replaceTargets([target])
         try await store.replaceAssignments([.init(skillID: record.id, targetID: target.id, installationDirectoryName: "demo", isDesired: false)])
 
-        let archived = try await store.deleteSkill(id: record.id)
+        let deletion = try await store.deleteSkill(id: record.id)
 
         let snapshot = await store.currentSnapshot()
         #expect(snapshot.skills.isEmpty)
         #expect(snapshot.assignments.isEmpty)
-        #expect(FileManager.default.fileExists(atPath: archived.appendingPathComponent("content/SKILL.md").path))
+        #expect(FileManager.default.fileExists(atPath: deletion.archivedURL.appendingPathComponent("content/SKILL.md").path))
         #expect(!FileManager.default.fileExists(atPath: fixture.storeRoot.appendingPathComponent("Library/\(record.id.uuidString)").path))
+    }
+
+    @Test("A recently deleted Skill can be restored with its organization and source state")
+    func restoreDeletedSkill() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "central"))
+        let folder = SkillFolder(name: "写作", sortIndex: 0)
+        var organization = SkillOrganization(folders: [folder])
+        organization.normalize(skillIDs: [record.id])
+        organization.moveSkill(record.id, to: folder.id)
+        try await store.replaceOrganization(organization)
+        let sourceState = GitHubSourceState(skillID: record.id, repositoryFullName: "owner/demo")
+        try await store.updateSourceState(sourceState)
+
+        let deletion = try await store.deleteSkill(id: record.id)
+        let restored = try await store.restoreDeletedSkill(deletion)
+
+        let snapshot = await store.currentSnapshot()
+        #expect(restored.id == record.id)
+        #expect(snapshot.skills.map(\.id) == [record.id])
+        #expect(snapshot.organization.placements.first { $0.skillID == record.id }?.folderID == folder.id)
+        #expect(snapshot.sourceStates.first { $0.skillID == record.id }?.repositoryFullName == "owner/demo")
+        #expect(FileManager.default.fileExists(atPath: fixture.storeRoot.appendingPathComponent("Library/\(record.id.uuidString)/content/SKILL.md").path))
+        #expect(!FileManager.default.fileExists(atPath: deletion.archivedURL.path))
+    }
+
+    @Test("Removing a custom installation location clears only its pending choices")
+    func removeCustomTarget() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "central"))
+        let custom = AgentTarget(kind: .custom, displayName: "My Agent", path: fixture.root.appendingPathComponent("custom").path, isCustom: true)
+        let builtin = AgentTarget(kind: .codex, displayName: "Codex", path: fixture.root.appendingPathComponent("codex").path)
+        try await store.replaceTargets([builtin, custom])
+        try await store.replaceAssignments([
+            .init(skillID: record.id, targetID: builtin.id, installationDirectoryName: "demo"),
+            .init(skillID: record.id, targetID: custom.id, installationDirectoryName: "demo"),
+        ])
+
+        try await store.removeCustomTarget(id: custom.id)
+
+        let snapshot = await store.currentSnapshot()
+        #expect(snapshot.targets.map(\.id) == [builtin.id])
+        #expect(snapshot.assignments.map(\.targetID) == [builtin.id])
     }
 
     @Test("Deleting a Skill is blocked while SkillBox still manages an installed copy")
@@ -241,6 +288,64 @@ struct SyncTests {
         #expect(installedText.contains("v1"))
     }
 
+    @Test("Updating only My Skills creates a visible transaction that can be undone")
+    func centralOnlyUpdateUndo() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let original = try await store.importCandidate(fixture.candidate(name: "demo", body: "v1"))
+        try FileManager.default.removeItem(at: fixture.sourceRoot.appendingPathComponent("demo"))
+        let update = try fixture.candidate(name: "demo", body: "v2")
+
+        let result = try await SkillUpdateCoordinator().updateCentralOnly(skillID: original.id, candidate: update, store: store)
+        let transaction = try #require(result.transaction)
+        #expect(transaction.backups.isEmpty)
+        #expect(transaction.libraryUpdate?.previousRecord.fingerprint == original.fingerprint)
+        #expect(await store.currentSnapshot().transactions.first?.id == transaction.id)
+
+        _ = try await TransactionalSyncExecutor().undo(transactionID: transaction.id, store: store)
+        let restored = try #require(await store.currentSnapshot().skills.first)
+        #expect(restored.fingerprint == original.fingerprint)
+        let centralText = try String(contentsOf: await store.contentURL(for: restored).appendingPathComponent("SKILL.md"), encoding: .utf8)
+        #expect(centralText.contains("v1"))
+    }
+
+    @Test("Undoing a GitHub update also restores the tracked source version")
+    func githubSourceStateUndo() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let original = try await store.importCandidate(fixture.candidate(name: "demo", body: "v1"))
+        let previousState = GitHubSourceState(
+            skillID: original.id,
+            repositoryFullName: "owner/demo",
+            currentVersionIdentifier: "release-1",
+            currentVersionName: "v1",
+            currentTreeSHA: "tree-1",
+            status: .current
+        )
+        try await store.updateSourceState(previousState)
+        try FileManager.default.removeItem(at: fixture.sourceRoot.appendingPathComponent("demo"))
+        let update = try fixture.candidate(name: "demo", body: "v2")
+        let result = try await SkillUpdateCoordinator().updateCentralOnly(skillID: original.id, candidate: update, store: store)
+        let transaction = try #require(result.transaction)
+        let updatedState = GitHubSourceState(
+            skillID: original.id,
+            repositoryFullName: "owner/demo",
+            currentVersionIdentifier: "release-2",
+            currentVersionName: "v2",
+            currentTreeSHA: "tree-2",
+            status: .current
+        )
+
+        try await store.recordGitHubSourceUpdate(updatedState, transactionID: transaction.id)
+        _ = try await TransactionalSyncExecutor().undo(transactionID: transaction.id, store: store)
+
+        let restoredState = try #require(await store.currentSnapshot().sourceStates.first)
+        #expect(restoredState.currentVersionIdentifier == "release-1")
+        #expect(restoredState.currentTreeSHA == "tree-1")
+    }
+
     @Test("Updating a Skill never turns a pending deselection into an uninstall")
     func combinedUpdateDoesNotExecutePendingRemoval() async throws {
         let fixture = try SyncFixture()
@@ -261,7 +366,10 @@ struct SyncTests {
         let update = try fixture.candidate(name: "demo", body: "v2")
         let result = try await SkillUpdateCoordinator(executor: executor).updateAndDeploy(skillID: original.id, candidate: update, store: store)
 
-        #expect(result.transaction == nil)
+        let transaction = try #require(result.transaction)
+        #expect(transaction.backups.isEmpty)
+        #expect(transaction.actions.allSatisfy { $0.kind != .remove })
+        #expect(transaction.libraryUpdate != nil)
         let installedText = try String(contentsOf: targetRoot.appendingPathComponent("demo/SKILL.md"), encoding: .utf8)
         #expect(installedText.contains("v1"))
         #expect(await store.currentSnapshot().installations.count == 1)

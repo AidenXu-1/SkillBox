@@ -487,10 +487,41 @@ public struct TransactionBackup: Codable, Hashable, Sendable {
 public struct LibraryUpdateBackup: Codable, Hashable, Sendable {
     public var previousRecord: SkillRecord
     public var updatedFingerprint: String
+    public var previousSourceState: GitHubSourceState?
+    public var updatedSourceVersionIdentifier: String?
 
-    public init(previousRecord: SkillRecord, updatedFingerprint: String) {
+    public init(
+        previousRecord: SkillRecord,
+        updatedFingerprint: String,
+        previousSourceState: GitHubSourceState? = nil,
+        updatedSourceVersionIdentifier: String? = nil
+    ) {
         self.previousRecord = previousRecord
         self.updatedFingerprint = updatedFingerprint
+        self.previousSourceState = previousSourceState
+        self.updatedSourceVersionIdentifier = updatedSourceVersionIdentifier
+    }
+}
+
+public struct DeletedSkillBackup: Hashable, Sendable {
+    public var record: SkillRecord
+    public var archivedURL: URL
+    public var assignments: [Assignment]
+    public var placement: SkillPlacement?
+    public var sourceState: GitHubSourceState?
+
+    public init(
+        record: SkillRecord,
+        archivedURL: URL,
+        assignments: [Assignment],
+        placement: SkillPlacement?,
+        sourceState: GitHubSourceState?
+    ) {
+        self.record = record
+        self.archivedURL = archivedURL
+        self.assignments = assignments
+        self.placement = placement
+        self.sourceState = sourceState
     }
 }
 
