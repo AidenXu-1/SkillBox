@@ -274,6 +274,15 @@
     .risk-panel { padding: 12px; border: 1px solid rgba(20,136,94,.15); border-radius: 11px; background: var(--green-soft); }
     .risk-panel strong { display: block; color: #176c4f; font-size: 11px; }
     .risk-panel p { margin: 5px 0 0; color: #497867; font-size: 9px; line-height: 1.5; }
+    .quick-panel { margin: 16px 0; padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-soft); }
+    .quick-panel h3 { margin: 0 0 10px; font-size: 11px; }
+    .quick-actions { display: flex; align-items: center; gap: 7px; }
+    .quick-actions .danger-link { margin-left: auto; border-color: rgba(201,58,72,.25); color: var(--red); }
+    .quick-note { margin: 9px 0 0; color: var(--muted); font-size: 9px; line-height: 1.45; }
+    .tech-row { margin-top: 14px; padding: 12px 13px; border: 1px solid var(--line); border-radius: 11px; background: white; }
+    .tech-row summary { cursor: pointer; font-size: 10px; font-weight: 650; }
+    .tech-content { display: flex; align-items: center; gap: 10px; padding-top: 10px; color: var(--muted); font-size: 9px; }
+    .tech-content .button { margin-left: auto; }
 
     .matrix-wrap { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: white; box-shadow: var(--shadow-card); }
     .matrix-top { display: flex; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--line); background: #fafbfc; }
@@ -439,7 +448,7 @@
       <nav class="nav" aria-label="主导航">
         <button class="nav-button active" data-page="overview"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6v-9h-6v9ZM4 20h6v-3H4v3Zm10-13h6V4h-6v3Z"/></svg></span>总览<span class="nav-count">3</span></button>
         <button class="nav-button" data-page="library"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z"/><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20"/></svg></span>我的 Skills<span class="nav-count">68</span></button>
-        <button class="nav-button" data-page="agents"><span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="7" rx="2"/><rect x="14" y="4" width="7" height="7" rx="2"/><rect x="3" y="15" width="7" height="6" rx="2"/><rect x="14" y="15" width="7" height="6" rx="2"/></svg></span>安装到哪里<span class="nav-count">9</span></button>
+        <button class="nav-button" data-page="agents"><span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="7" rx="2"/><rect x="14" y="4" width="7" height="7" rx="2"/><rect x="3" y="15" width="7" height="6" rx="2"/><rect x="14" y="15" width="7" height="6" rx="2"/></svg></span>自定义安装<span class="nav-count">9</span></button>
         <button class="nav-button" data-page="records"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6"/><path d="M4 4v4.6h4.6M12 7v5l3 2"/></svg></span>最近操作</button>
       </nav>
       <div class="nav-label" style="margin-top:18px">系统</div>
@@ -497,22 +506,16 @@
             </div></div>
             <article class="skill-detail"><div class="detail-head"><span class="skill-mark" id="detailMark">W</span><div class="detail-title"><h2 id="detailName">wechat-layout-publisher</h2><p id="detailDescription">公众号定稿、配图排版、可复制 HTML 与发布归档工作流。</p></div><button class="button">在 Finder 中显示</button></div>
               <div class="metadata"><div class="meta-box"><span>来自</span><strong id="detailSource">本地项目 · 已检查</strong></div><div class="meta-box"><span>内容校验</span><strong id="detailHash">已记录</strong></div><div class="meta-box"><span>最近更新</span><strong id="detailDate">今天 09:18</strong></div></div>
+              <div class="quick-panel"><h3>快速操作</h3><div class="quick-actions"><button class="button primary" id="openDeploy">安装到全部可用应用</button><button class="button">从所有应用卸载</button><button class="button danger-link">删除这份 Skill</button></div><p class="quick-note">全部安装只会使用已经找到且可以写入的应用位置；下一步仍会让你检查改动。</p></div>
               <div class="section-title">已安装到 <span class="count">3</span></div><div class="install-chips"><span class="install-chip"><i></i>Codex</span><span class="install-chip"><i></i>Claude Code</span><span class="install-chip"><i></i>HanaAgent</span></div>
               <div class="section-title">使用前检查</div><div class="risk-panel"><strong>没有发现需要阻止的内容</strong><p>SkillBox 只检查文件，不会运行它。说明文字中提到了网络命令，添加时不会自动执行。</p></div>
-              <div class="section-title">SKILL.md 预览</div><pre class="code-preview" id="detailCode">---
-name: wechat-layout-publisher
-description: 公众号排版、配图、定稿与发布工作流。
----
-
-# WeChat Layout Publisher
-
-先确认原稿、排版目标与发布边界，再生成可复制 HTML。</pre>
+              <details class="tech-row"><summary>查看技术信息</summary><div class="tech-content"><span>内容校验码 8c91…72af，用于发现文件是否被改过。</span><button class="button">查看 Skill 原始说明</button></div></details>
             </article>
           </div>
         </section>
 
         <section class="page" id="page-agents">
-          <div class="page-head"><div><div class="eyebrow">选择使用位置</div><h1>安装到哪些应用</h1><p class="lead">点一下选择或取消。只有最后点击「确认并开始」时才会改动文件。</p></div><div class="head-actions"><button class="button">添加其他应用</button><button class="button primary" id="openSync">检查 4 项安装改动</button></div></div>
+          <div class="page-head"><div><div class="eyebrow">按需调整</div><h1>自定义安装</h1><p class="lead">在这里逐个选择安装位置。常用的全部安装和全部卸载放在每个 Skill 的详情页。</p></div><div class="head-actions"><button class="button">添加其他应用</button><button class="button primary" id="openSync">检查 4 项安装改动</button></div></div>
           <div class="prototype-empty"><div class="empty-copy"><div class="empty-symbol">▦</div><h2>先添加一个 Skill</h2><p>添加后，就能在这里选择要安装到哪些应用。</p><div class="empty-actions"><button class="button primary" data-go="library">去添加 Skill</button></div></div></div>
           <div class="matrix-wrap"><div class="matrix-top"><span>显示 6 个常用 Skill · 9 款支持应用</span><div class="matrix-legend"><span><i style="background:var(--green)"></i>已安装</span><span><i style="background:var(--blue)"></i>等待确认</span><span><i style="background:var(--purple)"></i>已能使用</span><span><i style="background:var(--orange)"></i>后来被改过</span></div></div><div class="matrix-scroll"><table class="matrix">
             <thead><tr><th>Skill</th><th><span class="matrix-agent"><span class="agent-glyph">Cx</span>Codex</span></th><th><span class="matrix-agent"><span class="agent-glyph claude">Cl</span>Claude</span></th><th><span class="matrix-agent"><span class="agent-glyph">Cu</span>Cursor</span></th><th><span class="matrix-agent"><span class="agent-glyph kimi">Ki</span>Kimi</span></th><th><span class="matrix-agent"><span class="agent-glyph zcode">Z</span>ZCode</span></th><th><span class="matrix-agent"><span class="agent-glyph" style="background:#3675a9">W</span>WorkBuddy</span></th><th><span class="matrix-agent"><span class="agent-glyph" style="background:#8d5bb3">H</span>Hana</span></th><th><span class="matrix-agent"><span class="agent-glyph" style="background:#d06c3a">G</span>Gemini</span></th><th><span class="matrix-agent"><span class="agent-glyph" style="background:#343c48">O</span>OpenCode</span></th></tr></thead>
@@ -563,11 +566,13 @@ description: 公众号排版、配图、定稿与发布工作流。
 
     <div class="scrim" id="conflictScrim" role="dialog" aria-modal="true" aria-labelledby="conflictTitle"><section class="modal" style="max-width:680px"><header class="modal-head"><strong id="conflictTitle">选择 lark-approval 的保留版本</strong><button class="modal-close" data-close="conflict" aria-label="关闭">×</button></header><div class="modal-body"><p class="version-intro">这些 Skill 名字相同，但内容不同。选中一份加入「我的 Skills」，其他位置的原文件仍会保留。</p><div class="version-list"><button class="version-choice"><span class="radio"></span><span class="version-copy"><strong>lark-approval</strong><span>在 Codex 中找到 · 内容编号 03fa82c1</span></span><span class="version-status">检查通过</span></button><button class="version-choice"><span class="radio"></span><span class="version-copy"><strong>lark-approval</strong><span>在 ZCode 中找到 · 内容编号 8ab7d432</span></span><span class="version-status">检查通过</span></button><button class="version-choice"><span class="radio"></span><span class="version-copy"><strong>lark-approval</strong><span>在 WorkBuddy、HanaAgent 中找到 · 内容编号 b1876a9e</span></span><span class="version-status">检查通过</span></button></div></div><footer class="modal-foot"><button class="button" data-close="conflict">取消</button><span class="spacer"></span><button class="button primary" id="keepConflict" disabled>保留所选版本</button></footer></section></div>
 
+    <div class="scrim" id="deployScrim" role="dialog" aria-modal="true" aria-labelledby="deployTitle"><section class="modal" style="max-width:650px"><header class="modal-head"><strong id="deployTitle">安装到全部可用应用？</strong><button class="modal-close" data-close="deploy" aria-label="关闭">×</button></header><div class="modal-body"><p class="version-intro">将为 Codex、ZCode、WorkBuddy、HanaAgent 准备安装。未找到的 Claude Code、Cursor、Kimi Code、Gemini CLI、OpenCode 会被跳过，也不会创建文件夹。</p><div class="block-note"><strong>下一步仍会显示安装清单</strong><span>只有你确认清单后，SkillBox 才会复制文件。</span></div></div><footer class="modal-foot"><button class="button" data-close="deploy">取消</button><span class="spacer"></span><button class="button primary">继续，查看安装清单</button></footer></section></div>
+
     <div class="toast" id="toast" role="status"><span class="toast-check">✓</span><span class="toast-copy"><strong>安装完成，更新了 4 个位置</strong><span>备份将至少保留 30 天</span></span><button data-go="records">查看最近操作</button><button id="undoToast">恢复到操作前</button></div>
   </main>
 
   <script>
-    const titleMap = { overview: '总览', library: '我的 Skills', agents: '安装到哪里', records: '最近操作', settings: '设置' };
+    const titleMap = { overview: '总览', library: '我的 Skills', agents: '自定义安装', records: '最近操作', settings: '设置' };
     const navButtons = [...document.querySelectorAll('.nav-button[data-page]')];
     function showPage(name) {
       navButtons.forEach(button => button.classList.toggle('active', button.dataset.page === name));
@@ -592,7 +597,6 @@ description: 公众号排版、配图、定稿与发布工作流。
       document.getElementById('detailSource').textContent = skill.source;
       document.getElementById('detailHash').textContent = skill.hash;
       document.getElementById('detailDate').textContent = skill.date;
-      document.getElementById('detailCode').textContent = `---\nname: ${skill.name}\ndescription: ${skill.description}\n---\n\n# ${skill.name}\n\n中央原件内容只读预览。`;
     }));
 
     document.querySelectorAll('.install-toggle:not(.indirect):not(.drift)').forEach(toggle => toggle.addEventListener('click', () => {
@@ -604,12 +608,15 @@ description: 公众号排版、配图、定稿与发布工作流。
     const onboarding = document.getElementById('onboardingScrim');
     const sync = document.getElementById('syncScrim');
     const conflict = document.getElementById('conflictScrim');
+    const deploy = document.getElementById('deployScrim');
     function openOnboarding() { onboarding.classList.add('open'); document.getElementById('onboardNext').focus(); }
     document.getElementById('replayOnboarding').addEventListener('click', openOnboarding);
     document.getElementById('replayOnboardingSettings').addEventListener('click', openOnboarding);
     document.querySelectorAll('[data-close="onboarding"]').forEach(button => button.addEventListener('click', () => onboarding.classList.remove('open')));
     document.querySelectorAll('[data-close="sync"]').forEach(button => button.addEventListener('click', () => sync.classList.remove('open')));
     document.querySelectorAll('[data-close="conflict"]').forEach(button => button.addEventListener('click', () => conflict.classList.remove('open')));
+    document.querySelectorAll('[data-close="deploy"]').forEach(button => button.addEventListener('click', () => deploy.classList.remove('open')));
+    document.getElementById('openDeploy').addEventListener('click', () => deploy.classList.add('open'));
     document.querySelectorAll('.conflict-trigger').forEach(button => button.addEventListener('click', () => conflict.classList.add('open')));
     document.querySelectorAll('.version-choice').forEach(button => button.addEventListener('click', () => {
       document.querySelectorAll('.version-choice').forEach(choice => choice.classList.remove('selected'));
@@ -660,6 +667,7 @@ description: 公众号排版、配图、定稿与发布工作流。
     }
     if (query.get('sync') === '1') { showPage('agents'); sync.classList.add('open'); }
     if (query.get('conflict') === '1') { showPage('overview'); conflict.classList.add('open'); }
+    if (query.get('deploy') === '1') { showPage('library'); deploy.classList.add('open'); }
   </script>
 </body>
 </html>

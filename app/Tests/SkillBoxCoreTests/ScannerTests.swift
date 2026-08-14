@@ -97,13 +97,18 @@ struct RiskAnalyzerTests {
 
 @Suite("Path safety")
 struct PathSafetyTests {
-    @Test("Broad and central-library targets are rejected")
+    @Test("Broad, missing and central-library targets are rejected")
     func unsafeTargets() throws {
-        let home = URL(fileURLWithPath: "/Users/test")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("SkillBoxPathTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = root.appendingPathComponent("home")
         let library = home.appendingPathComponent("Library/Application Support/SkillBox")
+        let custom = home.appendingPathComponent("Custom/Skills")
+        try FileManager.default.createDirectory(at: custom, withIntermediateDirectories: true)
         #expect(throws: PathSafetyError.self) { try PathSafety.validateCustomTarget(home, homeDirectory: home, libraryRoot: library) }
         #expect(throws: PathSafetyError.self) { try PathSafety.validateCustomTarget(library.appendingPathComponent("Library"), homeDirectory: home, libraryRoot: library) }
-        try PathSafety.validateCustomTarget(home.appendingPathComponent("Custom/Skills"), homeDirectory: home, libraryRoot: library)
+        #expect(throws: PathSafetyError.self) { try PathSafety.validateCustomTarget(home.appendingPathComponent("Missing/Skills"), homeDirectory: home, libraryRoot: library) }
+        try PathSafety.validateCustomTarget(custom, homeDirectory: home, libraryRoot: library)
     }
 }
 

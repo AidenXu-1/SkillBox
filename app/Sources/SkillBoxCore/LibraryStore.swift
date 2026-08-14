@@ -6,6 +6,8 @@ public enum LibraryStoreError: LocalizedError {
     case candidateChanged
     case duplicateRecord
     case duplicateDesiredDestination
+    case skillNotFound
+    case skillStillInstalled
 
     public var errorDescription: String? {
         switch self {
@@ -14,6 +16,8 @@ public enum LibraryStoreError: LocalizedError {
         case .candidateChanged: "Skill 在你确认前发生了变化，请重新查看"
         case .duplicateRecord: "「我的 Skills」中已经有相同内容"
         case .duplicateDesiredDestination: "同一个应用里，同名 Skill 一次只能选择一份"
+        case .skillNotFound: "在「我的 Skills」中找不到这份内容"
+        case .skillStillInstalled: "这份 Skill 仍安装在应用中，请先从所有应用卸载"
         }
     }
 }
@@ -22,6 +26,7 @@ public actor LibraryStore {
     public let root: URL
     public let libraryDirectory: URL
     public let transactionsDirectory: URL
+    public let deletedDirectory: URL
     private let fileManager: FileManager
     private let fingerprinter: any SkillFingerprinting
     private let encoder: JSONEncoder
@@ -37,6 +42,7 @@ public actor LibraryStore {
         self.root = root.standardizedFileURL
         libraryDirectory = root.appendingPathComponent("Library", isDirectory: true)
         transactionsDirectory = root.appendingPathComponent("Transactions", isDirectory: true)
+        deletedDirectory = root.appendingPathComponent("Deleted", isDirectory: true)
         self.fileManager = fileManager
         self.fingerprinter = fingerprinter
         encoder = JSONEncoder()
@@ -46,6 +52,7 @@ public actor LibraryStore {
         decoder.dateDecodingStrategy = .iso8601
         try fileManager.createDirectory(at: libraryDirectory, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: transactionsDirectory, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: deletedDirectory, withIntermediateDirectories: true)
         var warnings: [String] = []
         snapshot = try Self.loadSnapshot(root: root, fileManager: fileManager, decoder: decoder, warnings: &warnings)
         recoveryWarnings = warnings
@@ -154,6 +161,30 @@ public actor LibraryStore {
 
     public func contentURL(for skill: SkillRecord) -> URL {
         root.appendingPathComponent(skill.contentRelativePath)
+    }
+
+    public func deleteSkill(id: UUID) throws -> URL {
+        guard snapshot.skills.contains(where: { $0.id == id }) else {
+            throw LibraryStoreError.skillNotFound
+        }
+        guard !snapshot.installations.contains(where: { $0.skillID == id }) else {
+            throw LibraryStoreError.skillStillInstalled
+        }
+
+        let recordRoot = libraryDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
+        let archived = deletedDirectory.appendingPathComponent("\(Int(Date().timeIntervalSince1970))-\(id.uuidString)", isDirectory: true)
+        let previousSnapshot = snapshot
+        try fileManager.moveItem(at: recordRoot, to: archived)
+        snapshot.skills.removeAll { $0.id == id }
+        snapshot.assignments.removeAll { $0.skillID == id }
+        do {
+            try persist()
+        } catch {
+            snapshot = previousSnapshot
+            try? fileManager.moveItem(at: archived, to: recordRoot)
+            throw error
+        }
+        return archived
     }
 
     public func recordTransaction(_ transaction: SyncTransaction) throws {

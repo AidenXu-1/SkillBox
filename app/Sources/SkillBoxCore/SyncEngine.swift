@@ -27,13 +27,16 @@ public struct DefaultSyncPlanner: SyncPlanner, Sendable {
             }
             let destination = URL(fileURLWithPath: target.path).appendingPathComponent(assignment.installationDirectoryName).standardizedFileURL
             desiredDestinations.insert(destination.path)
+            guard target.detectionStatus == .available, targetDirectoryExists(target) else {
+                actions.append(blocked(assignment, path: destination.path, reason: .targetUnavailable, summary: "本机没有找到 \(target.displayName)，不会创建它的文件夹")); continue
+            }
             guard destination.deletingLastPathComponent().path == URL(fileURLWithPath: target.path).standardizedFileURL.path else {
                 actions.append(blocked(assignment, path: destination.path, reason: .invalidDestination, summary: "安装位置不安全，请重新选择")); continue
             }
             guard !skill.riskReport.isBlocked else {
                 actions.append(blocked(assignment, path: destination.path, reason: .sourceBlocked, summary: "这份 Skill 有严重风险，已停止安装")); continue
             }
-            if target.writeStatus == .readOnly {
+            if target.writeStatus != .writable || !FileManager.default.isWritableFile(atPath: target.path) {
                 actions.append(blocked(assignment, path: destination.path, reason: .targetReadOnly, summary: "这个文件夹目前不能写入")); continue
             }
 
@@ -74,6 +77,11 @@ public struct DefaultSyncPlanner: SyncPlanner, Sendable {
         return try? fingerprinter.fingerprint(directory: url)
     }
 
+    private func targetDirectoryExists(_ target: AgentTarget) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+
     private func blocked(_ assignment: Assignment, path: String, reason: SyncBlockReason, summary: String) -> SyncAction {
         .init(kind: .blocked, skillID: assignment.skillID, targetID: assignment.targetID, destinationPath: path, blockReason: reason, summary: summary)
     }
@@ -89,6 +97,7 @@ public enum SyncExecutorError: LocalizedError {
     case stateChanged(String)
     case transactionNotFound
     case undoWouldOverwrite(String)
+    case targetUnavailable(String)
     case injectedFailure
 
     public var errorDescription: String? {
@@ -97,6 +106,7 @@ public enum SyncExecutorError: LocalizedError {
         case let .stateChanged(path): "你确认后，文件又发生了变化。SkillBox 已停下：\(path)"
         case .transactionNotFound: "找不到这次操作记录"
         case let .undoWouldOverwrite(path): "文件在安装后又被改过。为了保护新内容，暂时不能恢复：\(path)"
+        case let .targetUnavailable(path): "应用的 Skills 文件夹不存在或无法写入，SkillBox 不会代为创建：\(path)"
         case .injectedFailure: "测试注入的写入中断"
         }
     }
@@ -139,6 +149,9 @@ public actor TransactionalSyncExecutor: SyncExecutor {
                 let previousInstallation = installations.first { $0.destinationPath == destination.path }
                 let current = fingerprintIfExists(destination)
                 guard current == action.expectedDestinationFingerprint else { throw SyncExecutorError.stateChanged(destination.path) }
+                if [.create, .update, .takeover].contains(action.kind) {
+                    try requireExistingWritableParent(of: destination)
+                }
                 let backupName = "\(index)-\(destination.lastPathComponent)"
                 let backup = backupRoot.appendingPathComponent(backupName)
                 if current != nil { try SafeFileOperations.copyDirectory(from: destination, to: backup, fileManager: fileManager) }
@@ -148,7 +161,6 @@ public actor TransactionalSyncExecutor: SyncExecutor {
                     guard let skill = skills[action.skillID] else { throw SyncExecutorError.stateChanged(destination.path) }
                     let source = await store.contentURL(for: skill)
                     guard try fingerprinter.fingerprint(directory: source) == action.expectedSourceFingerprint else { throw SyncExecutorError.stateChanged(source.path) }
-                    try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
                     let staged = destination.deletingLastPathComponent().appendingPathComponent(".skillbox-\(UUID().uuidString)")
                     try SafeFileOperations.copyDirectory(from: source, to: staged, fileManager: fileManager)
                     guard try fingerprinter.fingerprint(directory: staged) == action.expectedSourceFingerprint else { throw FileOperationError.fingerprintMismatch }
@@ -231,5 +243,16 @@ public actor TransactionalSyncExecutor: SyncExecutor {
     private func fingerprintIfExists(_ url: URL) -> String? {
         guard fileManager.fileExists(atPath: url.path) else { return nil }
         return try? fingerprinter.fingerprint(directory: url)
+    }
+
+    private func requireExistingWritableParent(of destination: URL) throws {
+        let parent = destination.deletingLastPathComponent()
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: parent.path, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              fileManager.isWritableFile(atPath: parent.path)
+        else {
+            throw SyncExecutorError.targetUnavailable(parent.path)
+        }
     }
 }

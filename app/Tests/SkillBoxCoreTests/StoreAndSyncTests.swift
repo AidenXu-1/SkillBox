@@ -74,6 +74,41 @@ struct LibraryStoreTests {
             ])
         }
     }
+
+    @Test("Deleting a central Skill archives its content and clears unused choices")
+    func deleteArchivesCentralSkill() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "central"))
+        let target = AgentTarget(kind: .custom, displayName: "Test", path: fixture.root.appendingPathComponent("target").path)
+        try await store.replaceTargets([target])
+        try await store.replaceAssignments([.init(skillID: record.id, targetID: target.id, installationDirectoryName: "demo", isDesired: false)])
+
+        let archived = try await store.deleteSkill(id: record.id)
+
+        let snapshot = await store.currentSnapshot()
+        #expect(snapshot.skills.isEmpty)
+        #expect(snapshot.assignments.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: archived.appendingPathComponent("content/SKILL.md").path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.storeRoot.appendingPathComponent("Library/\(record.id.uuidString)").path))
+    }
+
+    @Test("Deleting a Skill is blocked while SkillBox still manages an installed copy")
+    func deleteBlocksManagedInstallation() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "central"))
+        try await store.replaceInstallations([
+            .init(skillID: record.id, targetID: UUID(), destinationPath: "/tmp/demo", deployedFingerprint: record.fingerprint, transactionID: UUID()),
+        ])
+
+        await #expect(throws: LibraryStoreError.self) {
+            try await store.deleteSkill(id: record.id)
+        }
+        #expect(await store.currentSnapshot().skills.count == 1)
+    }
 }
 
 @Suite("Transactional sync")
@@ -170,12 +205,13 @@ struct SyncTests {
         var targets: [AgentTarget] = []
         for index in 1...3 {
             let root = fixture.root.appendingPathComponent("target-\(index)")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             targets.append(.init(
                 kind: .custom,
                 displayName: "Target \(index)",
                 path: root.path,
-                detectionStatus: .directoryMissing,
-                writeStatus: .directoryMissing,
+                detectionStatus: .available,
+                writeStatus: .writable,
                 isCustom: true
             ))
         }
@@ -195,6 +231,57 @@ struct SyncTests {
         let snapshot = await store.currentSnapshot()
         #expect(snapshot.installations.isEmpty)
         #expect(snapshot.transactions.first?.status == .rolledBack)
+    }
+
+    @Test("Missing application directories are blocked and never created")
+    func missingTargetDirectoryNeverCreated() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "central"))
+        let targetRoot = fixture.root.appendingPathComponent("missing-target")
+        let target = AgentTarget(
+            kind: .custom,
+            displayName: "Missing App",
+            path: targetRoot.path,
+            detectionStatus: .directoryMissing,
+            writeStatus: .directoryMissing,
+            isCustom: true
+        )
+        try await store.replaceTargets([target])
+        try await store.replaceAssignments([.init(skillID: record.id, targetID: target.id, installationDirectoryName: "demo")])
+
+        let plan = try DefaultSyncPlanner().makePlan(snapshot: await store.currentSnapshot(), libraryRoot: fixture.storeRoot)
+
+        #expect(plan.executableActions.isEmpty)
+        #expect(plan.blockedActions.first?.blockReason == .targetUnavailable)
+        #expect(!FileManager.default.fileExists(atPath: targetRoot.path))
+    }
+
+    @Test("Executor rejects a stale create plan when its application directory disappeared")
+    func executorRejectsMissingParentDirectory() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "central"))
+        let target = AgentTarget(kind: .custom, displayName: "Gone", path: fixture.root.appendingPathComponent("gone").path)
+        try await store.replaceTargets([target])
+        let destination = URL(fileURLWithPath: target.path).appendingPathComponent("demo")
+        let stalePlan = SyncPlan(actions: [
+            .init(
+                kind: .create,
+                skillID: record.id,
+                targetID: target.id,
+                destinationPath: destination.path,
+                expectedSourceFingerprint: record.fingerprint,
+                summary: "stale"
+            ),
+        ])
+
+        await #expect(throws: SyncExecutorError.self) {
+            try await TransactionalSyncExecutor().execute(plan: stalePlan, store: store)
+        }
+        #expect(!FileManager.default.fileExists(atPath: target.path))
     }
 }
 

@@ -246,6 +246,7 @@ public enum SyncActionKind: String, Codable, Sendable {
 public enum SyncBlockReason: String, Codable, Sendable {
     case missingSkill
     case missingTarget
+    case targetUnavailable
     case targetReadOnly
     case unmanagedConflict
     case externalModification

@@ -96,6 +96,7 @@ public enum BuiltinAgentAdapters {
 public enum PathSafetyError: LocalizedError, Equatable {
     case unsafeTarget(String)
     case targetInsideLibrary(String)
+    case targetMissing(String)
 
     public var errorDescription: String? {
         switch self {
@@ -103,6 +104,8 @@ public enum PathSafetyError: LocalizedError, Equatable {
             "这个文件夹范围太大，请选择应用专门用来保存 Skills 的文件夹：\(path)"
         case let .targetInsideLibrary(path):
             "这个文件夹在 SkillBox 自己的保存位置里，请选择应用的 Skills 文件夹：\(path)"
+        case let .targetMissing(path):
+            "这个文件夹不存在。请先在对应应用中准备好 Skills 文件夹，再重新选择：\(path)"
         }
     }
 }
@@ -126,6 +129,10 @@ public enum PathSafety {
         }
         if target.path == library.path || target.path.hasPrefix(library.path + "/") {
             throw PathSafetyError.targetInsideLibrary(target.path)
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw PathSafetyError.targetMissing(target.path)
         }
     }
 }

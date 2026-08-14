@@ -18,6 +18,10 @@
 - [空 Skill 库 v3](skillbox-layout-v3-empty-library.png)
 - [空安装页 v3](skillbox-layout-v3-empty-agents.png)
 - [同名内容选择 v3](skillbox-layout-v3-conflict-choice.png)
+- [Skill 操作与安装保护 v4 说明](skillbox-actions-v4.md)
+- [Skill 快速操作 v4](skillbox-actions-v4-skill-detail.png)
+- [全局安装确认 v4](skillbox-actions-v4-global-install.png)
+- [自定义安装 v4](skillbox-actions-v4-custom-install.png)
 
 ## 可视化交付要求
 
