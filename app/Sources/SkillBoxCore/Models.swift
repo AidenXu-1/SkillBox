@@ -1,7 +1,7 @@
 import Foundation
 
 public enum SkillBoxSchema {
-    public static let currentVersion = 1
+    public static let currentVersion = 2
 }
 
 public struct PersistedEnvelope<Value: Codable & Sendable>: Codable, Sendable {
@@ -42,6 +42,136 @@ public struct SkillSource: Codable, Hashable, Sendable {
         self.repository = repository
         self.revision = revision
         self.skillPath = skillPath
+    }
+}
+
+public enum GitHubTrackingMode: String, Codable, CaseIterable, Sendable {
+    case latestStableRelease
+    case defaultBranch
+}
+
+public enum GitHubSourceStatus: String, Codable, Sendable {
+    case needsInitialCheck
+    case current
+    case updateAvailable
+    case ignored
+    case checkingStopped
+    case authenticationRequired
+    case unavailable
+}
+
+public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
+    public var id: UUID { skillID }
+    public var skillID: UUID
+    public var repositoryID: Int64?
+    public var repositoryFullName: String
+    public var skillPath: String?
+    public var trackingMode: GitHubTrackingMode
+    public var defaultBranch: String?
+    public var currentVersionIdentifier: String?
+    public var currentVersionName: String?
+    public var currentCommitSHA: String?
+    public var currentTreeSHA: String?
+    public var availableVersionIdentifier: String?
+    public var availableVersionName: String?
+    public var availableCommitSHA: String?
+    public var availableTreeSHA: String?
+    public var ignoredVersionIdentifier: String?
+    public var lastCheckedAt: Date?
+    public var checkingEnabled: Bool
+    public var status: GitHubSourceStatus
+
+    public init(
+        skillID: UUID,
+        repositoryID: Int64? = nil,
+        repositoryFullName: String,
+        skillPath: String? = nil,
+        trackingMode: GitHubTrackingMode = .latestStableRelease,
+        defaultBranch: String? = nil,
+        currentVersionIdentifier: String? = nil,
+        currentVersionName: String? = nil,
+        currentCommitSHA: String? = nil,
+        currentTreeSHA: String? = nil,
+        availableVersionIdentifier: String? = nil,
+        availableVersionName: String? = nil,
+        availableCommitSHA: String? = nil,
+        availableTreeSHA: String? = nil,
+        ignoredVersionIdentifier: String? = nil,
+        lastCheckedAt: Date? = nil,
+        checkingEnabled: Bool = true,
+        status: GitHubSourceStatus = .needsInitialCheck
+    ) {
+        self.skillID = skillID
+        self.repositoryID = repositoryID
+        self.repositoryFullName = repositoryFullName
+        self.skillPath = skillPath
+        self.trackingMode = trackingMode
+        self.defaultBranch = defaultBranch
+        self.currentVersionIdentifier = currentVersionIdentifier
+        self.currentVersionName = currentVersionName
+        self.currentCommitSHA = currentCommitSHA
+        self.currentTreeSHA = currentTreeSHA
+        self.availableVersionIdentifier = availableVersionIdentifier
+        self.availableVersionName = availableVersionName
+        self.availableCommitSHA = availableCommitSHA
+        self.availableTreeSHA = availableTreeSHA
+        self.ignoredVersionIdentifier = ignoredVersionIdentifier
+        self.lastCheckedAt = lastCheckedAt
+        self.checkingEnabled = checkingEnabled
+        self.status = status
+    }
+}
+
+public struct GitHubRemoteVersion: Codable, Hashable, Sendable {
+    public var repositoryID: Int64
+    public var repositoryFullName: String
+    public var isPrivate: Bool
+    public var trackingMode: GitHubTrackingMode
+    public var defaultBranch: String
+    public var versionIdentifier: String
+    public var versionName: String
+    public var revision: String
+    public var commitSHA: String
+    public var treeSHA: String
+    public var publishedAt: Date?
+    public var archiveURL: URL
+
+    public init(
+        repositoryID: Int64,
+        repositoryFullName: String,
+        isPrivate: Bool,
+        trackingMode: GitHubTrackingMode,
+        defaultBranch: String,
+        versionIdentifier: String,
+        versionName: String,
+        revision: String,
+        commitSHA: String,
+        treeSHA: String,
+        publishedAt: Date? = nil,
+        archiveURL: URL
+    ) {
+        self.repositoryID = repositoryID
+        self.repositoryFullName = repositoryFullName
+        self.isPrivate = isPrivate
+        self.trackingMode = trackingMode
+        self.defaultBranch = defaultBranch
+        self.versionIdentifier = versionIdentifier
+        self.versionName = versionName
+        self.revision = revision
+        self.commitSHA = commitSHA
+        self.treeSHA = treeSHA
+        self.publishedAt = publishedAt
+        self.archiveURL = archiveURL
+    }
+}
+
+public struct GitHubSnapshot: Sendable {
+    public var version: GitHubRemoteVersion
+    public var candidates: [SkillCandidate]
+
+    public init(version: GitHubRemoteVersion, candidates: [SkillCandidate]) {
+        self.version = version
+        self.candidates = candidates
     }
 }
 
@@ -342,6 +472,16 @@ public struct TransactionBackup: Codable, Hashable, Sendable {
     }
 }
 
+public struct LibraryUpdateBackup: Codable, Hashable, Sendable {
+    public var previousRecord: SkillRecord
+    public var updatedFingerprint: String
+
+    public init(previousRecord: SkillRecord, updatedFingerprint: String) {
+        self.previousRecord = previousRecord
+        self.updatedFingerprint = updatedFingerprint
+    }
+}
+
 public struct SyncTransaction: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var createdAt: Date
@@ -350,6 +490,7 @@ public struct SyncTransaction: Codable, Hashable, Identifiable, Sendable {
     public var actions: [SyncAction]
     public var backups: [TransactionBackup]
     public var errors: [String]
+    public var libraryUpdate: LibraryUpdateBackup?
 
     public init(
         id: UUID = UUID(),
@@ -358,7 +499,8 @@ public struct SyncTransaction: Codable, Hashable, Identifiable, Sendable {
         status: TransactionStatus,
         actions: [SyncAction],
         backups: [TransactionBackup] = [],
-        errors: [String] = []
+        errors: [String] = [],
+        libraryUpdate: LibraryUpdateBackup? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -367,6 +509,7 @@ public struct SyncTransaction: Codable, Hashable, Identifiable, Sendable {
         self.actions = actions
         self.backups = backups
         self.errors = errors
+        self.libraryUpdate = libraryUpdate
     }
 }
 
@@ -377,6 +520,7 @@ public struct LibrarySnapshot: Codable, Sendable {
     public var installations: [ManagedInstallation]
     public var transactions: [SyncTransaction]
     public var organization: SkillOrganization
+    public var sourceStates: [GitHubSourceState]
 
     public init(
         skills: [SkillRecord] = [],
@@ -384,7 +528,8 @@ public struct LibrarySnapshot: Codable, Sendable {
         assignments: [Assignment] = [],
         installations: [ManagedInstallation] = [],
         transactions: [SyncTransaction] = [],
-        organization: SkillOrganization = .init()
+        organization: SkillOrganization = .init(),
+        sourceStates: [GitHubSourceState] = []
     ) {
         self.skills = skills
         self.targets = targets
@@ -392,6 +537,7 @@ public struct LibrarySnapshot: Codable, Sendable {
         self.installations = installations
         self.transactions = transactions
         self.organization = organization
+        self.sourceStates = sourceStates
     }
 }
 

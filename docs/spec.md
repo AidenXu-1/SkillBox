@@ -6,7 +6,7 @@
 
 - 当前版本：Spec v1
 - 当前阶段：功能闭环与 UI 细节打磨
-- 最近更新：2026-08-14
+- 最近更新：2026-08-15
 - 实现门槛：原型方向已经用户确认；当前先验证功能与安全边界，再进入正式 UI 优化
 
 ## 1. 产品定义
@@ -39,16 +39,18 @@ SkillBox 是面向 AI 产品创作者的开源 macOS 应用。它用一座本地
 - 安装矩阵，以及未安装、已同步、待更新、外部改动、冲突、间接可见六种状态。
 - 内置 Codex、Claude Code、Cursor、Kimi Code、ZCode、WorkBuddy、HanaAgent、Gemini CLI、OpenCode；支持自定义全局目标目录。
 - 将 `~/.agents/skills`、`~/.config/agents/skills` 等通用目录作为可导入来源展示，不把它们伪装成 Agent。
-- 从现有 Agent、本地文件夹和公开 GitHub 仓库导入；多 Skill 仓库先预览和选择。
-- GitHub 来源手动检查更新，展示文件变化与风险变化后再确认。
+- 从现有 Agent、本地文件夹、公开 GitHub 仓库和用户明确授权的私人 GitHub 仓库导入；多 Skill 仓库先预览和选择。
+- GitHub 来源可跟随“最新正式 Release”或“默认分支”。SkillBox 只自动检查版本信息，下载、更新和安装始终需要用户确认。
+- GitHub 更新预览展示新增、修改、移除的文件、风险变化及 `SKILL.md` 前后内容。更新可只替换中央原件，也可在同一次可恢复操作中更新已管理且未被外部修改的安装副本。
 - 变更预览、事务式实体复制、备份、失败恢复、操作记录和撤销。
 - 本地静态风险报告。导入与扫描不得执行 Skill 内任何文件。
-- 无账号、无遥测、无云端数据库。
+- 除可选的 GitHub 来源授权外，无 SkillBox 账号、无遥测、无云端数据库。
 
 ### 明确不做
 
 - 项目级 Skills、Skill 市场、排行榜或推荐。
-- 私有 GitHub 仓库与 GitHub 登录。
+- 跟踪任意分支、固定到某个版本、自动下载、自动更新或自动安装。
+- 使用 Release 中任意上传的附件作为 Skill 内容。
 - 内置 Markdown 编辑器、Skill 创建器或 AI 深度审查。
 - 团队协作、云同步、Windows、Linux、后台自动同步和应用自动更新。
 - 管理 Agent 插件、MCP、系统内置 Skill 或第三方插件缓存。
@@ -121,18 +123,20 @@ SkillBox/
 ├── assignments.json
 ├── installations.json
 ├── organization.json
+├── source-state.json
 ├── Library/<skill-id>/content/...
 └── Transactions/<transaction-id>/
     ├── manifest.json
     └── backups/...
 ```
 
-- JSON 顶层必须包含 `schemaVersion: 1`，使用临时文件加原子替换写入。
+- JSON 顶层必须包含 `schemaVersion: 2`，使用临时文件加原子替换写入。Schema v1 数据在内存中迁移后原子写回，不得当作损坏数据丢弃。
 - `SkillRecord`：稳定 UUID、规范名、显示名、描述、指纹、来源、风险摘要、中央内容路径。
 - `AgentTarget`：稳定 ID、适配器 ID、自定义显示名、路径、检测状态和写入状态。
 - `Assignment`：Skill 版本、目标、安装目录名和期望状态。
 - `ManagedInstallation`：目标路径、Skill ID、上次部署指纹、事务 ID 和时间。
 - `SyncTransaction`：预览操作、备份位置、执行结果、错误和撤销状态。
+- `GitHubSourceState`：仓库稳定 ID、Skill 子目录、跟踪方式、当前版本、Commit SHA、目录 SHA、上次检查时间、忽略版本和检查开关。任何凭据都不得进入该数据。
 - 同名不同内容允许作为多个 `SkillRecord` 存在；同一目标同一安装目录名只能选择一个版本。
 - “我的 Skills”中的单个 Skill 支持“安装到全部可用应用”和“从所有应用卸载”；两者都先生成安装预览，再由用户确认执行。
 - 删除中央 Skill 前必须确认；仍存在已管理安装时必须先完成全局卸载。删除后的中央内容移入 SkillBox 本机“已删除”目录，避免立即永久清除。
@@ -159,6 +163,7 @@ SkillBox/
 - Markdown 中的命令说明与可执行脚本中的真实行为分开呈现。
 - 越界软链接、路径穿越和超过导入上限直接阻止导入；其他高风险项需要二次确认。
 - GitHub 下载上限：10 MiB 压缩数据、25 MiB 解压内容、1000 个文件。
+- 下载上限必须在网络流读取期间生效，不得等整个文件进入内存后才判断。
 - 报告必须明确：静态检查只能提供证据和提示，不能保证 Skill 绝对安全。
 
 ## 9. 技术路线与公开接口
@@ -167,7 +172,8 @@ SkillBox/
 - 核心行为放入纯 Swift 模块并通过协议隔离：`AgentAdapter`、`SkillScanner`、`SourceProvider`、`RiskAnalyzer`、`SyncPlanner`、`SyncExecutor`。
 - UI 不直接读写 Agent 目录，只消费核心模块的只读模型和显式命令。
 - 不启用 App Store Sandbox；启用 Hardened Runtime。应用只访问内置路径、用户选择路径和自己的 Application Support 数据。
-- 外部网络只用于用户主动发起的公开 GitHub 导入或更新检查。
+- 外部网络只用于 GitHub 登录授权、用户主动导入或更新检查。启动时若距上次检查超过 6 小时，可只读取版本元数据；不设后台常驻任务。
+- 私人仓库使用 GitHub App Device Flow，只申请 `Contents: read` 与必要的 Metadata 读取权限。Access Token 和 Refresh Token 只保存在 macOS 钥匙串，不写入 JSON、日志或诊断信息；客户端不包含 Client Secret 或 GitHub App 私钥。
 - 开源采用 MIT License；公开发行使用 Developer ID 签名、公证后的 DMG 和 SHA-256 校验和。
 
 ## 10. 验收标准
@@ -192,4 +198,5 @@ SkillBox/
 | 2026-08-14 | v1 | 增加单 Skill 全局安装、全局卸载、可恢复删除与缺失应用目录硬保护 | 用户补充真实安装与管理需求 |
 | 2026-08-14 | v1 | 重排 Skill 详情信息层级，增加完整目录与主 Markdown 预览入口 | 用户反馈详情区域拥挤且技术信息表达不符合消费级产品习惯 |
 | 2026-08-14 | v1 | 增加统一悬停反馈、整行详情开关、Skill 文件夹分类与拖动排序 | 用户补充鼠标可视反馈和个人整理需求 |
+| 2026-08-15 | v1 | 增加 GitHub Release/默认分支跟踪、私人仓库最小权限登录、更新忽略与停止检查 | 将 GitHub 升级为 Skill 的正式发布和版本监控源 |
 | 2026-08-14 | v0 | 创建 Spec 草案 | 项目地基初始化 |

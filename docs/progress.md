@@ -5,6 +5,19 @@
 
 ---
 
+## 2026-08-15
+
+- ✅ 将 GitHub 正式纳入 Skill 更新源：新 Skill 可选择跟随“最新正式 Release”或“默认分支”，旧 GitHub Skill 升级后默认跟随原分支并标记“需要核对一次”。
+- ✅ 持久化数据升级为 Schema v2，新增仓库编号、Skill 子目录、当前版本、Commit SHA、目录 SHA、上次检查时间、忽略版本、停止检查与授权状态；升级不下载、不替换现有内容。
+- ✅ 拆分“查看是否有新版本”和“确认后下载”；前者只请求版本与目录信息，后者按 Release Tag 或已解析的 Commit SHA 下载完整快照，不使用 Release 附件。
+- ✅ 多 Skill 仓库按具体 Skill 目录 SHA 判断变化，README 或其他 Skill 的改动不会误报；已确认更新会展示新增、修改、移除文件和 `SKILL.md` 前后内容。
+- ✅ 新增“忽略这个版本”和“停止检查更新”；忽略只针对当前 Release ID 或 Commit SHA，下一版仍会提醒，停止后不发起网络请求。
+- ✅ 完成中央原件与已管理 Agent 副本的联合更新、失败回滚和撤销；外部改动、已消失安装位置和未托管目录仍会被保护。
+- ✅ 完成 GitHub Device Flow 和 macOS 钥匙串基础能力；仅在 App 中保存公开 Client ID，Access Token 与 Refresh Token 不进入 JSON、日志或操作记录，授权被撤销时保留本地 Skill 并暂停检查。
+- ✅ 交付 GitHub v7 可操作原型和 5 张截图，覆盖账号连接、导入方式、新版本、更新差异、授权失效；鼠标点击与页面跳转自动验证通过。
+- ✅ 自动化测试增至 38 项，release 应用重新打包，`Info.plist` 校验和 Hardened Runtime ad-hoc 签名完整性检查通过。
+- 📌 正式 SwiftUI 页面尚未接入这套新交互，按项目规则等待用户先确认 v7 原型；私人仓库真实验收仍需 GitHub App 的公开 Client ID 与安装地址。
+
 ## 2026-08-14
 
 - ✅ 「我的 Skills」新增个人分类：可新建、重命名、删除文件夹，把 Skill 拖入分类、拖回未分类，并自由调整文件夹与同组 Skill 的显示顺序。

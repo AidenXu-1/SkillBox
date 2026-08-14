@@ -206,6 +206,11 @@ public actor TransactionalSyncExecutor: SyncExecutor {
         let snapshot = await store.currentSnapshot()
         guard var transaction = snapshot.transactions.first(where: { $0.id == transactionID }) else { throw SyncExecutorError.transactionNotFound }
         let transactionRoot = store.transactionsDirectory.appendingPathComponent(transaction.id.uuidString)
+        if let libraryUpdate = transaction.libraryUpdate {
+            guard snapshot.skills.first(where: { $0.id == libraryUpdate.previousRecord.id })?.fingerprint == libraryUpdate.updatedFingerprint else {
+                throw SyncExecutorError.undoWouldOverwrite("SkillBox 中的原件")
+            }
+        }
         for backup in transaction.backups.reversed() {
             let destination = URL(fileURLWithPath: backup.destinationPath)
             guard fingerprintIfExists(destination) == backup.afterFingerprint else {
@@ -214,8 +219,9 @@ public actor TransactionalSyncExecutor: SyncExecutor {
                 try await store.recordTransaction(transaction)
                 throw SyncExecutorError.undoWouldOverwrite(destination.path)
             }
-            try restore(backup: backup, transactionRoot: transactionRoot)
         }
+        for backup in transaction.backups.reversed() { try restore(backup: backup, transactionRoot: transactionRoot) }
+        if let libraryUpdate = transaction.libraryUpdate { _ = try await store.restoreSkillVersion(libraryUpdate) }
         var installations = snapshot.installations
         for backup in transaction.backups {
             installations.removeAll { $0.destinationPath == backup.destinationPath }

@@ -5,9 +5,9 @@
 
 ## 当前状态快照
 
-- **阶段**：M6/M7 真实验收前（见 [roadmap.md](roadmap.md)）
-- **最近在做**：原生核心、安全同步、GitHub 导入与功能型 UI
-- **下一步**：获得用户明确授权后，完成一次可恢复的真实同步/撤销验收，再进入 UI 优化
+- **阶段**：GitHub 更新核心完成，正式 UI 接入前
+- **最近在做**：Schema v2、Release/默认分支跟踪、Device Flow、钥匙串、差异预览和联合更新事务
+- **下一步**：用户确认 GitHub v7 原型后接入正式 SwiftUI；然后配置 GitHub App 做公开/私人仓库与真实鼠标验收
 
 ## 怎么把环境跑起来
 
@@ -24,13 +24,16 @@ swift test
 ## 现在卡在哪 / 待决策
 
 - 真实 Agent 写入尚未授权，不得用自动化测试代替这个验收门槛。
-- 尚未做真实 GitHub 网络导入、鼠标前台验收、Developer ID 签名、公证和 DMG。
-- 用户已决定先打磨功能，所以当前 SwiftUI 仅保证流程可用，不要提前扩展视觉范围。
+- GitHub v7 原型尚待用户确认；未确认前不得将新页面接入正式 SwiftUI。
+- 私人仓库需先注册 GitHub App，构建仅接收公开 Client ID 和安装地址；不得放入 Client Secret、私钥或个人 Token。
+- 尚未做真实私人仓库授权、真实鼠标/VoiceOver 验收、Developer ID 签名、公证和 DMG。
 
 ## 容易踩的坑 / 注意事项
 
 - 扫描阶段必须只读，不可顺手创建不存在的 Agent 目录。
-- GitHub 预览返回的候选文件位于临时目录，只能在导入完成或取消后清理。
+- GitHub 版本检查只请求元数据，用户确认后才能下载完整快照；候选文件位于临时目录，只能在导入/更新完成或取消后清理。
+- Release 和 `main` 相互独立；Release 模式用 Tag 对应的源码 ZIP，不读取用户上传的任意附件。
+- GitHub Token 只能保存在 macOS 钥匙串，不要加入持久化 JSON、诊断输出或操作记录。
 - 未托管同名目录与外部改动必须阻塞；仅有用户明确授权才能接管或替换。
 - 撤销时也要重新校验当前指纹，不得覆盖事务后的外部修改。
 
@@ -44,6 +47,9 @@ swift test
 - 界面代码：`app/Sources/SkillBoxApp/`
 - 自动化测试：`app/Tests/SkillBoxCoreTests/`
 - 设计参考:`design/`
+- GitHub 原型：`design/ui/skillbox-github-v7.html`
+- GitHub 设计说明：`design/ui/skillbox-github-v7.md`
+- GitHub 来源决策：`docs/decisions/0004-github-source-tracking-and-auth.md`
 
 ---
-最近更新:2026-08-14
+最近更新:2026-08-15

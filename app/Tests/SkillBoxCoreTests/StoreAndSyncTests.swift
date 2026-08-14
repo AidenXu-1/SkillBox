@@ -15,10 +15,49 @@ struct LibraryStoreTests {
         #expect(FileManager.default.fileExists(atPath: fixture.storeRoot.appendingPathComponent(record.contentRelativePath).appendingPathComponent("SKILL.md").path))
         let catalogData = try Data(contentsOf: fixture.storeRoot.appendingPathComponent("catalog.json"))
         let json = try #require(JSONSerialization.jsonObject(with: catalogData) as? [String: Any])
-        #expect(json["schemaVersion"] as? Int == 1)
+        #expect(json["schemaVersion"] as? Int == 2)
 
         let reloaded = try LibraryStore(root: fixture.storeRoot)
         #expect(await reloaded.currentSnapshot().skills.count == 1)
+    }
+
+    @Test("Schema v1 GitHub records migrate without downloading or losing content")
+    func migratesGitHubSourceState() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        try FileManager.default.createDirectory(at: fixture.storeRoot, withIntermediateDirectories: true)
+        let candidate = try fixture.candidate(name: "demo", body: "central")
+        let record = SkillRecord(
+            canonicalName: candidate.canonicalName,
+            displayName: candidate.displayName,
+            description: candidate.description,
+            fingerprint: candidate.fingerprint,
+            source: .init(
+                kind: .github,
+                displayName: "example/skills",
+                locator: "https://github.com/example/skills",
+                repository: "example/skills",
+                revision: "main",
+                skillPath: "skills/demo"
+            ),
+            riskReport: candidate.riskReport,
+            contentRelativePath: "Library/existing/content"
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(PersistedEnvelope(schemaVersion: 1, value: [record]))
+            .write(to: fixture.storeRoot.appendingPathComponent("catalog.json"))
+
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let state = try #require(await store.currentSnapshot().sourceStates.first)
+        #expect(state.skillID == record.id)
+        #expect(state.trackingMode == .defaultBranch)
+        #expect(state.status == .needsInitialCheck)
+        #expect(state.checkingEnabled)
+
+        let migratedData = try Data(contentsOf: fixture.storeRoot.appendingPathComponent("catalog.json"))
+        let migratedJSON = try #require(JSONSerialization.jsonObject(with: migratedData) as? [String: Any])
+        #expect(migratedJSON["schemaVersion"] as? Int == 2)
     }
 
     @Test("Blocked candidates never enter the library")
@@ -142,6 +181,66 @@ struct LibraryStoreTests {
 
 @Suite("Transactional sync")
 struct SyncTests {
+    @Test("A failed update restores both the central original and deployed copies")
+    func combinedUpdateFailureRestoresEverything() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let original = try await store.importCandidate(fixture.candidate(name: "demo", body: "v1"))
+        let targetRoot = fixture.root.appendingPathComponent("target")
+        try FileManager.default.createDirectory(at: targetRoot, withIntermediateDirectories: true)
+        let target = AgentTarget(kind: .custom, displayName: "Test", path: targetRoot.path, detectionStatus: .available, writeStatus: .writable, isCustom: true)
+        try await store.replaceTargets([target])
+        try await store.replaceAssignments([.init(skillID: original.id, targetID: target.id, installationDirectoryName: "demo")])
+        let initialPlan = try DefaultSyncPlanner().makePlan(snapshot: await store.currentSnapshot(), libraryRoot: fixture.storeRoot)
+        _ = try await TransactionalSyncExecutor().execute(plan: initialPlan, store: store)
+
+        try FileManager.default.removeItem(at: fixture.sourceRoot.appendingPathComponent("demo"))
+        let update = try fixture.candidate(name: "demo", body: "v2")
+        let failingExecutor = TransactionalSyncExecutor(shouldInjectFailure: { $0 == 1 })
+        let coordinator = SkillUpdateCoordinator(executor: failingExecutor)
+        await #expect(throws: SyncExecutorError.self) {
+            try await coordinator.updateAndDeploy(skillID: original.id, candidate: update, store: store)
+        }
+
+        let restored = try #require(await store.currentSnapshot().skills.first)
+        #expect(restored.fingerprint == original.fingerprint)
+        let centralText = try String(contentsOf: await store.contentURL(for: restored).appendingPathComponent("SKILL.md"), encoding: .utf8)
+        #expect(centralText.contains("v1"))
+        let installedText = try String(contentsOf: targetRoot.appendingPathComponent("demo/SKILL.md"), encoding: .utf8)
+        #expect(installedText.contains("v1"))
+    }
+
+    @Test("Undoing a combined update restores the central version and deployed copy")
+    func combinedUpdateUndo() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let original = try await store.importCandidate(fixture.candidate(name: "demo", body: "v1"))
+        let targetRoot = fixture.root.appendingPathComponent("target")
+        try FileManager.default.createDirectory(at: targetRoot, withIntermediateDirectories: true)
+        let target = AgentTarget(kind: .custom, displayName: "Test", path: targetRoot.path, detectionStatus: .available, writeStatus: .writable, isCustom: true)
+        try await store.replaceTargets([target])
+        try await store.replaceAssignments([.init(skillID: original.id, targetID: target.id, installationDirectoryName: "demo")])
+        let planner = DefaultSyncPlanner()
+        let executor = TransactionalSyncExecutor()
+        _ = try await executor.execute(plan: planner.makePlan(snapshot: await store.currentSnapshot(), libraryRoot: fixture.storeRoot), store: store)
+
+        try FileManager.default.removeItem(at: fixture.sourceRoot.appendingPathComponent("demo"))
+        let update = try fixture.candidate(name: "demo", body: "v2")
+        let result = try await SkillUpdateCoordinator(executor: executor).updateAndDeploy(skillID: original.id, candidate: update, store: store)
+        let transaction = try #require(result.transaction)
+        #expect(transaction.libraryUpdate != nil)
+        _ = try await executor.undo(transactionID: transaction.id, store: store)
+
+        let restored = try #require(await store.currentSnapshot().skills.first)
+        #expect(restored.fingerprint == original.fingerprint)
+        let centralText = try String(contentsOf: await store.contentURL(for: restored).appendingPathComponent("SKILL.md"), encoding: .utf8)
+        let installedText = try String(contentsOf: targetRoot.appendingPathComponent("demo/SKILL.md"), encoding: .utf8)
+        #expect(centralText.contains("v1"))
+        #expect(installedText.contains("v1"))
+    }
+
     @Test("Plan, execute and undo preserve ownership boundaries")
     func executeAndUndo() async throws {
         let fixture = try SyncFixture()

@@ -28,5 +28,9 @@
     <true/>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 SkillBox contributors</string>
+    <key>SkillBoxGitHubClientID</key>
+    <string></string>
+    <key>SkillBoxGitHubInstallURL</key>
+    <string></string>
 </dict>
 </plist>

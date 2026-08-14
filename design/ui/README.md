@@ -6,6 +6,8 @@
 
 ## 当前设计
 
+- [GitHub 版本跟踪与更新原型 v7](skillbox-github-v7.html)
+- [GitHub 交互设计说明 v7](skillbox-github-v7.md)
 - [SkillBox 交互原型 v1](skillbox-prototype-v1.html)
 - [设计说明](skillbox-prototype-v1.md)
 - [资产总览截图](skillbox-prototype-v1-overview.png)

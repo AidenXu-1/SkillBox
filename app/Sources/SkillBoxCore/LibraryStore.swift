@@ -54,8 +54,12 @@ public actor LibraryStore {
         try fileManager.createDirectory(at: transactionsDirectory, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: deletedDirectory, withIntermediateDirectories: true)
         var warnings: [String] = []
-        snapshot = try Self.loadSnapshot(root: root, fileManager: fileManager, decoder: decoder, warnings: &warnings)
+        let loaded = try Self.loadSnapshot(root: root, fileManager: fileManager, decoder: decoder, warnings: &warnings)
+        snapshot = loaded.snapshot
         recoveryWarnings = warnings
+        if loaded.didMigrate {
+            try Self.persist(snapshot: snapshot, root: self.root, encoder: encoder, fileManager: fileManager)
+        }
     }
 
     public func currentSnapshot() -> LibrarySnapshot { snapshot }
@@ -81,6 +85,20 @@ public actor LibraryStore {
         var normalized = organization
         normalized.normalize(skillIDs: snapshot.skills.map(\.id))
         snapshot.organization = normalized
+        try persist()
+    }
+
+    public func replaceSourceStates(_ states: [GitHubSourceState]) throws {
+        snapshot.sourceStates = states
+        try persist()
+    }
+
+    public func updateSourceState(_ state: GitHubSourceState) throws {
+        if let index = snapshot.sourceStates.firstIndex(where: { $0.skillID == state.skillID }) {
+            snapshot.sourceStates[index] = state
+        } else {
+            snapshot.sourceStates.append(state)
+        }
         try persist()
     }
 
@@ -168,6 +186,34 @@ public actor LibraryStore {
         return snapshot.skills[index]
     }
 
+    public func restoreSkillVersion(_ backup: LibraryUpdateBackup) throws -> SkillRecord {
+        let previous = backup.previousRecord
+        guard let index = snapshot.skills.firstIndex(where: { $0.id == previous.id }),
+              snapshot.skills[index].fingerprint == backup.updatedFingerprint
+        else { throw LibraryStoreError.candidateChanged }
+        let current = snapshot.skills[index]
+        let recordRoot = libraryDirectory.appendingPathComponent(previous.id.uuidString)
+        let content = recordRoot.appendingPathComponent("content")
+        let versions = recordRoot.appendingPathComponent("versions")
+        let previousContent = versions.appendingPathComponent(previous.fingerprint)
+        guard fileManager.fileExists(atPath: previousContent.path),
+              try fingerprinter.fingerprint(directory: previousContent) == previous.fingerprint
+        else { throw LibraryStoreError.candidateChanged }
+        let currentArchive = versions.appendingPathComponent(current.fingerprint)
+        if !fileManager.fileExists(atPath: currentArchive.path) {
+            try SafeFileOperations.copyDirectory(from: content, to: currentArchive, fileManager: fileManager)
+        }
+        let temporary = libraryDirectory.appendingPathComponent(".restore-\(previous.id.uuidString)-\(UUID().uuidString)")
+        try SafeFileOperations.copyDirectory(from: previousContent, to: temporary, fileManager: fileManager)
+        _ = try fileManager.replaceItemAt(content, withItemAt: temporary)
+        snapshot.skills[index] = previous
+        do { try persist() } catch {
+            snapshot.skills[index] = current
+            throw error
+        }
+        return previous
+    }
+
     public func contentURL(for skill: SkillRecord) -> URL {
         root.appendingPathComponent(skill.contentRelativePath)
     }
@@ -187,6 +233,7 @@ public actor LibraryStore {
         snapshot.skills.removeAll { $0.id == id }
         snapshot.assignments.removeAll { $0.skillID == id }
         snapshot.organization.placements.removeAll { $0.skillID == id }
+        snapshot.sourceStates.removeAll { $0.skillID == id }
         do {
             try persist()
         } catch {
@@ -212,27 +259,33 @@ public actor LibraryStore {
     }
 
     private func persist() throws {
+        try Self.persist(snapshot: snapshot, root: root, encoder: encoder, fileManager: fileManager)
+    }
+
+    private static func persist(snapshot: LibrarySnapshot, root: URL, encoder: JSONEncoder, fileManager: FileManager) throws {
+        func write<T: Codable & Sendable>(_ value: T, name: String) throws {
+            try SafeFileOperations.atomicWrite(PersistedEnvelope(value: value), to: root.appendingPathComponent(name), encoder: encoder, fileManager: fileManager)
+        }
         try write(snapshot.skills, name: "catalog.json")
         try write(snapshot.targets, name: "targets.json")
         try write(snapshot.assignments, name: "assignments.json")
         try write(snapshot.installations, name: "installations.json")
         try write(snapshot.transactions, name: "transactions.json")
         try write(snapshot.organization, name: "organization.json")
+        try write(snapshot.sourceStates, name: "source-state.json")
     }
 
-    private func write<T: Codable & Sendable>(_ value: T, name: String) throws {
-        try SafeFileOperations.atomicWrite(PersistedEnvelope(value: value), to: root.appendingPathComponent(name), encoder: encoder, fileManager: fileManager)
-    }
-
-    private static func loadSnapshot(root: URL, fileManager: FileManager, decoder: JSONDecoder, warnings: inout [String]) throws -> LibrarySnapshot {
+    private static func loadSnapshot(root: URL, fileManager: FileManager, decoder: JSONDecoder, warnings: inout [String]) throws -> (snapshot: LibrarySnapshot, didMigrate: Bool) {
+        var didMigrate = false
         func load<T: Codable & Sendable>(_ type: T.Type, name: String, fallback: T) throws -> T {
             let url = root.appendingPathComponent(name)
             guard fileManager.fileExists(atPath: url.path) else { return fallback }
             do {
                 let envelope = try decoder.decode(PersistedEnvelope<T>.self, from: Data(contentsOf: url))
-                guard envelope.schemaVersion == SkillBoxSchema.currentVersion else {
+                guard envelope.schemaVersion == 1 || envelope.schemaVersion == SkillBoxSchema.currentVersion else {
                     throw LibraryStoreError.unsupportedSchema(envelope.schemaVersion)
                 }
+                if envelope.schemaVersion == 1 { didMigrate = true }
                 return envelope.value
             } catch {
                 let recovery = root.appendingPathComponent("CorruptData", isDirectory: true)
@@ -246,13 +299,29 @@ public actor LibraryStore {
         let skills = try load([SkillRecord].self, name: "catalog.json", fallback: [])
         var organization = try load(SkillOrganization.self, name: "organization.json", fallback: .init())
         organization.normalize(skillIDs: skills.map(\.id))
-        return try LibrarySnapshot(
+        var sourceStates = try load([GitHubSourceState].self, name: "source-state.json", fallback: [])
+        let stateSkillIDs = Set(sourceStates.map(\.skillID))
+        for skill in skills where skill.source.kind == .github && !stateSkillIDs.contains(skill.id) {
+            sourceStates.append(.init(
+                skillID: skill.id,
+                repositoryFullName: skill.source.repository ?? skill.source.displayName,
+                skillPath: skill.source.skillPath,
+                trackingMode: .defaultBranch,
+                defaultBranch: skill.source.revision,
+                checkingEnabled: true,
+                status: .needsInitialCheck
+            ))
+            didMigrate = true
+        }
+        let snapshot = try LibrarySnapshot(
             skills: skills,
             targets: load([AgentTarget].self, name: "targets.json", fallback: []),
             assignments: load([Assignment].self, name: "assignments.json", fallback: []),
             installations: load([ManagedInstallation].self, name: "installations.json", fallback: []),
             transactions: load([SyncTransaction].self, name: "transactions.json", fallback: []),
-            organization: organization
+            organization: organization,
+            sourceStates: sourceStates
         )
+        return (snapshot, didMigrate)
     }
 }

@@ -18,13 +18,34 @@ final class AppModel: ObservableObject {
     @Published var showOnboarding = false
     @Published var githubURL = ""
     @Published var updatingSkillID: UUID?
+    @Published var githubTrackingMode: GitHubTrackingMode = .latestStableRelease
+    @Published var pendingGitHubVersion: GitHubRemoteVersion?
+    @Published var pendingUpdateChanges: [SkillFileChange] = []
+    @Published var githubAuthorization: GitHubDeviceAuthorization?
+    @Published var isGitHubConnected = false
+    @Published var githubLoginStatus = ""
 
     let libraryRoot: URL
     private let store: LibraryStore
     private let scanner = FileSystemSkillScanner()
     private let planner = DefaultSyncPlanner()
     private let executor = TransactionalSyncExecutor()
+    private let updateCoordinator = SkillUpdateCoordinator()
     private let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+    private lazy var githubDeviceClient = GitHubDeviceFlowClient(clientID: githubClientID)
+    private lazy var githubSession = GitHubAuthenticatedSession(
+        client: githubDeviceClient,
+        credentialStore: KeychainGitHubCredentialStore()
+    )
+    private lazy var githubProvider = GitHubSourceProvider(tokenProvider: githubSession)
+    private lazy var githubUpdateChecker = GitHubUpdateChecker(checker: githubProvider, store: store)
+    private var githubLoginTask: Task<Void, Never>?
+
+    var githubClientID: String { Bundle.main.object(forInfoDictionaryKey: "SkillBoxGitHubClientID") as? String ?? "" }
+    var githubInstallURL: URL? {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "SkillBoxGitHubInstallURL") as? String else { return nil }
+        return URL(string: value)
+    }
 
     init() {
         libraryRoot = FileManager.default.homeDirectoryForCurrentUser
@@ -50,6 +71,8 @@ final class AppModel: ObservableObject {
         do { try await store.replaceTargets(builtin + custom) } catch { present(error) }
         await reload()
         await scanInstalledSkills()
+        isGitHubConnected = await githubSession.isConnected()
+        await checkAllGitHubUpdatesIfStale()
     }
 
     func reload() async {
@@ -130,27 +153,57 @@ final class AppModel: ObservableObject {
     func previewGitHub() async {
         activeConflict = nil
         updatingSkillID = nil
-        await preview(provider: GitHubSourceProvider(), locator: githubURL)
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let result = try await githubProvider.preview(locator: githubURL, trackingMode: githubTrackingMode)
+            pendingGitHubVersion = result.version
+            pendingCandidates = result.candidates
+            selectedCandidateIDs = Set(result.candidates.filter { !$0.riskReport.isBlocked }.map(\.id))
+        } catch { present(error) }
     }
 
     func checkForUpdate(_ skill: SkillRecord) async {
         guard skill.source.kind == .github else { return }
-        activeConflict = nil
-        updatingSkillID = skill.id
-        let all = await loadPreview(provider: GitHubSourceProvider(), locator: skill.source.locator)
-        guard let all else { return }
-        let matching = all.filter { candidate in
-            if let path = skill.source.skillPath { return candidate.source.skillPath == path }
-            return candidate.canonicalName == skill.canonicalName
-        }
-        if matching.first?.fingerprint == skill.fingerprint {
-            cleanupGitHubCandidates(all)
-            updatingSkillID = nil
-            statusMessage = "这份 Skill 已经是 GitHub 上的最新内容"
-        } else {
-            pendingCandidates = matching
-            selectedCandidateIDs = Set(matching.filter { !$0.riskReport.isBlocked }.map(\.id))
-        }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            guard let state = try await githubUpdateChecker.check(skillID: skill.id) else { return }
+            await reload()
+            switch state.status {
+            case .updateAvailable: statusMessage = "发现新版本 \(state.availableVersionName ?? "")"
+            case .needsInitialCheck: statusMessage = "需要下载一次，才能确认当前内容是否最新"
+            case .current: statusMessage = "这份 Skill 已经是最新内容"
+            case .authenticationRequired: noticeMessage = "这个仓库需要重新连接 GitHub"
+            default: break
+            }
+        } catch { present(error) }
+    }
+
+    func previewAvailableUpdate(_ skill: SkillRecord) async {
+        guard let state = snapshot.sourceStates.first(where: { $0.skillID == skill.id }) else { return }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let remote = try await githubProvider.checkRemoteVersion(
+                repositoryFullName: state.repositoryFullName,
+                skillPath: state.skillPath,
+                trackingMode: state.trackingMode
+            )
+            let result = try await githubProvider.downloadSnapshot(version: remote, skillPath: state.skillPath, locator: skill.source.locator)
+            let matching = result.candidates.filter { candidate in
+                if let path = state.skillPath { return candidate.source.skillPath == path }
+                return candidate.canonicalName == skill.canonicalName
+            }
+            guard let candidate = matching.first else { throw GitHubSourceError.noSkillsFound }
+            let current = await store.contentURL(for: skill)
+            pendingUpdateChanges = try SkillDiffAnalyzer().compare(before: current, after: candidate.sourceURL)
+            pendingGitHubVersion = remote
+            activeConflict = nil
+            updatingSkillID = skill.id
+            pendingCandidates = [candidate]
+            selectedCandidateIDs = candidate.riskReport.isBlocked ? [] : [candidate.id]
+        } catch { present(error) }
     }
 
     func importSelectedCandidates() async {
@@ -158,19 +211,62 @@ final class AppModel: ObservableObject {
         defer { isBusy = false }
         do {
             let selected = pendingCandidates.filter { selectedCandidateIDs.contains($0.id) }
-            if let updatingSkillID, let candidate = selected.first {
-                _ = try await store.updateSkill(id: updatingSkillID, with: candidate)
-            } else {
-                for candidate in selected { _ = try await store.importCandidate(candidate) }
+            guard updatingSkillID == nil else { return }
+            for candidate in selected {
+                let record = try await store.importCandidate(candidate)
+                if candidate.source.kind == .github, let remote = pendingGitHubVersion {
+                    let exact = try await githubProvider.checkRemoteVersion(
+                        repositoryFullName: remote.repositoryFullName,
+                        skillPath: candidate.source.skillPath,
+                        trackingMode: remote.trackingMode
+                    )
+                    try await store.updateSourceState(sourceState(skillID: record.id, skillPath: candidate.source.skillPath, remote: exact))
+                }
             }
             cleanupGitHubCandidates(pendingCandidates)
             pendingCandidates = []
             selectedCandidateIDs = []
             activeConflict = nil
             updatingSkillID = nil
+            pendingGitHubVersion = nil
             statusMessage = "已加入「我的 Skills」"
             await reload()
         } catch { present(error) }
+    }
+
+    func applyPendingUpdate(deployToExisting: Bool) async {
+        guard let skillID = updatingSkillID,
+              let candidate = pendingCandidates.first,
+              selectedCandidateIDs.contains(candidate.id),
+              let remote = pendingGitHubVersion
+        else { return }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let result = deployToExisting
+                ? try await updateCoordinator.updateAndDeploy(skillID: skillID, candidate: candidate, store: store)
+                : try await updateCoordinator.updateCentralOnly(skillID: skillID, candidate: candidate, store: store)
+            try await store.updateSourceState(sourceState(skillID: skillID, skillPath: candidate.source.skillPath, remote: remote))
+            cleanupGitHubCandidates(pendingCandidates)
+            pendingCandidates = []
+            selectedCandidateIDs = []
+            pendingUpdateChanges = []
+            pendingGitHubVersion = nil
+            updatingSkillID = nil
+            statusMessage = result.transaction.map { "已更新并安装到 \($0.backups.count) 个应用" } ?? "已更新「我的 Skills」中的原件"
+            await reload()
+            await scanInstalledSkills()
+        } catch { present(error) }
+    }
+
+    func ignoreAvailableUpdate(_ skill: SkillRecord) async {
+        do { try await githubUpdateChecker.ignoreAvailableVersion(skillID: skill.id); await reload() }
+        catch { present(error) }
+    }
+
+    func setUpdateChecking(_ enabled: Bool, for skill: SkillRecord) async {
+        do { try await githubUpdateChecker.setCheckingEnabled(enabled, skillID: skill.id); await reload() }
+        catch { present(error) }
     }
 
     func cancelCandidatePreview() {
@@ -179,6 +275,39 @@ final class AppModel: ObservableObject {
         selectedCandidateIDs = []
         activeConflict = nil
         updatingSkillID = nil
+        pendingGitHubVersion = nil
+        pendingUpdateChanges = []
+    }
+
+    func beginGitHubLogin() async {
+        do {
+            let authorization = try await githubDeviceClient.beginAuthorization()
+            githubAuthorization = authorization
+            githubLoginStatus = "等待你在浏览器中确认…"
+        } catch { present(error) }
+    }
+
+    func openGitHubAuthorization() {
+        guard let authorization = githubAuthorization else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(authorization.userCode, forType: .string)
+        NSWorkspace.shared.open(authorization.verificationURL)
+        githubLoginTask?.cancel()
+        githubLoginTask = Task { await pollGitHubAuthorization(authorization) }
+    }
+
+    func manageGitHubRepositories() {
+        if let githubInstallURL { NSWorkspace.shared.open(githubInstallURL) }
+        else { noticeMessage = "当前测试包还没有配置 GitHub App 安装地址" }
+    }
+
+    func disconnectGitHub() async {
+        do {
+            try await githubSession.disconnect()
+            isGitHubConnected = false
+            githubAuthorization = nil
+            githubLoginStatus = ""
+        } catch { present(error) }
     }
 
     func toggleAssignment(skill: SkillRecord, target: AgentTarget) async {
@@ -484,6 +613,59 @@ final class AppModel: ObservableObject {
         } catch {
             present(error)
             return false
+        }
+    }
+
+    private func checkAllGitHubUpdatesIfStale() async {
+        let cutoff = Date().addingTimeInterval(-6 * 60 * 60)
+        let eligible = snapshot.sourceStates.filter { $0.checkingEnabled && ($0.lastCheckedAt ?? .distantPast) < cutoff }
+        for state in eligible { _ = try? await githubUpdateChecker.check(skillID: state.skillID) }
+        if !eligible.isEmpty { await reload() }
+    }
+
+    private func sourceState(skillID: UUID, skillPath: String?, remote: GitHubRemoteVersion) -> GitHubSourceState {
+        .init(
+            skillID: skillID,
+            repositoryID: remote.repositoryID,
+            repositoryFullName: remote.repositoryFullName,
+            skillPath: skillPath,
+            trackingMode: remote.trackingMode,
+            defaultBranch: remote.defaultBranch,
+            currentVersionIdentifier: remote.versionIdentifier,
+            currentVersionName: remote.versionName,
+            currentCommitSHA: remote.commitSHA,
+            currentTreeSHA: remote.treeSHA,
+            lastCheckedAt: Date(),
+            checkingEnabled: true,
+            status: .current
+        )
+    }
+
+    private func pollGitHubAuthorization(_ authorization: GitHubDeviceAuthorization) async {
+        var interval = authorization.pollingInterval
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .seconds(interval))
+                switch try await githubDeviceClient.pollAuthorization(authorization) {
+                case .pending: continue
+                case .slowDown: interval += 5
+                case let .authorized(tokens):
+                    try await githubSession.save(tokens)
+                    isGitHubConnected = true
+                    githubLoginStatus = "已连接 GitHub"
+                    githubAuthorization = nil
+                    return
+                case .expired:
+                    githubLoginStatus = "验证码已过期，请重新连接"
+                    return
+                case .denied:
+                    githubLoginStatus = "你取消了这次连接"
+                    return
+                }
+            } catch {
+                if !Task.isCancelled { present(error) }
+                return
+            }
         }
     }
 
