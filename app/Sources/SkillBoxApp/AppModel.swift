@@ -55,7 +55,7 @@ final class AppModel: ObservableObject {
     private var remoteOperationTask: Task<Void, Never>?
 
     var githubClientID: String { Bundle.main.object(forInfoDictionaryKey: "SkillBoxGitHubClientID") as? String ?? "" }
-    var isGitHubConfigured: Bool { !githubClientID.isEmpty }
+    var isGitHubConfigured: Bool { !githubClientID.isEmpty && githubInstallURL != nil }
     var githubInstallURL: URL? {
         guard let value = Bundle.main.object(forInfoDictionaryKey: "SkillBoxGitHubInstallURL") as? String else { return nil }
         return URL(string: value)
@@ -415,7 +415,7 @@ final class AppModel: ObservableObject {
 
     func connectPrivateGitHub() async {
         guard isGitHubConfigured else {
-            noticeMessage = "这个测试版本还没有启用私人仓库连接。公开仓库仍可直接添加；启用私人仓库需要先为 SkillBox 配置 GitHub 登录。"
+            noticeMessage = "私人仓库连接正在准备中。公开仓库仍然可以直接添加。"
             return
         }
         await beginGitHubLogin()
@@ -432,17 +432,37 @@ final class AppModel: ObservableObject {
 
     func manageGitHubRepositories() {
         if let githubInstallURL { NSWorkspace.shared.open(githubInstallURL) }
-        else { noticeMessage = "这个测试版本暂时不能更改仓库权限，本地 Skills 不受影响。" }
+        else { noticeMessage = "暂时无法打开仓库选择页，本地 Skills 不受影响。" }
     }
 
     func disconnectGitHub() async {
         do {
+            githubLoginTask?.cancel()
             try await githubSession.disconnect()
             isGitHubConnected = false
             githubAuthorization = nil
-            githubLoginStatus = ""
+            githubLoginStatus = "已断开私人仓库连接。公开仓库仍会正常检查更新。"
             githubAuthorizedRepositories = []
         } catch { present(error) }
+    }
+
+    func clearGitHubInformation() async {
+        do {
+            githubLoginTask?.cancel()
+            try await githubSession.disconnect()
+            try await store.clearGitHubInformation()
+            isGitHubConnected = false
+            githubAuthorization = nil
+            githubAuthorizedRepositories = []
+            lastDeletedSkill = nil
+            githubLoginStatus = "GitHub 登录和仓库跟踪信息已清除，本地 Skills 已保留。"
+            await reload()
+        } catch { present(error) }
+    }
+
+    func openGitHubAuthorizationSettings() {
+        guard let url = URL(string: "https://github.com/settings/apps/authorizations") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     func refreshGitHubRepositories() async {
@@ -867,7 +887,7 @@ final class AppModel: ObservableObject {
                 case let .authorized(tokens):
                     try await githubSession.save(tokens)
                     isGitHubConnected = true
-                    githubLoginStatus = "已连接 GitHub"
+                    githubLoginStatus = "身份确认完成。接下来请选择 SkillBox 可以读取的仓库。"
                     githubAuthorization = nil
                     await refreshGitHubRepositories()
                     return

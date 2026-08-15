@@ -60,6 +60,62 @@ struct LibraryStoreTests {
         #expect(migratedJSON["schemaVersion"] as? Int == 2)
     }
 
+    @Test("Clearing GitHub information keeps Skills as local copies and removes repository metadata")
+    func clearsGitHubInformation() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        var candidate = try fixture.candidate(name: "demo", body: "central")
+        candidate.source = .init(
+            kind: .github,
+            displayName: "owner/private-skill",
+            locator: "https://github.com/owner/private-skill",
+            repository: "owner/private-skill",
+            revision: "v1.0.0",
+            skillPath: "skills/demo"
+        )
+        let record = try await store.importCandidate(candidate)
+        try await store.updateSourceState(.init(
+            skillID: record.id,
+            repositoryID: 42,
+            repositoryFullName: "owner/private-skill",
+            status: .current
+        ))
+        try await store.recordTransaction(.init(
+            completedAt: Date(),
+            status: .succeeded,
+            actions: [],
+            libraryUpdate: .init(
+                previousRecord: record,
+                updatedFingerprint: record.fingerprint,
+                previousSourceState: .init(skillID: record.id, repositoryFullName: "owner/private-skill"),
+                updatedSourceVersionIdentifier: "release-42"
+            )
+        ))
+
+        try await store.clearGitHubInformation()
+
+        let snapshot = await store.currentSnapshot()
+        let keptSkill = try #require(snapshot.skills.first)
+        #expect(snapshot.skills.count == 1)
+        #expect(snapshot.sourceStates.isEmpty)
+        #expect(keptSkill.fingerprint == record.fingerprint)
+        #expect(keptSkill.source.kind == .localFolder)
+        #expect(keptSkill.source.repository == nil)
+        #expect(keptSkill.source.revision == nil)
+        #expect(keptSkill.source.skillPath == nil)
+        #expect(keptSkill.source.locator == record.contentRelativePath)
+        #expect(snapshot.transactions.first?.libraryUpdate?.previousRecord.source.kind == .localFolder)
+        #expect(snapshot.transactions.first?.libraryUpdate?.previousSourceState == nil)
+        #expect(snapshot.transactions.first?.libraryUpdate?.updatedSourceVersionIdentifier == nil)
+        #expect(FileManager.default.fileExists(atPath: fixture.storeRoot.appendingPathComponent(record.contentRelativePath).appendingPathComponent("SKILL.md").path))
+        let persistedFiles = ["catalog.json", "source-state.json", "transactions.json"]
+        for file in persistedFiles {
+            let text = try String(contentsOf: fixture.storeRoot.appendingPathComponent(file), encoding: .utf8)
+            #expect(!text.contains("owner/private-skill"))
+        }
+    }
+
     @Test("Blocked candidates never enter the library")
     func blockedImport() async throws {
         let fixture = try SyncFixture()

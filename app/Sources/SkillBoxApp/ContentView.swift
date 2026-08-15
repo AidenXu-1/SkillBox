@@ -327,7 +327,7 @@ private struct LibraryView: View {
                     }
                     if !model.isGitHubConnected {
                         Button(action: connectGitHub) {
-                            Label("连接私人 GitHub", systemImage: "lock.open")
+                            Label("连接私人仓库", systemImage: "lock.open")
                         }
                         .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                     }
@@ -353,7 +353,7 @@ private struct LibraryView: View {
                         Button("从 GitHub 添加", action: importGitHub)
                             .buttonStyle(.borderedProminent)
                         if !model.isGitHubConnected {
-                            Button("连接私人 GitHub", action: connectGitHub)
+                            Button("连接私人仓库", action: connectGitHub)
                         }
                     }
                 }
@@ -1693,6 +1693,8 @@ private struct HistoryTransactionCard: View {
 private struct SettingsView: View {
     @ObservedObject var model: AppModel
     @State private var confirmDisconnect = false
+    @State private var confirmClearGitHub = false
+    @State private var confirmOpenGitHubRevoke = false
     @State private var showAllRepositories = false
 
     var body: some View {
@@ -1704,26 +1706,49 @@ private struct SettingsView: View {
                             .font(.title2)
                             .foregroundStyle(.green)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("已连接 GitHub").font(.headline)
-                            Text("私人仓库令牌只保存在这台 Mac 的钥匙串中。")
+                            Text("私人仓库已连接").font(.headline)
+                            Text("SkillBox 只能读取你亲自选择的仓库，不能修改其中内容。")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button("管理仓库权限") { model.manageGitHubRepositories() }
+                        Button("管理可访问仓库") { model.manageGitHubRepositories() }
                             .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                        Button("断开连接", role: .destructive) { confirmDisconnect = true }
-                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .destructiveText))
+                        Menu {
+                            Button("断开连接") { confirmDisconnect = true }
+                            Button("在 GitHub 撤销授权") { confirmOpenGitHubRevoke = true }
+                            Divider()
+                            Button("清除 GitHub 信息", role: .destructive) { confirmClearGitHub = true }
+                        } label: {
+                            Label("更多", systemImage: "ellipsis.circle")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
                     }
 
                     if model.githubAuthorizedRepositories.isEmpty {
-                        Text("GitHub App 目前没有返回已授权仓库。你可以在 GitHub 中选择允许 SkillBox 访问的仓库。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 12) {
+                            Text("2")
+                                .font(.callout.bold())
+                                .foregroundStyle(.white)
+                                .frame(width: 28, height: 28)
+                                .background(.blue, in: Circle())
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("还差一步：选择仓库").font(.callout.weight(.semibold))
+                                Text("在 GitHub 页面勾选允许 SkillBox 读取的私人仓库。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("选择仓库") { model.manageGitHubRepositories() }
+                                .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                        }
+                        .padding(12)
+                        .background(.blue.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
                     } else {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
-                                Text("已授权仓库").font(.callout.weight(.semibold))
+                                Text("可访问仓库").font(.callout.weight(.semibold))
                                 Spacer()
                                 Text("\(model.githubAuthorizedRepositories.count) 个")
                                     .font(.caption)
@@ -1752,19 +1777,30 @@ private struct SettingsView: View {
                         .padding(.top, 4)
                     }
                 } else {
-                    VStack(alignment: .leading, spacing: 11) {
-                        Label("连接后可以添加和跟踪私人仓库", systemImage: "link.circle.fill")
+                    VStack(alignment: .leading, spacing: 14) {
+                        Label("连接私人仓库", systemImage: "lock.open.fill")
                             .font(.headline)
-                        Text("公开仓库不需要登录。SkillBox 只申请读取你选择的仓库内容，不会获得写入权限。")
+                        Text("只有添加私人仓库时才需要连接。整个过程在浏览器中完成，不用下载其他软件。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Button("连接 GitHub") { Task { await model.connectPrivateGitHub() } }
+
+                        HStack(spacing: 10) {
+                            GitHubConnectionStep(number: 1, title: "确认身份", detail: "打开 GitHub")
+                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                            GitHubConnectionStep(number: 2, title: "选择仓库", detail: "只选需要的")
+                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                            GitHubConnectionStep(number: 3, title: "回到 SkillBox", detail: "开始检查更新")
+                        }
+
+                        Button(model.isGitHubConfigured ? "开始连接" : "私人仓库连接正在准备中") {
+                            Task { await model.connectPrivateGitHub() }
+                        }
                             .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
-                            .disabled(model.isBusy)
+                            .disabled(model.isBusy || !model.isGitHubConfigured)
                         if !model.isGitHubConfigured {
-                            Label("这个测试版本尚未启用私人仓库连接，公开仓库仍可直接添加。", systemImage: "info.circle")
+                            Label("公开仓库不受影响，可以直接添加。", systemImage: "info.circle")
                                 .font(.caption)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(.secondary)
                         }
                     }
                     if let authorization = model.githubAuthorization {
@@ -1805,8 +1841,43 @@ private struct SettingsView: View {
             Button("断开连接", role: .destructive) { Task { await model.disconnectGitHub() } }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("SkillBox 会删除钥匙串中的登录信息。本地 Skills 和已经安装的副本都会保留。")
+            Text("这台 Mac 上的登录信息会被删除。私人仓库会在下次检查时提示重新连接；公开仓库、本地 Skills 和已安装副本都不受影响。")
         }
+        .confirmationDialog("清除所有 GitHub 信息？", isPresented: $confirmClearGitHub) {
+            Button("清除 GitHub 信息", role: .destructive) { Task { await model.clearGitHubInformation() } }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("SkillBox 会删除登录信息、仓库地址和更新记录。现有 Skills 会保留为本地副本，之后不会再从 GitHub 检查更新。")
+        }
+        .confirmationDialog("前往 GitHub 撤销授权？", isPresented: $confirmOpenGitHubRevoke) {
+            Button("打开 GitHub") { model.openGitHubAuthorizationSettings() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("GitHub 端的访问许可需要在 GitHub 设置中撤销。完成后也可以回到这里清除本机信息。")
+        }
+    }
+}
+
+private struct GitHubConnectionStep: View {
+    let number: Int
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("\(number)")
+                .font(.caption.bold())
+                .foregroundStyle(.blue)
+                .frame(width: 24, height: 24)
+                .background(.blue.opacity(0.1), in: Circle())
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.caption.weight(.semibold))
+                Text(detail).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(.quaternary.opacity(0.24), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -1867,12 +1938,13 @@ private struct GitHubImportView: View {
 
             if !model.isGitHubConnected {
                 VStack(alignment: .leading, spacing: 9) {
-                    Text("私人仓库需要连接 GitHub").font(.callout.weight(.semibold))
-                    Text("公开仓库可以直接继续。登录只授予 SkillBox 读取你在 GitHub 中选择的仓库。")
+                    Text("要添加私人仓库？").font(.callout.weight(.semibold))
+                    Text("连接后选择允许 SkillBox 读取的仓库。整个过程在浏览器中完成，不用下载其他软件。公开仓库可以直接继续。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("连接私人 GitHub") { Task { await model.connectPrivateGitHub() } }
+                    Button("连接私人仓库") { Task { await model.connectPrivateGitHub() } }
                         .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                        .disabled(!model.isGitHubConfigured)
                     if let authorization = model.githubAuthorization {
                         GitHubDeviceAuthorizationCard(model: model, authorization: authorization)
                     }
@@ -1921,22 +1993,41 @@ private struct GitHubDeviceAuthorizationCard: View {
     let authorization: GitHubDeviceAuthorization
 
     var body: some View {
-        HStack(spacing: 13) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("验证码").font(.caption).foregroundStyle(.secondary)
-                Text(authorization.userCode)
-                    .font(.system(.title3, design: .monospaced, weight: .bold))
-                    .textSelection(.enabled)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Text("1")
+                    .font(.callout.bold())
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(.blue, in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("在 GitHub 确认身份").font(.callout.weight(.semibold))
+                    Text("SkillBox 会复制验证码并打开浏览器。确认后回到这里继续。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
             }
-            Spacer()
-            Button("复制并打开 GitHub") { model.openGitHubAuthorization() }
-                .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+            HStack(spacing: 13) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("验证码").font(.caption).foregroundStyle(.secondary)
+                    Text(authorization.userCode)
+                        .font(.system(.title3, design: .monospaced, weight: .bold))
+                        .textSelection(.enabled)
+                }
+                Spacer()
+                Button("复制验证码并继续") { model.openGitHubAuthorization() }
+                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+            }
+            Label("无需下载其他软件", systemImage: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.green)
         }
-        .padding(12)
+        .padding(14)
         .background(.blue.opacity(0.07), in: RoundedRectangle(cornerRadius: 11))
         .overlay(RoundedRectangle(cornerRadius: 11).stroke(.blue.opacity(0.16)))
         .accessibilityElement(children: .contain)
-        .accessibilityHint("复制验证码并在浏览器中完成 GitHub 登录")
+        .accessibilityHint("复制验证码并在浏览器中确认 GitHub 身份")
     }
 }
 

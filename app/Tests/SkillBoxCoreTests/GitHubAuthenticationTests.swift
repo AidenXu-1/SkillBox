@@ -53,6 +53,19 @@ struct GitHubAuthenticationTests {
         }
         #expect(DeviceFlowMockURLProtocol.requestBodies.isEmpty)
     }
+
+    @Test("Disconnecting removes the locally stored GitHub tokens")
+    func disconnectRemovesTokens() async throws {
+        let store = MemoryGitHubCredentialStore(tokens: .init(accessToken: "private-token"))
+        let session = GitHubAuthenticatedSession(
+            client: GitHubDeviceFlowClient(clientID: "public-client-id", session: DeviceFlowFixture.session()),
+            credentialStore: store
+        )
+
+        try await session.disconnect()
+
+        #expect(try await store.load() == nil)
+    }
 }
 
 private actor MemoryGitHubCredentialStore: GitHubCredentialStore {

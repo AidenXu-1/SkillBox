@@ -108,6 +108,30 @@ public actor LibraryStore {
         try persist()
     }
 
+    public func clearGitHubInformation() throws {
+        let previousSnapshot = snapshot
+        snapshot.sourceStates.removeAll()
+
+        for index in snapshot.skills.indices where snapshot.skills[index].source.kind == .github {
+            snapshot.skills[index].source = localCopySource(for: snapshot.skills[index])
+        }
+
+        for index in snapshot.transactions.indices {
+            guard var update = snapshot.transactions[index].libraryUpdate else { continue }
+            if update.previousRecord.source.kind == .github {
+                update.previousRecord.source = localCopySource(for: update.previousRecord)
+            }
+            update.previousSourceState = nil
+            update.updatedSourceVersionIdentifier = nil
+            snapshot.transactions[index].libraryUpdate = update
+        }
+
+        do { try persist() } catch {
+            snapshot = previousSnapshot
+            throw error
+        }
+    }
+
     public func recordGitHubSourceUpdate(_ state: GitHubSourceState, transactionID: UUID) throws {
         guard let transactionIndex = snapshot.transactions.firstIndex(where: { $0.id == transactionID }),
               snapshot.transactions[transactionIndex].libraryUpdate != nil
@@ -140,6 +164,14 @@ public actor LibraryStore {
             snapshot.sourceStates.removeAll { $0.skillID == skillID }
         }
         try persist()
+    }
+
+    private func localCopySource(for record: SkillRecord) -> SkillSource {
+        SkillSource(
+            kind: .localFolder,
+            displayName: "SkillBox 中的本地副本",
+            locator: record.contentRelativePath
+        )
     }
 
     public func importCandidate(_ candidate: SkillCandidate) throws -> SkillRecord {
