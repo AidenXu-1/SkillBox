@@ -22,6 +22,33 @@ struct LibraryStoreTests {
         #expect(await reloaded.currentSnapshot().skills.count == 1)
     }
 
+    @Test("GitHub conditional-check markers survive an app restart")
+    func githubETagPersistsAcrossReload() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "central"))
+        try await store.updateSourceState(.init(
+            skillID: record.id,
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            repositoryIsPrivate: false,
+            trackingMode: .latestStableRelease,
+            defaultBranch: "main",
+            currentVersionIdentifier: "release:42",
+            currentTreeSHA: "release:42",
+            versionETag: #""release-v1""#,
+            lastCheckedAt: Date(timeIntervalSince1970: 1_000),
+            status: .current
+        ))
+
+        let reloaded = try LibraryStore(root: fixture.storeRoot)
+        let state = try #require(await reloaded.currentSnapshot().sourceStates.first)
+
+        #expect(state.versionETag == #""release-v1""#)
+        #expect(state.lastCheckedAt == Date(timeIntervalSince1970: 1_000))
+    }
+
     @Test("Same-name versions keep readable folders without colliding")
     func readableFoldersHandleSameNameVersions() async throws {
         let fixture = try SyncFixture()

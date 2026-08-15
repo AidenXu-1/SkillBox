@@ -15,6 +15,38 @@ public protocol GitHubRemoteVersionChecking: Sendable {
         skillPath: String?,
         trackingMode: GitHubTrackingMode
     ) async throws -> GitHubRemoteVersion
+
+    func checkRemoteVersions(states: [GitHubSourceState]) async throws -> GitHubRemoteCheckBatch
+}
+
+public struct GitHubRemoteCheckBatch: Sendable {
+    public var versions: [UUID: GitHubRemoteVersion]
+    public var eTag: String?
+    public var isNotModified: Bool
+
+    public init(
+        versions: [UUID: GitHubRemoteVersion],
+        eTag: String? = nil,
+        isNotModified: Bool = false
+    ) {
+        self.versions = versions
+        self.eTag = eTag
+        self.isNotModified = isNotModified
+    }
+}
+
+public extension GitHubRemoteVersionChecking {
+    func checkRemoteVersions(states: [GitHubSourceState]) async throws -> GitHubRemoteCheckBatch {
+        var versions: [UUID: GitHubRemoteVersion] = [:]
+        for state in states {
+            versions[state.skillID] = try await checkRemoteVersion(
+                repositoryFullName: state.repositoryFullName,
+                skillPath: state.skillPath,
+                trackingMode: state.trackingMode
+            )
+        }
+        return GitHubRemoteCheckBatch(versions: versions)
+    }
 }
 
 public struct AnonymousGitHubAccessTokenProvider: GitHubAccessTokenProvider, Sendable {
@@ -125,101 +157,111 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         skillPath: String?,
         trackingMode: GitHubTrackingMode
     ) async throws -> GitHubRemoteVersion {
-        let repository = try RepositoryName(repositoryFullName)
-        let info: RepositoryResponse
-        do {
-            info = try await requestAPI(path: "/repos/\(repository.owner)/\(repository.name)")
-        } catch GitHubSourceError.requestFailed(404) {
-            if await preferredAccessToken() != nil {
-                throw GitHubSourceError.repositoryPermissionRequired
-            }
-            throw GitHubSourceError.repositoryUnavailableOrUnauthorized
+        let state = GitHubSourceState(
+            skillID: UUID(),
+            repositoryFullName: repositoryFullName,
+            skillPath: skillPath,
+            trackingMode: trackingMode
+        )
+        let batch = try await checkRemoteVersions(states: [state])
+        guard !batch.isNotModified, let version = batch.versions[state.skillID] else {
+            throw GitHubSourceError.requestFailed(304)
         }
-        let revision: String
-        let versionIdentifier: String
-        let versionName: String
-        let publishedAt: Date?
-        var archiveURL: URL
-        var releaseID: Int64?
-        var releaseAssets: [GitHubReleaseAsset] = []
-        var selectedReleaseAssetID: Int64?
-        var usesSourceArchiveFallback = false
+        return version
+    }
 
-        switch trackingMode {
+    public func checkRemoteVersions(states: [GitHubSourceState]) async throws -> GitHubRemoteCheckBatch {
+        guard let first = states.first else { return GitHubRemoteCheckBatch(versions: [:]) }
+        let repositoryName = first.repositoryFullName.lowercased()
+        guard states.allSatisfy({
+            $0.repositoryFullName.lowercased() == repositoryName && $0.trackingMode == first.trackingMode
+        }) else {
+            throw GitHubSourceError.invalidURL
+        }
+
+        let repository = try RepositoryName(first.repositoryFullName)
+        let info = try await repositoryInfo(repository: repository, states: states)
+        let conditionalETag = sharedETag(in: states)
+        let useAuthorization = info.isPrivate
+
+        switch first.trackingMode {
         case .latestStableRelease:
-            let release: ReleaseResponse
+            let response: GitHubAPIResponse<ReleaseResponse>
             do {
-                release = try await requestAPI(path: "/repos/\(repository.owner)/\(repository.name)/releases/latest")
+                response = try await requestAPIResponse(
+                    path: "/repos/\(repository.owner)/\(repository.name)/releases/latest",
+                    ifNoneMatch: conditionalETag,
+                    useAuthorization: useAuthorization
+                )
             } catch GitHubSourceError.requestFailed(404) {
+                if info.isPrivate {
+                    guard await preferredAccessToken() != nil else {
+                        throw GitHubSourceError.authenticationRequired
+                    }
+                    _ = try await fetchRepositoryInfo(repository: repository, knownPrivate: true)
+                }
                 throw GitHubSourceError.noStableRelease
             }
-            revision = release.tagName
-            versionIdentifier = "release:\(release.id)"
-            versionName = release.tagName
-            publishedAt = release.publishedAt
-            let zipAssets = release.assets.filter(\.isInstallableZIP).map { asset in
-                var enriched = asset
-                if let checksum = release.assets.first(where: {
-                    $0.state == "uploaded" && $0.name.caseInsensitiveCompare(asset.name + ".sha256") == .orderedSame
-                }) {
-                    enriched.checksumAssetID = checksum.id
-                    enriched.checksumDownloadURL = checksum.browserDownloadURL
-                }
-                return enriched
+            switch response {
+            case let .notModified(eTag):
+                return GitHubRemoteCheckBatch(versions: [:], eTag: eTag ?? conditionalETag, isNotModified: true)
+            case let .modified(release, eTag):
+                return try await releaseBatch(
+                    release: release,
+                    eTag: eTag,
+                    repository: repository,
+                    info: info,
+                    states: states,
+                    useAuthorization: useAuthorization
+                )
             }
-            archiveURL = zipAssets.count == 1 ? zipAssets[0].browserDownloadURL : release.zipballURL
-            releaseID = release.id
-            releaseAssets = zipAssets
-            selectedReleaseAssetID = zipAssets.count == 1 ? zipAssets[0].id : nil
-            usesSourceArchiveFallback = zipAssets.isEmpty
         case .defaultBranch:
-            revision = info.defaultBranch
-            versionName = info.defaultBranch
-            publishedAt = nil
-            archiveURL = URL(string: "https://api.github.com/repos/\(repository.owner)/\(repository.name)/zipball/\(revision.urlPathSegment)")!
-            versionIdentifier = ""
-            releaseID = nil
+            let response: GitHubAPIResponse<CommitResponse> = try await requestAPIResponse(
+                path: "/repos/\(repository.owner)/\(repository.name)/commits/\(info.defaultBranch.urlPathSegment)",
+                ifNoneMatch: conditionalETag,
+                useAuthorization: useAuthorization
+            )
+            switch response {
+            case let .notModified(eTag):
+                return GitHubRemoteCheckBatch(versions: [:], eTag: eTag ?? conditionalETag, isNotModified: true)
+            case let .modified(commit, eTag):
+                var trees: [UUID: String] = [:]
+                var statesNeedingTree: [GitHubSourceState] = []
+                for state in states {
+                    if state.currentCommitSHA == commit.sha, let currentTreeSHA = state.currentTreeSHA {
+                        trees[state.skillID] = currentTreeSHA
+                    } else {
+                        statesNeedingTree.append(state)
+                    }
+                }
+                if !statesNeedingTree.isEmpty {
+                    let changedTrees = try await treeSHAs(
+                        repository: repository,
+                        rootTreeSHA: commit.commit.tree.sha,
+                        states: statesNeedingTree,
+                        useAuthorization: useAuthorization
+                    )
+                    trees.merge(changedTrees) { _, refreshed in refreshed }
+                }
+                let versions = Dictionary(uniqueKeysWithValues: states.map { state in
+                    let version = GitHubRemoteVersion(
+                        repositoryID: info.id,
+                        repositoryFullName: info.fullName,
+                        isPrivate: info.isPrivate,
+                        trackingMode: .defaultBranch,
+                        defaultBranch: info.defaultBranch,
+                        versionIdentifier: "commit:\(commit.sha)",
+                        versionName: info.defaultBranch,
+                        revision: info.defaultBranch,
+                        commitSHA: commit.sha,
+                        treeSHA: trees[state.skillID] ?? commit.commit.tree.sha,
+                        archiveURL: URL(string: "https://api.github.com/repos/\(repository.owner)/\(repository.name)/zipball/\(commit.sha.urlPathSegment)")!
+                    )
+                    return (state.skillID, version)
+                })
+                return GitHubRemoteCheckBatch(versions: versions, eTag: eTag)
+            }
         }
-
-        let commit: CommitResponse = try await requestAPI(path: "/repos/\(repository.owner)/\(repository.name)/commits/\(revision.urlPathSegment)")
-        if trackingMode == .defaultBranch {
-            archiveURL = URL(string: "https://api.github.com/repos/\(repository.owner)/\(repository.name)/zipball/\(commit.sha.urlPathSegment)")!
-        }
-        let resolvedIdentifier: String
-        if trackingMode == .defaultBranch {
-            resolvedIdentifier = "commit:\(commit.sha)"
-        } else if usesSourceArchiveFallback, let releaseID {
-            resolvedIdentifier = "release:\(releaseID):source:\(commit.sha)"
-        } else {
-            resolvedIdentifier = versionIdentifier
-        }
-        let selectedTree = try await treeSHA(
-            repository: repository,
-            rootTreeSHA: commit.commit.tree.sha,
-            skillPath: skillPath
-        )
-        var remote = GitHubRemoteVersion(
-            repositoryID: info.id,
-            repositoryFullName: info.fullName,
-            isPrivate: info.isPrivate,
-            trackingMode: trackingMode,
-            defaultBranch: info.defaultBranch,
-            versionIdentifier: resolvedIdentifier,
-            versionName: versionName,
-            revision: revision,
-            commitSHA: commit.sha,
-            treeSHA: selectedTree,
-            publishedAt: publishedAt,
-            archiveURL: archiveURL,
-            releaseID: releaseID,
-            releaseAssets: releaseAssets,
-            selectedReleaseAssetID: selectedReleaseAssetID,
-            usesSourceArchiveFallback: usesSourceArchiveFallback
-        )
-        if let selectedReleaseAssetID {
-            remote = try remote.selectingReleaseAsset(id: selectedReleaseAssetID)
-        }
-        return remote
     }
 
     public func preview(locator: String) async throws -> [SkillCandidate] {
@@ -343,9 +385,13 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         if version.requiresReleaseAssetSelection {
             throw GitHubSourceError.releaseAssetSelectionRequired(version.releaseAssets)
         }
-        let request = try await downloadRequest(url: version.archiveURL)
+        let request = try await downloadRequest(url: version.archiveURL, useAuthorization: version.isPrivate)
         let data = try await downloadData(request: request)
-        let verifiedDigest = try await verifyReleaseAsset(data, asset: version.selectedReleaseAsset)
+        let verifiedDigest = try await verifyReleaseAsset(
+            data,
+            asset: version.selectedReleaseAsset,
+            useAuthorization: version.isPrivate
+        )
         var resolvedVersion = version
         if let verifiedDigest,
            let selectedAssetID = version.selectedReleaseAssetID,
@@ -365,18 +411,22 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         return GitHubSnapshot(version: resolvedVersion, candidates: candidates)
     }
 
-    private func downloadRequest(url: URL) async throws -> URLRequest {
+    private func downloadRequest(url: URL, useAuthorization: Bool) async throws -> URLRequest {
         var request = URLRequest(url: url)
         request.setValue("SkillBox/1", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2026-03-10", forHTTPHeaderField: "X-GitHub-Api-Version")
-        if let token = await preferredAccessToken() {
+        if useAuthorization, let token = await preferredAccessToken() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         return request
     }
 
-    private func verifyReleaseAsset(_ data: Data, asset: GitHubReleaseAsset?) async throws -> String? {
+    private func verifyReleaseAsset(
+        _ data: Data,
+        asset: GitHubReleaseAsset?,
+        useAuthorization: Bool
+    ) async throws -> String? {
         guard let asset else { return nil }
         let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         if let digest = asset.digest,
@@ -386,7 +436,9 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
             throw GitHubSourceError.checksumMismatch(asset.name)
         }
         guard let checksumURL = asset.checksumDownloadURL else { return actual }
-        let checksumData = try await downloadData(request: downloadRequest(url: checksumURL))
+        let checksumData = try await downloadData(
+            request: downloadRequest(url: checksumURL, useAuthorization: useAuthorization)
+        )
         guard let checksumText = String(data: checksumData, encoding: .utf8),
               let expected = firstSHA256(in: checksumText),
               expected == actual
@@ -402,6 +454,150 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
               let range = Range(match.range, in: text)
         else { return nil }
         return text[range].lowercased()
+    }
+
+    private func repositoryInfo(
+        repository: RepositoryName,
+        states: [GitHubSourceState]
+    ) async throws -> RepositoryResponse {
+        if let known = states.first(where: {
+            $0.repositoryID != nil && $0.repositoryIsPrivate != nil && $0.defaultBranch?.isEmpty == false
+        }), let repositoryID = known.repositoryID,
+           let isPrivate = known.repositoryIsPrivate,
+           let defaultBranch = known.defaultBranch
+        {
+            return RepositoryResponse(
+                id: repositoryID,
+                fullName: known.repositoryFullName,
+                defaultBranch: defaultBranch,
+                isPrivate: isPrivate
+            )
+        }
+
+        return try await fetchRepositoryInfo(repository: repository, knownPrivate: nil)
+    }
+
+    private func fetchRepositoryInfo(
+        repository: RepositoryName,
+        knownPrivate: Bool?
+    ) async throws -> RepositoryResponse {
+        do {
+            return try await requestAPI(path: "/repos/\(repository.owner)/\(repository.name)")
+        } catch GitHubSourceError.requestFailed(404) {
+            if knownPrivate == true {
+                if await preferredAccessToken() != nil {
+                    throw GitHubSourceError.repositoryPermissionRequired
+                }
+                throw GitHubSourceError.authenticationRequired
+            }
+            if await preferredAccessToken() != nil {
+                throw GitHubSourceError.repositoryPermissionRequired
+            }
+            throw GitHubSourceError.repositoryUnavailableOrUnauthorized
+        }
+    }
+
+    private func releaseBatch(
+        release: ReleaseResponse,
+        eTag: String?,
+        repository: RepositoryName,
+        info: RepositoryResponse,
+        states: [GitHubSourceState],
+        useAuthorization: Bool
+    ) async throws -> GitHubRemoteCheckBatch {
+        let zipAssets = installableZIPs(in: release)
+        if !zipAssets.isEmpty {
+            let versions = try Dictionary(uniqueKeysWithValues: states.map { state in
+                var version = GitHubRemoteVersion(
+                    repositoryID: info.id,
+                    repositoryFullName: info.fullName,
+                    isPrivate: info.isPrivate,
+                    trackingMode: .latestStableRelease,
+                    defaultBranch: info.defaultBranch,
+                    versionIdentifier: "release:\(release.id)",
+                    versionName: release.tagName,
+                    revision: release.tagName,
+                    commitSHA: release.tagName,
+                    treeSHA: "release:\(release.id)",
+                    publishedAt: release.publishedAt,
+                    archiveURL: zipAssets.count == 1 ? zipAssets[0].browserDownloadURL : release.zipballURL,
+                    releaseID: release.id,
+                    releaseAssets: zipAssets
+                )
+                if let assetID = preferredReleaseAssetID(for: state, assets: zipAssets) {
+                    version = try version.selectingReleaseAsset(id: assetID)
+                }
+                return (state.skillID, version)
+            })
+            return GitHubRemoteCheckBatch(versions: versions, eTag: eTag)
+        }
+
+        let commit: CommitResponse = try await requestAPI(
+            path: "/repos/\(repository.owner)/\(repository.name)/commits/\(release.tagName.urlPathSegment)",
+            useAuthorization: useAuthorization
+        )
+        let trees = try await treeSHAs(
+            repository: repository,
+            rootTreeSHA: commit.commit.tree.sha,
+            states: states,
+            useAuthorization: useAuthorization
+        )
+        let versions = Dictionary(uniqueKeysWithValues: states.map { state in
+            let version = GitHubRemoteVersion(
+                repositoryID: info.id,
+                repositoryFullName: info.fullName,
+                isPrivate: info.isPrivate,
+                trackingMode: .latestStableRelease,
+                defaultBranch: info.defaultBranch,
+                versionIdentifier: "release:\(release.id):source:\(commit.sha)",
+                versionName: release.tagName,
+                revision: release.tagName,
+                commitSHA: commit.sha,
+                treeSHA: trees[state.skillID] ?? commit.commit.tree.sha,
+                publishedAt: release.publishedAt,
+                archiveURL: release.zipballURL,
+                releaseID: release.id,
+                usesSourceArchiveFallback: true
+            )
+            return (state.skillID, version)
+        })
+        return GitHubRemoteCheckBatch(versions: versions, eTag: eTag)
+    }
+
+    private func installableZIPs(in release: ReleaseResponse) -> [GitHubReleaseAsset] {
+        release.assets.filter(\.isInstallableZIP).map { asset in
+            var enriched = asset
+            if let checksum = release.assets.first(where: {
+                $0.state == "uploaded" && $0.name.caseInsensitiveCompare(asset.name + ".sha256") == .orderedSame
+            }) {
+                enriched.checksumAssetID = checksum.id
+                enriched.checksumDownloadURL = checksum.browserDownloadURL
+            }
+            return enriched
+        }
+    }
+
+    private func preferredReleaseAssetID(
+        for state: GitHubSourceState,
+        assets: [GitHubReleaseAsset]
+    ) -> Int64? {
+        if assets.count == 1 { return assets[0].id }
+        if let currentID = state.currentAssetID, assets.contains(where: { $0.id == currentID }) {
+            return currentID
+        }
+        let preferredName = state.currentAssetName ?? state.availableAssetName
+        if let preferredName,
+           let matching = assets.first(where: { $0.name.caseInsensitiveCompare(preferredName) == .orderedSame })
+        {
+            return matching.id
+        }
+        return nil
+    }
+
+    private func sharedETag(in states: [GitHubSourceState]) -> String? {
+        guard states.allSatisfy({ $0.versionETag != nil }) else { return nil }
+        let values = Set(states.compactMap(\.versionETag))
+        return values.count == 1 ? values.first : nil
     }
 
     private func downloadData(request: URLRequest) async throws -> Data {
@@ -492,37 +688,84 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         return output.split(separator: "\n").map(String.init)
     }
 
-    private func treeSHA(repository: RepositoryName, rootTreeSHA: String, skillPath: String?) async throws -> String {
-        guard let skillPath, !skillPath.isEmpty else { return rootTreeSHA }
-        var currentSHA = rootTreeSHA
-        for component in skillPath.split(separator: "/").map(String.init) {
-            let tree: TreeResponse = try await requestAPI(path: "/repos/\(repository.owner)/\(repository.name)/git/trees/\(currentSHA.urlPathSegment)")
-            guard let entry = tree.tree.first(where: { $0.path == component && $0.type == "tree" }) else {
-                throw GitHubSourceError.skillPathMissing(skillPath)
+    private func treeSHAs(
+        repository: RepositoryName,
+        rootTreeSHA: String,
+        states: [GitHubSourceState],
+        useAuthorization: Bool
+    ) async throws -> [UUID: String] {
+        var responses: [String: TreeResponse] = [:]
+        var result: [UUID: String] = [:]
+        for state in states {
+            guard let skillPath = state.skillPath, !skillPath.isEmpty else {
+                result[state.skillID] = rootTreeSHA
+                continue
             }
-            currentSHA = entry.sha
+            var currentSHA = rootTreeSHA
+            for component in skillPath.split(separator: "/").map(String.init) {
+                let tree: TreeResponse
+                if let cached = responses[currentSHA] {
+                    tree = cached
+                } else {
+                    tree = try await requestAPI(
+                        path: "/repos/\(repository.owner)/\(repository.name)/git/trees/\(currentSHA.urlPathSegment)",
+                        useAuthorization: useAuthorization
+                    )
+                    responses[currentSHA] = tree
+                }
+                guard let entry = tree.tree.first(where: { $0.path == component && $0.type == "tree" }) else {
+                    throw GitHubSourceError.skillPathMissing(skillPath)
+                }
+                currentSHA = entry.sha
+            }
+            result[state.skillID] = currentSHA
         }
-        return currentSHA
+        return result
     }
 
-    private func requestAPI<Response: Decodable>(path: String) async throws -> Response {
+    private func requestAPI<Response: Decodable>(
+        path: String,
+        useAuthorization: Bool = true
+    ) async throws -> Response {
+        let result: GitHubAPIResponse<Response> = try await requestAPIResponse(
+            path: path,
+            ifNoneMatch: nil,
+            useAuthorization: useAuthorization
+        )
+        switch result {
+        case let .modified(value, _): return value
+        case .notModified: throw GitHubSourceError.requestFailed(304)
+        }
+    }
+
+    private func requestAPIResponse<Response: Decodable>(
+        path: String,
+        ifNoneMatch: String?,
+        useAuthorization: Bool = true
+    ) async throws -> GitHubAPIResponse<Response> {
         guard let url = URL(string: "https://api.github.com\(path)") else { throw GitHubSourceError.invalidURL }
         var request = URLRequest(url: url)
         request.setValue("SkillBox/1", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2026-03-10", forHTTPHeaderField: "X-GitHub-Api-Version")
-        if let token = await preferredAccessToken() {
+        if let ifNoneMatch { request.setValue(ifNoneMatch, forHTTPHeaderField: "If-None-Match") }
+        if useAuthorization, let token = await preferredAccessToken() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         var (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse,
            request.value(forHTTPHeaderField: "Authorization") != nil,
            rateLimitRetryDate(from: http) == nil,
-           http.statusCode == 401 || http.statusCode == 403
+           http.statusCode == 401 || http.statusCode == 403 || http.statusCode == 404
         {
-            await rejectAuthorization(in: request)
+            if http.statusCode != 404 {
+                await rejectAuthorization(in: request)
+            }
             request.setValue(nil, forHTTPHeaderField: "Authorization")
             (data, response) = try await session.data(for: request)
+        }
+        if let http = response as? HTTPURLResponse, http.statusCode == 304 {
+            return .notModified(eTag: http.value(forHTTPHeaderField: "ETag") ?? ifNoneMatch)
         }
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             if let retryAt = rateLimitRetryDate(from: http) {
@@ -535,7 +778,9 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(Response.self, from: data)
+        let value = try decoder.decode(Response.self, from: data)
+        let eTag = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag")
+        return .modified(value, eTag: eTag)
     }
 
     private func preferredAccessToken() async -> String? {
@@ -647,6 +892,11 @@ private struct RepositoryName: Sendable {
         owner = components[0]
         name = components[1]
     }
+}
+
+private enum GitHubAPIResponse<Value> {
+    case modified(Value, eTag: String?)
+    case notModified(eTag: String?)
 }
 
 private struct RepositoryResponse: Decodable {

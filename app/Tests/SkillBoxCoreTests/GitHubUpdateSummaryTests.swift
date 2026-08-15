@@ -4,8 +4,8 @@ import Testing
 
 @Suite("GitHub update summary")
 struct GitHubUpdateSummaryTests {
-    @Test("Rate limiting explicitly says public repositories do not need private access")
-    func rateLimitHasClearPublicRepositoryMessage() {
+    @Test("Rate limiting stays calm and preserves the current result")
+    func rateLimitHasCalmMessage() {
         let state = GitHubSourceState(
             skillID: UUID(),
             repositoryFullName: "example/public-skill",
@@ -18,7 +18,7 @@ struct GitHubUpdateSummaryTests {
 
         let summary = GitHubUpdateSummary(states: [state])
 
-        #expect(summary.statusMessage == "GitHub 暂时限制了查询。公开仓库无需连接私人仓库，请稍后再试")
+        #expect(summary.statusMessage == "GitHub 暂时无法继续检查，SkillBox 会保留当前结果")
     }
 
     @Test("Private login and repository permission are reported as different actions")

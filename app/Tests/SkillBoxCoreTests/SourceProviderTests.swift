@@ -41,6 +41,24 @@ struct SourceProviderTests {
         #expect(InvalidTokenPublicRepositoryMockURLProtocol.authenticatedRequestCount == 1)
     }
 
+    @Test("A public repository outside the GitHub App selection still works anonymously")
+    func unselectedPublicRepositoryFallsBackToAnonymous() async throws {
+        let provider = GitHubSourceProvider(
+            session: UnselectedPublicRepositoryFixture.session(),
+            tokenProvider: FixedTokenProvider()
+        )
+
+        let version = try await provider.checkRemoteVersion(
+            repositoryFullName: "example/skills",
+            skillPath: nil,
+            trackingMode: .latestStableRelease
+        )
+
+        #expect(version.repositoryFullName == "example/skills")
+        #expect(version.isPrivate == false)
+        #expect(UnselectedPublicRepositoryMockURLProtocol.authenticatedRequestCount == 1)
+    }
+
     @Test("A newly issued login token becomes usable without restarting the app")
     func refreshedTokenRestoresPrivateRepositoryAccessImmediately() async throws {
         let tokenProvider = RotatingTokenProvider(token: "expired-token")
@@ -66,6 +84,33 @@ struct SourceProviderTests {
         #expect(ReconnectedTokenMockURLProtocol.receivedNewToken)
     }
 
+    @Test("An expired login on a known private repository asks to reconnect")
+    func expiredPrivateRepositoryTokenIsNotMistakenForMissingRelease() async throws {
+        let provider = GitHubSourceProvider(
+            session: ReconnectedTokenFixture.session(),
+            tokenProvider: RotatingTokenProvider(token: "expired-token")
+        )
+        let state = GitHubSourceState(
+            skillID: UUID(),
+            repositoryID: 8,
+            repositoryFullName: "example/private-skill",
+            repositoryIsPrivate: true,
+            trackingMode: .latestStableRelease,
+            defaultBranch: "main",
+            currentTreeSHA: "release:41",
+            status: .current
+        )
+
+        do {
+            _ = try await provider.checkRemoteVersions(states: [state])
+            Issue.record("Expected an authentication-required result")
+        } catch GitHubSourceError.authenticationRequired {
+            // Expected: the local Skill remains intact and the UI can offer reconnection.
+        } catch {
+            Issue.record("Expected authenticationRequired, got \(error)")
+        }
+    }
+
     @Test("A Release with one ZIP selects the uploaded install package without downloading it")
     func releaseMetadataCheck() async throws {
         let session = RemoteVersionFixture.session()
@@ -79,10 +124,153 @@ struct SourceProviderTests {
         #expect(version.versionIdentifier == "release:42:asset:101:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         #expect(version.versionName == "v1.4.0")
         #expect(version.revision == "v1.4.0")
-        #expect(version.commitSHA == "commit-release")
-        #expect(version.treeSHA == "demo-tree")
+        #expect(version.commitSHA == "v1.4.0")
+        #expect(version.treeSHA == "release:42")
         #expect(version.archiveURL.absoluteString == "https://github.com/example/skills/releases/download/v1.4.0/demo-pure.zip")
         #expect(RemoteVersionMockURLProtocol.archiveRequestCount == 0)
+        #expect(RemoteVersionMockURLProtocol.requestPaths == [
+            "/repos/example/skills",
+            "/repos/example/skills/releases/latest"
+        ])
+    }
+
+    @Test("Skills from one Release repository share one metadata request")
+    func releaseChecksAreGroupedByRepository() async throws {
+        let provider = GitHubSourceProvider(session: RemoteVersionFixture.session())
+        let first = GitHubSourceState(
+            skillID: UUID(),
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            repositoryIsPrivate: false,
+            skillPath: "skills/demo",
+            trackingMode: .latestStableRelease,
+            defaultBranch: "main",
+            currentTreeSHA: "demo-old",
+            status: .current
+        )
+        let second = GitHubSourceState(
+            skillID: UUID(),
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            repositoryIsPrivate: false,
+            skillPath: "skills/other",
+            trackingMode: .latestStableRelease,
+            defaultBranch: "main",
+            currentTreeSHA: "other-old",
+            status: .current
+        )
+
+        let batch = try await provider.checkRemoteVersions(states: [first, second])
+
+        #expect(batch.versions.count == 2)
+        #expect(batch.eTag == #""release-v1""#)
+        #expect(RemoteVersionMockURLProtocol.requestPaths == ["/repos/example/skills/releases/latest"])
+    }
+
+    @Test("A known public repository does not spend a private-repository token")
+    func knownPublicRepositoryChecksAnonymously() async throws {
+        let provider = GitHubSourceProvider(
+            session: RemoteVersionFixture.session(),
+            tokenProvider: FixedTokenProvider()
+        )
+        let state = GitHubSourceState(
+            skillID: UUID(),
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            repositoryIsPrivate: false,
+            trackingMode: .latestStableRelease,
+            defaultBranch: "main",
+            currentTreeSHA: "release:41",
+            status: .current
+        )
+
+        _ = try await provider.checkRemoteVersions(states: [state])
+
+        #expect(RemoteVersionMockURLProtocol.authorizationHeaders == [nil])
+    }
+
+    @Test("An unchanged conditional Release response stops all follow-up requests")
+    func unchangedReleaseUsesETag() async throws {
+        let provider = GitHubSourceProvider(session: RemoteVersionFixture.session())
+        let state = GitHubSourceState(
+            skillID: UUID(),
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            repositoryIsPrivate: false,
+            trackingMode: .latestStableRelease,
+            defaultBranch: "main",
+            currentTreeSHA: "tree",
+            versionETag: #""release-v1""#,
+            status: .current
+        )
+
+        let batch = try await provider.checkRemoteVersions(states: [state])
+
+        #expect(batch.isNotModified)
+        #expect(batch.versions.isEmpty)
+        #expect(RemoteVersionMockURLProtocol.lastIfNoneMatch == #""release-v1""#)
+        #expect(RemoteVersionMockURLProtocol.requestPaths == ["/repos/example/skills/releases/latest"])
+    }
+
+    @Test("Default-branch Skills share the branch and tree lookup")
+    func defaultBranchChecksShareRepositoryTree() async throws {
+        let provider = GitHubSourceProvider(session: RemoteVersionFixture.session())
+        let first = GitHubSourceState(
+            skillID: UUID(),
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            repositoryIsPrivate: false,
+            skillPath: "skills/demo",
+            trackingMode: .defaultBranch,
+            defaultBranch: "main",
+            currentTreeSHA: "demo-old",
+            status: .current
+        )
+        let second = GitHubSourceState(
+            skillID: UUID(),
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            repositoryIsPrivate: false,
+            skillPath: "skills/other",
+            trackingMode: .defaultBranch,
+            defaultBranch: "main",
+            currentTreeSHA: "other-old",
+            status: .current
+        )
+
+        let batch = try await provider.checkRemoteVersions(states: [first, second])
+
+        #expect(batch.versions[first.skillID]?.treeSHA == "demo-tree")
+        #expect(batch.versions[second.skillID]?.treeSHA == "other-tree")
+        #expect(RemoteVersionMockURLProtocol.requestPaths == [
+            "/repos/example/skills/commits/main",
+            "/repos/example/skills/git/trees/root-tree-new",
+            "/repos/example/skills/git/trees/skills-tree",
+        ])
+    }
+
+    @Test("An unchanged default-branch commit skips all tree requests")
+    func unchangedDefaultBranchCommitSkipsTrees() async throws {
+        let provider = GitHubSourceProvider(session: RemoteVersionFixture.session())
+        let state = GitHubSourceState(
+            skillID: UUID(),
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            repositoryIsPrivate: false,
+            skillPath: "skills/demo",
+            trackingMode: .defaultBranch,
+            defaultBranch: "main",
+            currentVersionIdentifier: "commit:commit-main",
+            currentCommitSHA: "commit-main",
+            currentTreeSHA: "demo-tree",
+            status: .current
+        )
+
+        let batch = try await provider.checkRemoteVersions(states: [state])
+        let version = try #require(batch.versions[state.skillID])
+
+        #expect(version.treeSHA == "demo-tree")
+        #expect(RemoteVersionMockURLProtocol.requestPaths == ["/repos/example/skills/commits/main"])
     }
 
     @Test("Default-branch checks use the Skill subtree instead of unrelated repository changes")
@@ -394,6 +582,55 @@ private enum InvalidTokenPublicRepositoryFixture {
     }
 }
 
+private final class UnselectedPublicRepositoryMockURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var authenticatedRequestCount = 0
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        if request.value(forHTTPHeaderField: "Authorization") != nil {
+            Self.authenticatedRequestCount += 1
+            respond(status: 404, payload: #"{"message":"Not Found"}"#)
+            return
+        }
+
+        let payload: String
+        switch request.url?.path {
+        case "/repos/example/skills":
+            payload = #"{"id":7,"full_name":"example/skills","default_branch":"main","private":false}"#
+        case "/repos/example/skills/releases/latest":
+            payload = #"{"id":42,"tag_name":"v1.4.0","name":"Version 1.4","published_at":"2026-08-15T00:00:00Z","zipball_url":"https://api.github.com/repos/example/skills/zipball/v1.4.0","assets":[{"id":101,"name":"demo-pure.zip","state":"uploaded","content_type":"application/zip","size":2048,"browser_download_url":"https://github.com/example/skills/releases/download/v1.4.0/demo-pure.zip"}]}"#
+        default:
+            payload = "{}"
+        }
+        respond(status: 200, payload: payload)
+    }
+
+    private func respond(status: Int, payload: String) {
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: status,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(payload.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+private enum UnselectedPublicRepositoryFixture {
+    static func session() -> URLSession {
+        UnselectedPublicRepositoryMockURLProtocol.authenticatedRequestCount = 0
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [UnselectedPublicRepositoryMockURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+}
+
 private struct FixedTokenProvider: GitHubAccessTokenProvider {
     func accessToken() async throws -> String? { "test-token" }
 }
@@ -523,6 +760,9 @@ private func removeRetainedGitHubTemporaryDirectory(for sourceURL: URL) {
 
 private final class RemoteVersionMockURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var archiveRequestCount = 0
+    nonisolated(unsafe) static var requestPaths: [String] = []
+    nonisolated(unsafe) static var lastIfNoneMatch: String?
+    nonisolated(unsafe) static var authorizationHeaders: [String?] = []
     nonisolated(unsafe) static var releaseAssets = [
         #"{"id":101,"name":"demo-pure.zip","state":"uploaded","content_type":"application/zip","size":2048,"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","browser_download_url":"https://github.com/example/skills/releases/download/v1.4.0/demo-pure.zip"}"#,
     ]
@@ -531,6 +771,22 @@ private final class RemoteVersionMockURLProtocol: URLProtocol, @unchecked Sendab
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         let path = request.url?.path ?? ""
+        Self.requestPaths.append(path)
+        Self.lastIfNoneMatch = request.value(forHTTPHeaderField: "If-None-Match")
+        Self.authorizationHeaders.append(request.value(forHTTPHeaderField: "Authorization"))
+        if path == "/repos/example/skills/releases/latest",
+           Self.lastIfNoneMatch == #""release-v1""#
+        {
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 304,
+                httpVersion: nil,
+                headerFields: ["ETag": #""release-v1""#]
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
         let payload: String
         switch path {
         case "/repos/example/skills":
@@ -550,7 +806,8 @@ private final class RemoteVersionMockURLProtocol: URLProtocol, @unchecked Sendab
             payload = "{}"
         }
         let data = Data(payload.utf8)
-        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+        let eTag = path == "/repos/example/skills/releases/latest" ? #""release-v1""# : #""branch-v1""#
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json", "ETag": eTag])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)
@@ -561,6 +818,9 @@ private final class RemoteVersionMockURLProtocol: URLProtocol, @unchecked Sendab
 private enum RemoteVersionFixture {
     static func session(releaseAssets: [String]? = nil) -> URLSession {
         RemoteVersionMockURLProtocol.archiveRequestCount = 0
+        RemoteVersionMockURLProtocol.requestPaths = []
+        RemoteVersionMockURLProtocol.lastIfNoneMatch = nil
+        RemoteVersionMockURLProtocol.authorizationHeaders = []
         if let releaseAssets { RemoteVersionMockURLProtocol.releaseAssets = releaseAssets }
         else {
             RemoteVersionMockURLProtocol.releaseAssets = [

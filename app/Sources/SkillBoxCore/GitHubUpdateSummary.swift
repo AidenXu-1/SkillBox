@@ -40,7 +40,7 @@ public struct GitHubUpdateSummary: Sendable, Hashable {
         if versionUpdateCount == 0, cleanPackageCount == 0,
            rateLimitedCount > 0, issueCount == rateLimitedCount
         {
-            return "GitHub 暂时限制了查询。公开仓库无需连接私人仓库，请稍后再试"
+            return "GitHub 暂时无法继续检查，SkillBox 会保留当前结果"
         }
 
         var parts: [String] = []
@@ -49,7 +49,7 @@ public struct GitHubUpdateSummary: Sendable, Hashable {
         if authenticationCount > 0 { parts.append("\(authenticationCount) 个私人仓库需要重新连接") }
         if permissionCount > 0 { parts.append("\(permissionCount) 个私人仓库需要允许访问") }
         if missingCount > 0 { parts.append("\(missingCount) 个仓库地址需要确认") }
-        if rateLimitedCount > 0 { parts.append("GitHub 暂时限制了 \(rateLimitedCount) 个查询") }
+        if rateLimitedCount > 0 { parts.append("GitHub 暂时无法继续检查") }
         if unavailableCount > 0 { parts.append("\(unavailableCount) 个来源暂时不可用") }
         return "检查完成：" + parts.joined(separator: "，")
     }

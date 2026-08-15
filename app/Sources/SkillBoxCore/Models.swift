@@ -95,6 +95,7 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
     public var availableAssetName: String?
     public var availableAssetDigest: String?
     public var ignoredVersionIdentifier: String?
+    public var versionETag: String?
     public var lastCheckedAt: Date?
     public var lastCheckIssue: GitHubSourceIssue?
     public var retryAfter: Date?
@@ -126,6 +127,7 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
         availableAssetName: String? = nil,
         availableAssetDigest: String? = nil,
         ignoredVersionIdentifier: String? = nil,
+        versionETag: String? = nil,
         lastCheckedAt: Date? = nil,
         lastCheckIssue: GitHubSourceIssue? = nil,
         retryAfter: Date? = nil,
@@ -156,6 +158,7 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
         self.availableAssetName = availableAssetName
         self.availableAssetDigest = availableAssetDigest
         self.ignoredVersionIdentifier = ignoredVersionIdentifier
+        self.versionETag = versionETag
         self.lastCheckedAt = lastCheckedAt
         self.lastCheckIssue = lastCheckIssue
         self.retryAfter = retryAfter

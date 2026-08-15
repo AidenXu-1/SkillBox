@@ -326,7 +326,7 @@ private struct LibraryView: View {
                     HStack(spacing: 10) {
                         if !model.snapshot.sourceStates.isEmpty {
                             Button {
-                                Task { await model.checkAllGitHubUpdates() }
+                                model.startGitHubUpdateCheck()
                             } label: {
                                 Label("检查更新", systemImage: "arrow.triangle.2.circlepath")
                             }
@@ -336,10 +336,10 @@ private struct LibraryView: View {
                         }
                         if !model.isGitHubConnected {
                             Button(action: model.isGitHubConfigured ? connectGitHub : openSettings) {
-                                Label(model.isGitHubConfigured ? "连接私人仓库" : "私人仓库暂不可用", systemImage: "lock.open")
+                                Label(model.isGitHubConfigured ? "连接 GitHub" : "GitHub 登录暂不可用", systemImage: "person.crop.circle.badge.plus")
                             }
                             .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                            .help(model.isGitHubConfigured ? "连接 GitHub 后可以添加和跟踪私人仓库" : "查看私人仓库连接状态")
+                            .help(model.isGitHubConfigured ? "连接后可以添加和跟踪你选中的私人仓库；公开仓库无需连接" : "查看 GitHub 登录状态")
                         }
                         Menu {
                             Button("从电脑文件夹添加", action: importLocal)
@@ -383,7 +383,7 @@ private struct LibraryView: View {
                         Button("从 GitHub 添加", action: importGitHub)
                             .buttonStyle(.borderedProminent)
                         if !model.isGitHubConnected {
-                            Button(model.isGitHubConfigured ? "连接私人仓库" : "了解私人仓库状态", action: model.isGitHubConfigured ? connectGitHub : openSettings)
+                            Button(model.isGitHubConfigured ? "连接 GitHub" : "了解 GitHub 登录状态", action: model.isGitHubConfigured ? connectGitHub : openSettings)
                         }
                     }
                 }
@@ -911,7 +911,7 @@ private struct GitHubSourceCard: View {
             switch issue {
             case .authenticationRequired: return "私人仓库连接已失效"
             case .repositoryPermissionRequired: return "需要允许访问这个私人仓库"
-            case .rateLimited: return "GitHub 查询次数暂时用完"
+            case .rateLimited: return "GitHub 暂时无法继续检查"
             case .repositoryMissing: return "找不到原来的 GitHub 仓库"
             case .temporarilyUnavailable: return "暂时无法连接 GitHub"
             }
@@ -938,9 +938,9 @@ private struct GitHubSourceCard: View {
                 return "本地 Skill 不受影响。请在 GitHub 中把这个仓库加入允许访问的列表。"
             case .rateLimited:
                 if let retryAfter = state?.retryAfter {
-                    return "预计 \(retryAfter.formatted(date: .omitted, time: .shortened)) 后可继续。公开仓库无需连接私人仓库。"
+                    return "预计 \(retryAfter.formatted(date: .omitted, time: .shortened)) 后可继续，SkillBox 会保留当前结果。"
                 }
-                return "请稍后再试。公开仓库无需连接私人仓库。"
+                return "请稍后再试，本地 Skill 和已安装副本都不受影响。"
             case .repositoryMissing:
                 return "仓库可能已改名、删除或改为私人仓库。本地 Skill 仍然保留。"
             case .temporarilyUnavailable:
@@ -2402,9 +2402,9 @@ private struct SettingsView: View {
                             .font(.title2)
                             .foregroundStyle(model.githubAuthorizedRepositories.isEmpty ? .blue : .green)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(model.githubAuthorizedRepositories.isEmpty ? "GitHub 身份已确认" : "私人仓库已连接").font(.headline)
+                            Text("GitHub 已连接").font(.headline)
                             Text(model.githubAuthorizedRepositories.isEmpty
-                                 ? "还需在 GitHub 选择 SkillBox 可以读取的仓库。"
+                                 ? "身份已确认。如需私人仓库，还要选择允许 SkillBox 读取的仓库。"
                                  : "SkillBox 只能读取你亲自选择的仓库，不能修改其中内容。")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -2479,9 +2479,9 @@ private struct SettingsView: View {
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 14) {
-                        Label("连接私人仓库", systemImage: "lock.open.fill")
+                        Label("连接 GitHub", systemImage: "person.crop.circle.badge.plus")
                             .font(.headline)
-                        Text("只有添加私人仓库时才需要连接。整个过程在浏览器中完成，不用下载其他软件。")
+                        Text("只有添加私人仓库时才需要连接。公开仓库不登录也能添加和检查。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Label("你只需在 GitHub 页面确认身份和选择仓库，页面跳转和结果检查由 SkillBox 完成。", systemImage: "wand.and.stars")
@@ -2502,9 +2502,9 @@ private struct SettingsView: View {
                                 .disabled(model.isBusy)
                         } else {
                             VStack(alignment: .leading, spacing: 4) {
-                                Label("当前版本尚未启用私人仓库", systemImage: "exclamationmark.circle.fill")
+                                Label("当前版本尚未配置 GitHub 登录", systemImage: "exclamationmark.circle.fill")
                                     .font(.callout.weight(.semibold))
-                                Text("这不是加载过程，不需要继续等待。公开仓库仍然可以直接添加。")
+                                Text("这不是加载过程。公开仓库仍可以直接添加和检查。")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -2649,14 +2649,14 @@ private struct GitHubImportView: View {
             if !model.isGitHubConnected {
                 VStack(alignment: .leading, spacing: 9) {
                     Text("要添加私人仓库？").font(.callout.weight(.semibold))
-                    Text("连接后选择允许 SkillBox 读取的仓库。整个过程在浏览器中完成，不用下载其他软件。公开仓库可以直接继续。")
+                    Text("连接后可读取你亲自选择的私人仓库。公开仓库无需连接，可以直接继续。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if model.isGitHubConfigured {
-                        Button("连接私人仓库") { Task { await model.connectPrivateGitHub() } }
+                        Button("连接 GitHub") { Task { await model.connectPrivateGitHub() } }
                             .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                     } else {
-                        Label("当前版本尚未启用私人仓库，公开仓库仍可直接添加。", systemImage: "info.circle")
+                        Label("当前版本尚未配置 GitHub 登录，公开仓库仍可直接添加。", systemImage: "info.circle")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

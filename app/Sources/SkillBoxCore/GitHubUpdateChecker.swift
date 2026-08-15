@@ -1,5 +1,24 @@
 import Foundation
 
+public enum GitHubAutomaticCheckPolicy {
+    public static let interval: TimeInterval = 24 * 60 * 60
+
+    public static func isDue(lastCheckedAt: Date?, now: Date = Date()) -> Bool {
+        guard let lastCheckedAt else { return true }
+        return lastCheckedAt <= now.addingTimeInterval(-interval)
+    }
+}
+
+public struct GitHubUpdateProgress: Sendable {
+    public var completedRepositories: Int
+    public var totalRepositories: Int
+
+    public init(completedRepositories: Int, totalRepositories: Int) {
+        self.completedRepositories = completedRepositories
+        self.totalRepositories = totalRepositories
+    }
+}
+
 public actor GitHubUpdateChecker {
     private let checker: any GitHubRemoteVersionChecking
     private let store: LibraryStore
@@ -18,91 +37,157 @@ public actor GitHubUpdateChecker {
     @discardableResult
     public func check(skillID: UUID) async throws -> GitHubSourceState? {
         let snapshot = await store.currentSnapshot()
-        guard var state = snapshot.sourceStates.first(where: { $0.skillID == skillID }) else { return nil }
+        guard let state = snapshot.sourceStates.first(where: { $0.skillID == skillID }) else { return nil }
         guard state.checkingEnabled else { return state }
-        if state.lastCheckIssue == .rateLimited,
-           let retryAfter = state.retryAfter,
-           retryAfter > now()
-        {
-            return state
+        return try await checkAll(skillIDs: [skillID]).first ?? state
+    }
+
+    @discardableResult
+    public func checkAll(
+        skillIDs: Set<UUID>? = nil,
+        progress: (@Sendable (GitHubUpdateProgress) async -> Void)? = nil
+    ) async throws -> [GitHubSourceState] {
+        let snapshot = await store.currentSnapshot()
+        let requested = snapshot.sourceStates.filter { state in
+            state.checkingEnabled && (skillIDs == nil || skillIDs?.contains(state.skillID) == true)
         }
-        do {
-            let remote = try await checker.checkRemoteVersion(
-                repositoryFullName: state.repositoryFullName,
-                skillPath: state.skillPath,
-                trackingMode: state.trackingMode
-            )
-            state.repositoryID = remote.repositoryID
-            state.repositoryIsPrivate = remote.isPrivate
-            state.defaultBranch = remote.defaultBranch
-            state.availableVersionIdentifier = remote.versionIdentifier
-            state.availableVersionName = remote.versionName
-            state.availableCommitSHA = remote.commitSHA
-            state.availableTreeSHA = remote.treeSHA
-            state.availableReleaseID = remote.releaseID
-            state.availableAssetID = remote.selectedReleaseAsset?.id
-            state.availableAssetName = remote.selectedReleaseAsset?.name
-            state.availableAssetDigest = remote.selectedReleaseAsset?.digest
-            state.lastCheckedAt = now()
-            state.lastCheckIssue = nil
-            state.retryAfter = nil
-            if legacySourceArchiveRecordIsCurrent(state: state, remote: remote) {
-                state.currentReleaseID = remote.releaseID
-                state.currentVersionIdentifier = remote.versionIdentifier
+        guard !requested.isEmpty else { return [] }
+        if requested.contains(where: {
+            $0.lastCheckIssue == .rateLimited && ($0.retryAfter ?? .distantPast) > now()
+        }) {
+            return requested
+        }
+
+        var groups: [RepositoryCheckKey: [GitHubSourceState]] = [:]
+        var order: [RepositoryCheckKey] = []
+        for state in requested {
+            let key = RepositoryCheckKey(state: state)
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(state)
+        }
+        order.sort { left, right in
+            let leftDate = groups[left]?.map { $0.lastCheckedAt ?? .distantPast }.min() ?? .distantPast
+            let rightDate = groups[right]?.map { $0.lastCheckedAt ?? .distantPast }.min() ?? .distantPast
+            if leftDate != rightDate { return leftDate < rightDate }
+            return left.repositoryFullName < right.repositoryFullName
+        }
+
+        var allStates = snapshot.sourceStates
+        var completed = 0
+        for key in order {
+            try Task.checkCancellation()
+            guard let group = groups[key] else { continue }
+            do {
+                let batch = try await checker.checkRemoteVersions(states: group)
+                for original in group {
+                    let updated: GitHubSourceState
+                    if batch.isNotModified {
+                        updated = notModifiedState(original, eTag: batch.eTag)
+                    } else if let remote = batch.versions[original.skillID] {
+                        updated = checkedState(original, remote: remote, eTag: batch.eTag)
+                    } else {
+                        updated = issueState(original, error: GitHubSourceError.requestFailed(500))
+                    }
+                    replace(updated, in: &allStates)
+                }
+            } catch GitHubSourceError.rateLimited(let retryAt) {
+                for index in allStates.indices where allStates[index].checkingEnabled {
+                    allStates[index].status = restoredVersionStatus(allStates[index])
+                    allStates[index].lastCheckIssue = .rateLimited
+                    allStates[index].retryAfter = retryAt
+                }
+                try await store.replaceSourceStates(allStates)
+                completed += 1
+                await progress?(.init(completedRepositories: completed, totalRepositories: order.count))
+                break
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                for original in group {
+                    replace(issueState(original, error: error), in: &allStates)
+                }
             }
-            if state.currentTreeSHA == nil {
-                state.status = .needsInitialCheck
-            } else if isCurrent(state: state, remote: remote) {
-                state.status = .current
-            } else if state.ignoredVersionIdentifier == remote.versionIdentifier {
-                state.status = .ignored
-            } else if sameReleaseHasNewInstallPackage(state: state, remote: remote) {
-                state.status = .releasePackageAvailable
-            } else {
-                state.status = .updateAvailable
-            }
-            try await store.updateSourceState(state)
-            return state
-        } catch GitHubSourceError.rateLimited(let retryAt) {
-            let checkedAt = now()
-            var states = snapshot.sourceStates
-            for index in states.indices where states[index].checkingEnabled {
-                states[index].status = restoredVersionStatus(states[index])
-                states[index].lastCheckIssue = .rateLimited
-                states[index].retryAfter = retryAt
-                states[index].lastCheckedAt = checkedAt
-            }
-            try await store.replaceSourceStates(states)
-            return states.first(where: { $0.skillID == skillID })
-        } catch GitHubSourceError.authenticationRequired {
-            state.status = restoredVersionStatus(state)
+            try await store.replaceSourceStates(allStates)
+            completed += 1
+            await progress?(.init(completedRepositories: completed, totalRepositories: order.count))
+        }
+
+        let requestedIDs = Set(requested.map(\.skillID))
+        return allStates.filter { requestedIDs.contains($0.skillID) }
+    }
+
+    private func checkedState(
+        _ original: GitHubSourceState,
+        remote: GitHubRemoteVersion,
+        eTag: String?
+    ) -> GitHubSourceState {
+        var state = original
+        state.repositoryID = remote.repositoryID
+        state.repositoryIsPrivate = remote.isPrivate
+        state.defaultBranch = remote.defaultBranch
+        state.availableVersionIdentifier = remote.versionIdentifier
+        state.availableVersionName = remote.versionName
+        state.availableCommitSHA = remote.commitSHA
+        state.availableTreeSHA = remote.treeSHA
+        state.availableReleaseID = remote.releaseID
+        state.availableAssetID = remote.selectedReleaseAsset?.id
+        state.availableAssetName = remote.selectedReleaseAsset?.name
+        state.availableAssetDigest = remote.selectedReleaseAsset?.digest
+        state.versionETag = eTag ?? state.versionETag
+        state.lastCheckedAt = now()
+        state.lastCheckIssue = nil
+        state.retryAfter = nil
+        if legacySourceArchiveRecordIsCurrent(state: state, remote: remote) {
+            state.currentReleaseID = remote.releaseID
+            state.currentVersionIdentifier = remote.versionIdentifier
+        }
+        if state.currentTreeSHA == nil {
+            state.status = .needsInitialCheck
+        } else if isCurrent(state: state, remote: remote) {
+            state.status = .current
+        } else if state.ignoredVersionIdentifier == remote.versionIdentifier {
+            state.status = .ignored
+        } else if sameReleaseHasNewInstallPackage(state: state, remote: remote) {
+            state.status = .releasePackageAvailable
+        } else {
+            state.status = .updateAvailable
+        }
+        return state
+    }
+
+    private func notModifiedState(_ original: GitHubSourceState, eTag: String?) -> GitHubSourceState {
+        var state = original
+        state.status = restoredVersionStatus(state)
+        state.versionETag = eTag ?? state.versionETag
+        state.lastCheckedAt = now()
+        state.lastCheckIssue = nil
+        state.retryAfter = nil
+        return state
+    }
+
+    private func issueState(_ original: GitHubSourceState, error: Error) -> GitHubSourceState {
+        var state = original
+        state.status = restoredVersionStatus(state)
+        state.retryAfter = nil
+        switch error {
+        case GitHubSourceError.authenticationRequired:
             state.lastCheckIssue = state.repositoryIsPrivate == true ? .authenticationRequired : .temporarilyUnavailable
-            state.retryAfter = nil
-            state.lastCheckedAt = now()
-            try await store.updateSourceState(state)
-            return state
-        } catch GitHubSourceError.repositoryUnavailableOrUnauthorized {
-            state.status = restoredVersionStatus(state)
+        case GitHubSourceError.repositoryUnavailableOrUnauthorized:
             state.lastCheckIssue = state.repositoryIsPrivate == true ? .authenticationRequired : .repositoryMissing
-            state.retryAfter = nil
-            state.lastCheckedAt = now()
-            try await store.updateSourceState(state)
-            return state
-        } catch GitHubSourceError.repositoryPermissionRequired {
-            state.status = restoredVersionStatus(state)
+        case GitHubSourceError.repositoryPermissionRequired:
             state.lastCheckIssue = state.repositoryIsPrivate == true ? .repositoryPermissionRequired : .repositoryMissing
-            state.retryAfter = nil
-            state.lastCheckedAt = now()
-            try await store.updateSourceState(state)
-            return state
-        } catch {
-            state.status = restoredVersionStatus(state)
+        default:
             state.lastCheckIssue = .temporarilyUnavailable
-            state.retryAfter = nil
-            state.lastCheckedAt = now()
-            try await store.updateSourceState(state)
-            return state
         }
+        return state
+    }
+
+    private func replace(_ state: GitHubSourceState, in states: inout [GitHubSourceState]) {
+        guard let index = states.firstIndex(where: { $0.skillID == state.skillID }) else {
+            states.append(state)
+            return
+        }
+        states[index] = state
     }
 
     private func restoredVersionStatus(_ state: GitHubSourceState) -> GitHubSourceStatus {
@@ -194,5 +279,15 @@ public actor GitHubUpdateChecker {
         state.lastCheckIssue = nil
         state.retryAfter = nil
         try await store.updateSourceState(state)
+    }
+}
+
+private struct RepositoryCheckKey: Hashable {
+    var repositoryFullName: String
+    var trackingMode: GitHubTrackingMode
+
+    init(state: GitHubSourceState) {
+        repositoryFullName = state.repositoryFullName.lowercased()
+        trackingMode = state.trackingMode
     }
 }

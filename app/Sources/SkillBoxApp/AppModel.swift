@@ -511,22 +511,39 @@ final class AppModel: ObservableObject {
             return
         }
         isBusy = true
-        statusMessage = "正在检查 GitHub 更新…"
-        defer { isBusy = false }
-        var checkedStates: [GitHubSourceState] = []
-        for state in states {
-            do {
-                if let checkedState = try await githubUpdateChecker.check(skillID: state.skillID) {
-                    checkedStates.append(checkedState)
-                }
-            } catch {
-                var unavailable = state
-                unavailable.lastCheckIssue = .temporarilyUnavailable
-                checkedStates.append(unavailable)
-            }
+        operationProgress = .init(
+            title: "正在检查 GitHub 更新",
+            detail: "正在整理仓库，同一仓库只检查一次…",
+            canCancel: true
+        )
+        defer {
+            isBusy = false
+            operationProgress = nil
         }
-        await reload()
-        statusMessage = GitHubUpdateSummary(states: checkedStates).statusMessage
+        do {
+            let checkedStates = try await githubUpdateChecker.checkAll { [weak self] progress in
+                await MainActor.run {
+                    self?.operationProgress = .init(
+                        title: "正在检查 GitHub 更新",
+                        detail: "已检查 \(progress.completedRepositories) / \(progress.totalRepositories) 个仓库",
+                        canCancel: true
+                    )
+                }
+            }
+            await reload()
+            statusMessage = GitHubUpdateSummary(states: checkedStates).statusMessage
+        } catch is CancellationError {
+            statusMessage = "已取消检查，本地 Skills 没有变化"
+        } catch {
+            present(error)
+        }
+    }
+
+    func startGitHubUpdateCheck() {
+        remoteOperationTask?.cancel()
+        remoteOperationTask = Task { [weak self] in
+            await self?.checkAllGitHubUpdates()
+        }
     }
 
     func cancelCandidatePreview() {
@@ -1118,10 +1135,14 @@ final class AppModel: ObservableObject {
     }
 
     private func checkAllGitHubUpdatesIfStale() async {
-        let cutoff = Date().addingTimeInterval(-6 * 60 * 60)
-        let eligible = snapshot.sourceStates.filter { $0.checkingEnabled && ($0.lastCheckedAt ?? .distantPast) < cutoff }
-        for state in eligible { _ = try? await githubUpdateChecker.check(skillID: state.skillID) }
-        if !eligible.isEmpty { await reload() }
+        let eligibleIDs = Set(snapshot.sourceStates.compactMap { state in
+            state.checkingEnabled && GitHubAutomaticCheckPolicy.isDue(lastCheckedAt: state.lastCheckedAt)
+                ? state.skillID
+                : nil
+        })
+        guard !eligibleIDs.isEmpty else { return }
+        _ = try? await githubUpdateChecker.checkAll(skillIDs: eligibleIDs)
+        await reload()
     }
 
     private func readMarkdown(at url: URL) async -> String {
