@@ -129,6 +129,28 @@ struct SkillUsageGuideTests {
         #expect(guide.starterPrompt == "请使用 zhaoji-writing，把这些材料写成一篇图文展示。 先帮我确定主题和话题，确认后再继续。")
     }
 
+    @Test("A lead-in sentence does not hide the actual fenced usage example")
+    func readsFencedPromptAfterLeadIn() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.remove() }
+        let skill = try fixture.makeSkill(root: "root", directory: "foundation", name: "foundation", body: "# Foundation")
+        try """
+        # Foundation
+
+        ## 触发方式
+
+        你可以对 Codex 说：
+
+        ```text
+        帮我给这个新项目搭建一下地基。
+        ```
+        """.write(to: skill.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+
+        let guide = try #require(SkillUsageGuideExtractor().extract(from: skill))
+
+        #expect(guide.starterPrompt == "帮我给这个新项目搭建一下地基。")
+    }
+
     @Test("A technical default prompt is omitted when no user example exists")
     func omitsTechnicalDefaultPrompt() throws {
         let fixture = try TemporaryFixture()

@@ -2525,8 +2525,17 @@ private struct SettingsView: View {
             }
             Section("数据与隐私") {
                 LabeledContent("SkillBox 保存位置", value: model.libraryRoot.path)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("SkillBox 保存位置")
+                    .accessibilityValue(model.libraryRoot.path)
                 LabeledContent("联网", value: "只在添加 GitHub 来源或检查更新时")
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("联网")
+                    .accessibilityValue("只在添加 GitHub 来源或检查更新时")
                 LabeledContent("使用数据收集", value: "不收集")
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("使用数据收集")
+                    .accessibilityValue("不收集")
             }
             Section("安全承诺") {
                 Label("查看 Skill 时不会运行里面的文件", systemImage: "checkmark.shield")

@@ -193,19 +193,20 @@ public struct SkillUsageGuideExtractor: Sendable {
             guard let lines = sectionLines(in: document, headings: promptHeadings) else { continue }
             var inFence = false
             var paragraph: [String] = []
+            var paragraphEnded = false
             for line in lines {
                 let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.hasPrefix("```") { inFence.toggle(); continue }
                 if inFence, !trimmed.isEmpty { return cleanInline(trimmed) }
                 if trimmed.isEmpty {
-                    if !paragraph.isEmpty { break }
+                    if !paragraph.isEmpty { paragraphEnded = true }
                     continue
                 }
                 guard heading(from: trimmed) == nil, listItem(from: trimmed) == nil, !trimmed.hasPrefix(">") else {
-                    if !paragraph.isEmpty { break }
+                    if !paragraph.isEmpty { paragraphEnded = true }
                     continue
                 }
-                paragraph.append(cleanInline(trimmed))
+                if !paragraphEnded { paragraph.append(cleanInline(trimmed)) }
             }
             let value = paragraph.filter { !$0.isEmpty }.joined(separator: " ")
             if !value.isEmpty { return value }
