@@ -9,6 +9,26 @@ struct SkillBoxOperationProgress: Equatable {
     var canCancel: Bool
 }
 
+struct AssignmentProposal: Identifiable {
+    let id = UUID()
+    let skill: SkillRecord
+    let target: AgentTarget
+    let desired: Bool
+    let action: SyncAction?
+    let changes: [SkillFileChange]
+
+    var hasDifferentExistingContent: Bool {
+        action?.blockReason == .unmanagedConflict &&
+            action?.expectedSourceFingerprint != action?.expectedDestinationFingerprint
+    }
+
+    var hasSameExistingContent: Bool {
+        action?.blockReason == .unmanagedConflict &&
+            action?.expectedSourceFingerprint == action?.expectedDestinationFingerprint &&
+            action?.expectedSourceFingerprint != nil
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var snapshot = LibrarySnapshot()
@@ -495,15 +515,96 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func toggleAssignment(skill: SkillRecord, target: AgentTarget) async {
-        var assignments = snapshot.assignments
-        let existingDesired = assignments.first { $0.skillID == skill.id && $0.targetID == target.id }?.isDesired == true
-        if !existingDesired, !isAvailableForInstallation(target) {
-            noticeMessage = unavailableMessage(for: target)
-            return
+    func prepareAssignmentProposal(skill: SkillRecord, target: AgentTarget) async -> AssignmentProposal? {
+        let existingDesired = snapshot.assignments.first { $0.skillID == skill.id && $0.targetID == target.id }?.isDesired == true
+        let pendingAction = syncPlan?.actions.first {
+            $0.skillID == skill.id && $0.targetID == target.id && $0.kind != .noChange
         }
-        setAssignment(skill: skill, target: target, desired: !existingDesired, assignments: &assignments)
-        do { try await store.replaceAssignments(assignments); await reload() } catch { present(error) }
+        if let pendingAction {
+            return AssignmentProposal(
+                skill: skill,
+                target: target,
+                desired: existingDesired,
+                action: pendingAction,
+                changes: await comparisonChanges(for: pendingAction, skill: skill)
+            )
+        }
+
+        let proposedDesired = !existingDesired
+        if proposedDesired, !isAvailableForInstallation(target) {
+            noticeMessage = unavailableMessage(for: target)
+            return nil
+        }
+        var proposedSnapshot = snapshot
+        var assignments = proposedSnapshot.assignments
+        setAssignment(skill: skill, target: target, desired: proposedDesired, assignments: &assignments)
+        proposedSnapshot.assignments = assignments
+        do {
+            let planningRoot = libraryRoot
+            let plan = try await Task.detached(priority: .userInitiated) {
+                try DefaultSyncPlanner().makePlan(snapshot: proposedSnapshot, libraryRoot: planningRoot)
+            }.value
+            let action = plan.actions.first { $0.skillID == skill.id && $0.targetID == target.id && $0.kind != .noChange }
+            let changes: [SkillFileChange]
+            if let action {
+                changes = await comparisonChanges(for: action, skill: skill)
+            } else {
+                changes = []
+            }
+            return AssignmentProposal(
+                skill: skill,
+                target: target,
+                desired: proposedDesired,
+                action: action,
+                changes: changes
+            )
+        } catch {
+            present(error)
+            return nil
+        }
+    }
+
+    func confirmAssignmentProposal(_ proposal: AssignmentProposal) async -> Bool {
+        isBusy = true
+        defer { isBusy = false }
+        var assignments = snapshot.assignments
+        setAssignment(skill: proposal.skill, target: proposal.target, desired: proposal.desired, assignments: &assignments)
+        if proposal.desired,
+           proposal.action?.blockReason == .unmanagedConflict,
+           let destinationFingerprint = proposal.action?.expectedDestinationFingerprint,
+           let index = assignments.firstIndex(where: { $0.skillID == proposal.skill.id && $0.targetID == proposal.target.id })
+        {
+            let isSame = proposal.action?.expectedSourceFingerprint == destinationFingerprint
+            assignments[index].allowTakeover = isSame
+            assignments[index].allowReplacement = !isSame
+            assignments[index].authorizedDestinationFingerprint = destinationFingerprint
+        }
+
+        do {
+            try await store.replaceAssignments(assignments)
+            await reload()
+            guard let action = syncPlan?.actions.first(where: {
+                $0.skillID == proposal.skill.id && $0.targetID == proposal.target.id && $0.kind != .noChange
+            }) else {
+                statusMessage = proposal.desired ? "已保留当前安装" : "已取消这项安装"
+                return true
+            }
+            guard action.kind != .blocked else {
+                noticeMessage = action.summary
+                return false
+            }
+
+            let result = try await executor.execute(plan: SyncPlan(actions: [action]), store: store)
+            statusMessage = action.kind == .remove
+                ? "已从 \(proposal.target.displayName) 卸载 \(proposal.skill.displayName)"
+                : "已安装 \(proposal.skill.displayName) 到 \(proposal.target.displayName)"
+            await reload()
+            await scanInstalledSkills()
+            return result.status == .succeeded
+        } catch {
+            present(error)
+            return false
+        }
     }
 
     func prepareInstallEverywhere(_ skill: SkillRecord) async -> Bool {
@@ -757,6 +858,21 @@ final class AppModel: ObservableObject {
         }.value
     }
 
+    func skillUsageGuide(_ skill: SkillRecord) async -> SkillUsageGuide? {
+        let url = await store.contentURL(for: skill)
+        return await Task.detached(priority: .userInitiated) {
+            SkillUsageGuideExtractor().extract(from: url)
+        }.value
+    }
+
+    func hasUnmanagedSameName(skill: SkillRecord, target: AgentTarget) -> Bool {
+        let destination = URL(fileURLWithPath: target.path)
+            .appendingPathComponent(skill.canonicalName)
+            .standardizedFileURL.path
+        guard FileManager.default.fileExists(atPath: destination) else { return false }
+        return !snapshot.installations.contains { $0.destinationPath == destination }
+    }
+
     private func preview(provider: any SourceProvider, locator: String) async {
         guard let candidates = await loadPreview(provider: provider, locator: locator) else { return }
         activeConflict = nil
@@ -770,6 +886,18 @@ final class AppModel: ObservableObject {
         do {
             return try await provider.preview(locator: locator)
         } catch { present(error); return nil }
+    }
+
+    private func comparisonChanges(for action: SyncAction, skill: SkillRecord) async -> [SkillFileChange] {
+        guard action.expectedDestinationFingerprint != nil,
+              action.expectedDestinationFingerprint != action.expectedSourceFingerprint,
+              FileManager.default.fileExists(atPath: action.destinationPath)
+        else { return [] }
+        let source = await store.contentURL(for: skill)
+        let destination = URL(fileURLWithPath: action.destinationPath)
+        return await Task.detached(priority: .userInitiated) {
+            (try? SkillDiffAnalyzer().compare(before: destination, after: source)) ?? []
+        }.value
     }
 
     private func cleanupGitHubCandidates(_ candidates: [SkillCandidate]) {

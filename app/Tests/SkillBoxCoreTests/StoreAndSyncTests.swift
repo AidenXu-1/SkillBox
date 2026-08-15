@@ -561,7 +561,12 @@ struct SyncTests {
         try await store.replaceAssignments([.init(skillID: record.id, targetID: target.id, installationDirectoryName: "demo")])
         let planner = DefaultSyncPlanner()
         var plan = try planner.makePlan(snapshot: await store.currentSnapshot(), libraryRoot: fixture.storeRoot)
-        #expect(plan.actions.first?.blockReason == .unmanagedConflict)
+        let conflict = try #require(plan.actions.first)
+        let destinationFingerprint = try SHA256SkillFingerprinter().fingerprint(directory: destination)
+        #expect(conflict.blockReason == .unmanagedConflict)
+        #expect(conflict.expectedSourceFingerprint == record.fingerprint)
+        #expect(conflict.expectedDestinationFingerprint == destinationFingerprint)
+        #expect(conflict.expectedSourceFingerprint != conflict.expectedDestinationFingerprint)
 
         try FileManager.default.removeItem(at: destination)
         plan = try planner.makePlan(snapshot: await store.currentSnapshot(), libraryRoot: fixture.storeRoot)

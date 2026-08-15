@@ -54,7 +54,16 @@ public struct DefaultSyncPlanner: SyncPlanner, Sendable {
                 } else if current != skill.fingerprint, assignment.allowReplacement, authorizationMatches {
                     actions.append(.init(kind: .update, skillID: skill.id, targetID: target.id, destinationPath: destination.path, expectedSourceFingerprint: skill.fingerprint, expectedDestinationFingerprint: current, summary: "用 SkillBox 中的版本替换现有内容"))
                 } else {
-                    actions.append(blocked(assignment, path: destination.path, reason: .unmanagedConflict, summary: current == skill.fingerprint ? "这里已有相同内容，需要你允许 SkillBox 管理" : "这里已经有一个同名 Skill，需要你选择如何处理"))
+                    actions.append(.init(
+                        kind: .blocked,
+                        skillID: skill.id,
+                        targetID: target.id,
+                        destinationPath: destination.path,
+                        expectedSourceFingerprint: skill.fingerprint,
+                        expectedDestinationFingerprint: current,
+                        blockReason: .unmanagedConflict,
+                        summary: current == skill.fingerprint ? "这里已有相同内容，需要你允许 SkillBox 管理" : "这里已经有一个同名 Skill，需要你选择如何处理"
+                    ))
                 }
             } else {
                 actions.append(.init(kind: .create, skillID: skill.id, targetID: target.id, destinationPath: destination.path, expectedSourceFingerprint: skill.fingerprint, summary: "安装 \(skill.displayName)"))

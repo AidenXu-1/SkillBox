@@ -84,6 +84,72 @@ struct ScannerTests {
     }
 }
 
+@Suite("Skill usage guidance")
+struct SkillUsageGuideTests {
+    @Test("Structured SKILL instructions become a short user-facing flow")
+    func extractsStructuredWorkflow() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.remove() }
+        let skill = try fixture.makeSkill(
+            root: "root",
+            directory: "guided",
+            name: "guided",
+            body: """
+            # Guided Skill
+
+            ## 执行步骤
+
+            ### 1. 收集资料
+            先确认用户要处理的文件和目标。
+
+            ### 2. 生成结果
+            按模板生成内容，并让用户确认。
+            """
+        )
+
+        let guide = try #require(SkillUsageGuideExtractor().extract(from: skill))
+
+        #expect(guide.sourceFile == "SKILL.md")
+        #expect(guide.steps.map(\.title) == ["收集资料", "生成结果"])
+        #expect(guide.steps.first?.detail == "先确认用户要处理的文件和目标。")
+    }
+
+    @Test("README usage is used when SKILL does not contain a structured flow")
+    func fallsBackToReadme() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.remove() }
+        let skill = try fixture.makeSkill(root: "root", directory: "readme-guided", name: "readme-guided", body: "# Readme Guided")
+        try """
+        # Readme Guided
+
+        ## Quick start
+
+        1. Add the source files
+        2. Run the review
+        3. Confirm the result
+        """.write(to: skill.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+
+        let guide = try #require(SkillUsageGuideExtractor().extract(from: skill))
+
+        #expect(guide.sourceFile == "README.md")
+        #expect(guide.steps.map(\.title) == ["Add the source files", "Run the review", "Confirm the result"])
+    }
+
+    @Test("No usage card is invented when the author did not provide a recognizable flow")
+    func omitsMissingWorkflow() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.remove() }
+        let skill = try fixture.makeSkill(
+            root: "root",
+            directory: "unguided",
+            name: "unguided",
+            body: "# Unguided\n\nThis file only describes the background."
+        )
+
+        #expect(SkillUsageGuideExtractor().extract(from: skill) == nil)
+    }
+}
+
 @Suite("Risk analysis")
 struct RiskAnalyzerTests {
     @Test("Documentation commands stay informational")

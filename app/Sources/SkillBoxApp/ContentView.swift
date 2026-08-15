@@ -76,7 +76,6 @@ struct ContentView: View {
                 case .agents:
                     AgentsView(
                         model: model,
-                        showSyncPreview: $showSyncPreview,
                         addCustom: { showCustomTarget = true },
                         addSkill: { selection = .library },
                         editCustom: { editingCustomTarget = $0 }
@@ -972,7 +971,9 @@ private struct SkillDetailView: View {
     let onDeleted: () -> Void
     @State private var showRawSource = false
     @State private var showDetails = true
+    @State private var showSafetyDetails = false
     @State private var directoryEntries: [SkillDirectoryEntry] = []
+    @State private var usageGuide: SkillUsageGuide?
     @State private var isLoadingDirectory = true
     @State private var isDetailsHeaderHovered = false
     @State private var confirmation: Confirmation?
@@ -1088,6 +1089,10 @@ private struct SkillDetailView: View {
                     }
                 }
 
+                if let usageGuide {
+                    SkillUsageGuideCard(guide: usageGuide)
+                }
+
                 riskSummary
 
                 VStack(spacing: 0) {
@@ -1184,7 +1189,11 @@ private struct SkillDetailView: View {
         }
         .task(id: skill.id) {
             isLoadingDirectory = true
-            directoryEntries = await model.skillDirectory(skill)
+            showSafetyDetails = false
+            async let entries = model.skillDirectory(skill)
+            async let guide = model.skillUsageGuide(skill)
+            directoryEntries = await entries
+            usageGuide = await guide
             isLoadingDirectory = false
         }
         .confirmationDialog(
@@ -1242,26 +1251,58 @@ private struct SkillDetailView: View {
     @ViewBuilder
     private var riskSummary: some View {
         if skill.riskReport.findings.isEmpty {
-            HStack(alignment: .top, spacing: 11) {
+            HStack(spacing: 10) {
                 Image(systemName: "checkmark.shield.fill")
-                    .font(.title3)
                     .foregroundStyle(.green)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("没有发现需要阻止的内容")
-                        .font(.headline)
-                        .foregroundStyle(.green)
-                    Text("SkillBox 只查看文件，不会运行里面的内容。仍建议只使用你信任的来源。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text("文件检查未发现需要处理的内容")
+                    .font(.callout.weight(.medium))
+                Spacer()
+                Text("只读检查")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
-            .background(.green.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
-            .overlay(RoundedRectangle(cornerRadius: 13).stroke(.green.opacity(0.15)))
+            .padding(.horizontal, 13)
+            .padding(.vertical, 11)
+            .background(.secondary.opacity(0.045), in: RoundedRectangle(cornerRadius: 11))
         } else {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 0) {
+                Button {
+                    if reduceMotion { showSafetyDetails.toggle() }
+                    else {
+                        withAnimation(.easeOut(duration: 0.14)) { showSafetyDetails.toggle() }
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: riskSummaryIcon)
+                            .foregroundStyle(riskTint)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("文件检查")
+                                .font(.callout.weight(.medium))
+                            Text("\(skill.riskReport.findings.count) 项内容提示 · 安装时不会运行这些文件")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(showSafetyDetails ? "收起" : "查看")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.blue)
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(showSafetyDetails ? 90 : 0))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 11)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(showSafetyDetails ? "收起文件检查" : "查看文件检查的具体提示")
+
+                if showSafetyDetails {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .top, spacing: 10) {
                     Image(systemName: riskSummaryIcon)
                         .font(.title3)
                         .foregroundStyle(riskTint)
@@ -1273,32 +1314,35 @@ private struct SkillDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                ForEach(skill.riskReport.findings.prefix(6)) { finding in
-                    Divider().opacity(0.45)
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(riskFindingTitle(finding)).font(.callout.weight(.medium))
-                            Spacer()
-                            Text(riskLevel(finding.severity))
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(riskFindingColor(finding.severity))
+                        ForEach(skill.riskReport.findings.prefix(6)) { finding in
+                            Divider().opacity(0.45)
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(riskFindingTitle(finding)).font(.callout.weight(.medium))
+                                    Spacer()
+                                    Text(riskLevel(finding.severity))
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(riskFindingColor(finding.severity))
+                                }
+                                Text(riskFindingExplanation(finding))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if let evidence = riskEvidence(finding) {
+                                    Text(evidence)
+                                        .font(.system(.caption2, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                            }
                         }
-                        Text(riskFindingExplanation(finding))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        if let evidence = riskEvidence(finding) {
-                            Text(evidence)
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        }
+                        Text("这是文件内容提示，不代表 Skill 已经运行，也不代表它一定有问题。静态检查无法保证绝对安全。")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                     }
+                    .padding(14)
+                    .transition(.opacity)
                 }
-                Text("这是文件内容提示，不代表 Skill 已经运行，也不代表它一定有问题。静态检查无法保证绝对安全。")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
-            .padding(14)
             .background(riskTint.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
             .overlay(RoundedRectangle(cornerRadius: 13).stroke(riskTint.opacity(0.15)))
         }
@@ -1415,6 +1459,67 @@ private struct SkillDetailView: View {
         default:
             return nil
         }
+    }
+}
+
+private struct SkillUsageGuideCard: View {
+    let guide: SkillUsageGuide
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 11) {
+                Image(systemName: "list.number")
+                    .font(.title3)
+                    .foregroundStyle(.blue)
+                    .frame(width: 38, height: 38)
+                    .background(.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("这个 Skill 怎么用")
+                        .font(.headline)
+                    Text("根据 Skill 自带的说明整理")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+
+            if let summary = guide.summary, !summary.isEmpty {
+                Text(summary)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(guide.steps.enumerated()), id: \.offset) { index, step in
+                    HStack(alignment: .top, spacing: 11) {
+                        Text("\(index + 1)")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.blue)
+                            .frame(width: 24, height: 24)
+                            .background(.blue.opacity(0.10), in: Circle())
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(step.title)
+                                .font(.callout.weight(.medium))
+                            if let detail = step.detail, !detail.isEmpty {
+                                Text(detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text(guide.sourceFile == "SKILL.md" ? "来自 Skill 主说明" : "来自作者的 README 说明")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(15)
+        .background(.blue.opacity(0.045), in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(.blue.opacity(0.13)))
     }
 }
 
@@ -1538,22 +1643,17 @@ private struct ReadOnlyTextView: NSViewRepresentable {
 
 private struct AgentsView: View {
     @ObservedObject var model: AppModel
-    @Binding var showSyncPreview: Bool
     let addCustom: () -> Void
     let addSkill: () -> Void
     let editCustom: (AgentTarget) -> Void
     @State private var targetToRemove: AgentTarget?
+    @State private var assignmentProposal: AssignmentProposal?
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top) {
-                PageHeader(eyebrow: "按需调整", title: "安装到应用", subtitle: "逐个选择 Skill 要安装到哪些应用；批量安装和卸载仍在 Skill 详情中完成。")
+                PageHeader(eyebrow: "按需调整", title: "安装到应用", subtitle: "点击一个状态，就会立即让你确认这一项安装或卸载；批量操作仍在 Skill 详情中。")
                 Spacer()
                 Button("添加其他应用", action: addCustom)
-                if !model.snapshot.skills.isEmpty {
-                    Button("检查 \(model.syncPlan?.executableActions.count ?? 0) 项安装改动") { showSyncPreview = true }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(model.syncPlan?.executableActions.isEmpty != false)
-                }
             }
             .padding(28)
             if model.snapshot.skills.isEmpty {
@@ -1569,9 +1669,9 @@ private struct AgentsView: View {
                 .padding(.bottom, 72)
             } else {
                 HStack(spacing: 14) {
-                    AssignmentLegend(symbol: "plus", color: .secondary, text: "未选择")
-                    AssignmentLegend(symbol: "checkmark", color: .green, text: "已选择")
-                    AssignmentLegend(symbol: "arrow.up", color: .blue, text: "等待安装或更新")
+                    AssignmentLegend(symbol: "plus", color: .secondary, text: "点击安装")
+                    AssignmentLegend(symbol: "checkmark", color: .green, text: "已安装")
+                    AssignmentLegend(symbol: "square.stack.3d.up.fill", color: .orange, text: "已有同名，点击比较")
                     AssignmentLegend(symbol: "link", color: .purple, text: "间接可用")
                     AssignmentLegend(symbol: "nosign", color: .secondary, text: "应用不可用")
                     AssignmentLegend(symbol: "exclamationmark", color: .orange, text: "需要处理")
@@ -1593,7 +1693,21 @@ private struct AgentsView: View {
                             }
                         }
                         Divider().gridCellColumns(model.snapshot.targets.count + 1)
-                        ForEach(model.snapshot.skills) { skill in GridRow { Text(skill.displayName).font(.callout.weight(.medium)).frame(width: 210, alignment: .leading); ForEach(model.snapshot.targets) { target in AssignmentButton(model: model, skill: skill, target: target).frame(width: 84) } } }
+                        ForEach(model.snapshot.skills) { skill in
+                            GridRow {
+                                Text(skill.displayName)
+                                    .font(.callout.weight(.medium))
+                                    .frame(width: 210, alignment: .leading)
+                                ForEach(model.snapshot.targets) { target in
+                                    AssignmentButton(model: model, skill: skill, target: target) {
+                                        Task {
+                                            assignmentProposal = await model.prepareAssignmentProposal(skill: skill, target: target)
+                                        }
+                                    }
+                                    .frame(width: 84)
+                                }
+                            }
+                        }
                     }
                     .padding()
                     .background(.background, in: RoundedRectangle(cornerRadius: 12))
@@ -1618,6 +1732,9 @@ private struct AgentsView: View {
             Button("取消", role: .cancel) { targetToRemove = nil }
         } message: {
             Text("这不会删除应用文件夹。若这里仍有 Skill 由 SkillBox 管理，会为了安全阻止移除。")
+        }
+        .sheet(item: $assignmentProposal) { proposal in
+            AgentAssignmentSheet(model: model, proposal: proposal)
         }
     }
 }
@@ -1668,15 +1785,328 @@ private struct TargetColumnHeader: View {
 }
 
 private struct AssignmentButton: View {
-    @ObservedObject var model: AppModel; let skill: SkillRecord; let target: AgentTarget
-    var desired: Bool { model.snapshot.assignments.first { $0.skillID == skill.id && $0.targetID == target.id }?.isDesired == true }
-    var action: SyncAction? { model.syncPlan?.actions.first { $0.skillID == skill.id && $0.targetID == target.id } }
-    var indirect: Bool { target.kind == .kimiCode && model.scanResult?.candidates.contains(where: { $0.fingerprint == skill.fingerprint && !$0.sourceURL.path.hasPrefix(target.path + "/") }) == true }
-    var available: Bool { target.detectionStatus == .available && target.writeStatus == .writable }
-    var body: some View { Button { Task { await model.toggleAssignment(skill: skill, target: target) } } label: { Image(systemName: symbol).foregroundStyle(color).frame(width: 26, height: 26).background(color.opacity(0.12), in: Circle()) }.buttonStyle(.plain).help(help) }
-    var symbol: String { if action?.kind == .blocked { return "exclamationmark" }; if !available && !desired { return "nosign" }; if action?.kind == .create || action?.kind == .update { return "arrow.up" }; if indirect && !desired { return "link" }; return desired ? "checkmark" : "plus" }
-    var color: Color { action?.kind == .blocked ? .orange : !available ? .secondary : indirect && !desired ? .purple : desired ? .green : .secondary }
-    var help: String { if !available && !desired { return "本机没有找到可用的安装位置，点击查看说明" }; return indirect && !desired ? "Kimi Code 已能通过其他位置使用这个 Skill" : action?.summary ?? (desired ? "已选择，等待确认" : "未选择") }
+    @ObservedObject var model: AppModel
+    let skill: SkillRecord
+    let target: AgentTarget
+    let activate: () -> Void
+    @State private var isHovered = false
+
+    private var desired: Bool {
+        model.snapshot.assignments.first { $0.skillID == skill.id && $0.targetID == target.id }?.isDesired == true
+    }
+
+    private var action: SyncAction? {
+        model.syncPlan?.actions.first { $0.skillID == skill.id && $0.targetID == target.id }
+    }
+
+    private var indirect: Bool {
+        target.kind == .kimiCode && model.scanResult?.candidates.contains(where: {
+            $0.fingerprint == skill.fingerprint && !$0.sourceURL.path.hasPrefix(target.path + "/")
+        }) == true
+    }
+
+    private var available: Bool {
+        target.detectionStatus == .available && target.writeStatus == .writable
+    }
+
+    private var hasUnmanagedSameName: Bool {
+        available && model.hasUnmanagedSameName(skill: skill, target: target)
+    }
+
+    var body: some View {
+        Button(action: activate) {
+            Image(systemName: symbol)
+                .font(.callout.weight(.medium))
+                .foregroundStyle(color)
+                .frame(width: 30, height: 30)
+                .background(color.opacity(isHovered ? 0.18 : 0.10), in: Circle())
+                .overlay(Circle().stroke(color.opacity(isHovered ? 0.34 : 0), lineWidth: 1))
+                .scaleEffect(isHovered ? 1.05 : 1)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .help(help)
+        .accessibilityLabel("\(skill.displayName)，\(target.displayName)，\(help)")
+    }
+
+    private var symbol: String {
+        if action?.blockReason == .unmanagedConflict || hasUnmanagedSameName {
+            return "square.stack.3d.up.fill"
+        }
+        if action?.kind == .blocked { return "exclamationmark" }
+        if !available && !desired { return "nosign" }
+        if action?.kind == .create || action?.kind == .update { return "arrow.up" }
+        if indirect && !desired { return "link" }
+        return desired ? "checkmark" : "plus"
+    }
+
+    private var color: Color {
+        if action?.blockReason == .unmanagedConflict || hasUnmanagedSameName { return .orange }
+        if action?.kind == .blocked { return .orange }
+        if !available { return .secondary }
+        if indirect && !desired { return .purple }
+        return desired ? .green : .secondary
+    }
+
+    private var help: String {
+        if action?.blockReason == .unmanagedConflict || hasUnmanagedSameName {
+            return "这里已有同名 Skill，点击比较内容"
+        }
+        if !available && !desired {
+            return "本机没有找到可用的安装位置"
+        }
+        if indirect && !desired {
+            return "Kimi Code 已能通过其他位置使用这个 Skill"
+        }
+        if action?.kind == .blocked { return action?.summary ?? "这项需要处理" }
+        return desired ? "已安装，点击卸载" : "点击安装到 \(target.displayName)"
+    }
+}
+
+private struct AgentAssignmentSheet: View {
+    @ObservedObject var model: AppModel
+    let proposal: AssignmentProposal
+    @Environment(\.dismiss) private var dismiss
+    @State private var isConfirming = false
+
+    private var action: SyncAction? { proposal.action }
+    private var isConflict: Bool { action?.blockReason == .unmanagedConflict }
+    private var isActionable: Bool { action?.kind != .blocked || isConflict }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(alignment: .top, spacing: 13) {
+                Image(systemName: headerIcon)
+                    .font(.title2)
+                    .foregroundStyle(headerColor)
+                    .frame(width: 44, height: 44)
+                    .background(headerColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title).font(.title2.bold())
+                    Text(subtitle)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
+
+            if isConflict {
+                conflictComparison
+            } else if action?.kind == .blocked {
+                blockedExplanation
+            } else {
+                destinationSummary
+            }
+
+            Divider()
+            HStack(spacing: 10) {
+                Text(footerText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(isActionable ? "取消" : "知道了") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                if isActionable {
+                    Button(confirmTitle) {
+                        isConfirming = true
+                        Task {
+                            let succeeded = await model.confirmAssignmentProposal(proposal)
+                            isConfirming = false
+                            if succeeded { dismiss() }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(confirmTint)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isConfirming || model.isBusy)
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 570)
+    }
+
+    private var destinationSummary: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(proposal.target.displayName, systemImage: "app.dashed")
+                .font(.headline)
+            Text(action?.destinationPath ?? proposal.target.path)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            Text(destinationMessage)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(15)
+        .background(.secondary.opacity(0.065), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var conflictComparison: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(spacing: 8) {
+                Image(systemName: proposal.hasSameExistingContent ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(proposal.hasSameExistingContent ? Color.green : Color.orange)
+                Text(proposal.hasSameExistingContent ? "两份内容完全相同" : "两份内容不同")
+                    .font(.headline)
+            }
+            Text(proposal.hasSameExistingContent
+                 ? "应用里已经是同一份 Skill。确认后，SkillBox 只记住由它继续管理，不会重复复制。"
+                 : "应用里已有同名 Skill。SkillBox 不会悄悄覆盖，只有你在这里确认后才会替换。")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if proposal.hasDifferentExistingContent {
+                HStack(spacing: 10) {
+                    versionCard(title: "我的 Skills 版本", fingerprint: action?.expectedSourceFingerprint, tint: .blue)
+                    Image(systemName: "arrow.right").foregroundStyle(.tertiary)
+                    versionCard(title: "\(proposal.target.displayName) 现有版本", fingerprint: action?.expectedDestinationFingerprint, tint: .orange)
+                }
+                changeSummary
+            }
+        }
+        .padding(15)
+        .background((proposal.hasSameExistingContent ? Color.green : Color.orange).opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke((proposal.hasSameExistingContent ? Color.green : Color.orange).opacity(0.18)))
+    }
+
+    private var blockedExplanation: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(action?.summary ?? "这项目前无法处理。")
+                .font(.callout)
+            Text("现有文件不会被更改。你可以先在 Finder 中查看安装位置。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let path = action?.destinationPath {
+                Button("在 Finder 中查看") {
+                    model.reveal(URL(fileURLWithPath: path))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(15)
+        .background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func versionCard(title: String, fingerprint: String?, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.caption.weight(.semibold))
+            Text("内容编号 \(String((fingerprint ?? "未知").prefix(10)))")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(11)
+        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private var changeSummary: some View {
+        if !proposal.changes.isEmpty {
+            let added = proposal.changes.filter { $0.kind == .added }.count
+            let modified = proposal.changes.filter { $0.kind == .modified }.count
+            let removed = proposal.changes.filter { $0.kind == .removed }.count
+            VStack(alignment: .leading, spacing: 7) {
+                Text("替换后的文件变化：新增 \(added) · 修改 \(modified) · 移除 \(removed)")
+                    .font(.caption.weight(.semibold))
+                ForEach(Array(proposal.changes.prefix(5).enumerated()), id: \.offset) { _, change in
+                    HStack(spacing: 7) {
+                        Text(changeLabel(change.kind))
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(changeColor(change.kind))
+                            .frame(width: 30, alignment: .leading)
+                        Text(change.path)
+                            .font(.system(.caption2, design: .monospaced))
+                            .lineLimit(1)
+                    }
+                }
+                if proposal.changes.count > 5 {
+                    Text("还有 \(proposal.changes.count - 5) 项变化")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var title: String {
+        if proposal.hasSameExistingContent { return "已找到相同的 Skill" }
+        if proposal.hasDifferentExistingContent { return "\(proposal.target.displayName) 已有同名 Skill" }
+        return switch action?.kind {
+        case .remove: "从 \(proposal.target.displayName) 卸载？"
+        case .update: "更新 \(proposal.target.displayName) 中的 Skill？"
+        case .create: "安装到 \(proposal.target.displayName)？"
+        case .takeover: "由 SkillBox 继续管理？"
+        case .blocked: "暂时无法完成"
+        case .noChange, nil: proposal.desired ? "已经安装好了" : "确认这项调整？"
+        }
+    }
+
+    private var subtitle: String {
+        "\(proposal.skill.displayName) · \(proposal.target.displayName)"
+    }
+
+    private var destinationMessage: String {
+        return switch action?.kind {
+        case .remove: "只会移除由 SkillBox 管理且没有被外部修改的副本。"
+        case .update: "会用「我的 Skills」中的最新内容替换这份可管理副本。"
+        case .create: "将复制一份完整 Skill 到这个应用的安装位置。"
+        default: "确认后只会处理这一个应用位置。"
+        }
+    }
+
+    private var confirmTitle: String {
+        if proposal.hasSameExistingContent { return "由 SkillBox 管理" }
+        if proposal.hasDifferentExistingContent { return "用我的版本替换" }
+        return switch action?.kind {
+        case .remove: "确认卸载"
+        case .update: "确认更新"
+        case .create: "确认安装"
+        case .takeover: "开始管理"
+        default: "确认"
+        }
+    }
+
+    private var confirmTint: Color {
+        if action?.kind == .remove { return .red }
+        if proposal.hasDifferentExistingContent { return .orange }
+        return .accentColor
+    }
+
+    private var headerIcon: String {
+        if isConflict { return proposal.hasSameExistingContent ? "checkmark.circle.fill" : "square.stack.3d.up.fill" }
+        return switch action?.kind {
+        case .remove: "trash"
+        case .blocked: "exclamationmark.triangle.fill"
+        default: "square.and.arrow.down.fill"
+        }
+    }
+
+    private var headerColor: Color {
+        if proposal.hasSameExistingContent { return .green }
+        if isConflict || action?.kind == .blocked { return .orange }
+        if action?.kind == .remove { return .red }
+        return .blue
+    }
+
+    private var footerText: String {
+        isActionable
+            ? "确认后只处理这一项，写入前会再次检查并保留恢复记录。"
+            : "SkillBox 不会在你未确认时更改现有文件。"
+    }
+
+    private func changeLabel(_ kind: SkillFileChangeKind) -> String {
+        switch kind { case .added: "新增"; case .modified: "修改"; case .removed: "移除" }
+    }
+
+    private func changeColor(_ kind: SkillFileChangeKind) -> Color {
+        switch kind { case .added: .green; case .modified: .blue; case .removed: .red }
+    }
 }
 
 private struct HistoryView: View {
