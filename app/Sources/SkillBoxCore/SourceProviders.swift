@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public protocol SourceProvider: Sendable {
@@ -69,6 +70,9 @@ public enum GitHubSourceError: LocalizedError {
     case authenticationRequired
     case repositoryUnavailableOrUnauthorized
     case skillPathMissing(String)
+    case releaseAssetSelectionRequired([GitHubReleaseAsset])
+    case checksumMismatch(String)
+    case releaseAssetUnavailable
 
     public var errorDescription: String? {
         switch self {
@@ -85,6 +89,9 @@ public enum GitHubSourceError: LocalizedError {
         case .authenticationRequired: "这个仓库需要 GitHub 授权才能查看"
         case .repositoryUnavailableOrUnauthorized: "找不到这个仓库，或者 SkillBox 还没有访问权限"
         case .skillPathMissing: "GitHub 上找不到原来的 Skill 目录"
+        case .releaseAssetSelectionRequired: "这个 Release 有多个可用安装包，请选择要导入的 ZIP"
+        case let .checksumMismatch(name): "\(name) 的 SHA-256 校验未通过，已停止导入"
+        case .releaseAssetUnavailable: "选择的 Release 安装包已不可用，请重新检查"
         }
     }
 }
@@ -124,6 +131,10 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         let versionName: String
         let publishedAt: Date?
         var archiveURL: URL
+        var releaseID: Int64?
+        var releaseAssets: [GitHubReleaseAsset] = []
+        var selectedReleaseAssetID: Int64?
+        var usesSourceArchiveFallback = false
 
         switch trackingMode {
         case .latestStableRelease:
@@ -137,26 +148,48 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
             versionIdentifier = "release:\(release.id)"
             versionName = release.tagName
             publishedAt = release.publishedAt
-            archiveURL = release.zipballURL
+            let zipAssets = release.assets.filter(\.isInstallableZIP).map { asset in
+                var enriched = asset
+                if let checksum = release.assets.first(where: {
+                    $0.state == "uploaded" && $0.name.caseInsensitiveCompare(asset.name + ".sha256") == .orderedSame
+                }) {
+                    enriched.checksumAssetID = checksum.id
+                    enriched.checksumDownloadURL = checksum.browserDownloadURL
+                }
+                return enriched
+            }
+            archiveURL = zipAssets.count == 1 ? zipAssets[0].browserDownloadURL : release.zipballURL
+            releaseID = release.id
+            releaseAssets = zipAssets
+            selectedReleaseAssetID = zipAssets.count == 1 ? zipAssets[0].id : nil
+            usesSourceArchiveFallback = zipAssets.isEmpty
         case .defaultBranch:
             revision = info.defaultBranch
             versionName = info.defaultBranch
             publishedAt = nil
             archiveURL = URL(string: "https://api.github.com/repos/\(repository.owner)/\(repository.name)/zipball/\(revision.urlPathSegment)")!
             versionIdentifier = ""
+            releaseID = nil
         }
 
         let commit: CommitResponse = try await requestAPI(path: "/repos/\(repository.owner)/\(repository.name)/commits/\(revision.urlPathSegment)")
         if trackingMode == .defaultBranch {
             archiveURL = URL(string: "https://api.github.com/repos/\(repository.owner)/\(repository.name)/zipball/\(commit.sha.urlPathSegment)")!
         }
-        let resolvedIdentifier = trackingMode == .defaultBranch ? "commit:\(commit.sha)" : versionIdentifier
+        let resolvedIdentifier: String
+        if trackingMode == .defaultBranch {
+            resolvedIdentifier = "commit:\(commit.sha)"
+        } else if usesSourceArchiveFallback, let releaseID {
+            resolvedIdentifier = "release:\(releaseID):source:\(commit.sha)"
+        } else {
+            resolvedIdentifier = versionIdentifier
+        }
         let selectedTree = try await treeSHA(
             repository: repository,
             rootTreeSHA: commit.commit.tree.sha,
             skillPath: skillPath
         )
-        return GitHubRemoteVersion(
+        var remote = GitHubRemoteVersion(
             repositoryID: info.id,
             repositoryFullName: info.fullName,
             isPrivate: info.isPrivate,
@@ -168,8 +201,16 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
             commitSHA: commit.sha,
             treeSHA: selectedTree,
             publishedAt: publishedAt,
-            archiveURL: archiveURL
+            archiveURL: archiveURL,
+            releaseID: releaseID,
+            releaseAssets: releaseAssets,
+            selectedReleaseAssetID: selectedReleaseAssetID,
+            usesSourceArchiveFallback: usesSourceArchiveFallback
         )
+        if let selectedReleaseAssetID {
+            remote = try remote.selectingReleaseAsset(id: selectedReleaseAssetID)
+        }
+        return remote
     }
 
     public func preview(locator: String) async throws -> [SkillCandidate] {
@@ -207,7 +248,7 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         try run("/usr/bin/ditto", arguments: ["-x", "-k", archive.path, extracted.path])
         try validateExpandedTree(extracted)
 
-        let repositoryRoot = try firstDirectory(in: extracted)
+        let repositoryRoot = try archiveContentRoot(in: extracted)
         let selectedRoot = reference.skillPath.map { repositoryRoot.appendingPathComponent($0) } ?? repositoryRoot
         let result = await scanner.scan(roots: [selectedRoot], sourceName: { _ in "GitHub" })
         guard !result.candidates.isEmpty else { throw GitHubSourceError.noSkillsFound }
@@ -230,13 +271,25 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
 
     public func preview(locator: String, trackingMode: GitHubTrackingMode) async throws -> GitHubSnapshot {
         let reference = try GitHubReference.parse(locator)
+        let version = try await checkRemoteVersion(locator: locator, trackingMode: trackingMode)
+        return try await downloadSnapshot(version: version, skillPath: reference.skillPath, locator: locator)
+    }
+
+    public func checkRemoteVersion(
+        locator: String,
+        trackingMode: GitHubTrackingMode
+    ) async throws -> GitHubRemoteVersion {
+        let reference = try GitHubReference.parse(locator)
         let repositoryFullName = "\(reference.owner)/\(reference.repository)"
-        let version = try await checkRemoteVersion(
+        return try await checkRemoteVersion(
             repositoryFullName: repositoryFullName,
             skillPath: reference.skillPath,
             trackingMode: trackingMode
         )
-        return try await downloadSnapshot(version: version, skillPath: reference.skillPath, locator: locator)
+    }
+
+    public func skillPath(in locator: String) throws -> String? {
+        try GitHubReference.parse(locator).skillPath
     }
 
     public func authorizedRepositories() async throws -> [GitHubRepositorySummary] {
@@ -272,22 +325,68 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         skillPath: String?,
         locator: String
     ) async throws -> GitHubSnapshot {
-        var request = URLRequest(url: version.archiveURL)
+        if version.requiresReleaseAssetSelection {
+            throw GitHubSourceError.releaseAssetSelectionRequired(version.releaseAssets)
+        }
+        let request = try await downloadRequest(url: version.archiveURL)
+        let data = try await downloadData(request: request)
+        let verifiedDigest = try await verifyReleaseAsset(data, asset: version.selectedReleaseAsset)
+        var resolvedVersion = version
+        if let verifiedDigest,
+           let selectedAssetID = version.selectedReleaseAssetID,
+           let index = resolvedVersion.releaseAssets.firstIndex(where: { $0.id == selectedAssetID })
+        {
+            resolvedVersion.releaseAssets[index].digest = "sha256:\(verifiedDigest)"
+            resolvedVersion = try resolvedVersion.selectingReleaseAsset(id: selectedAssetID)
+        }
+        let candidates = try await extractCandidates(
+            data: data,
+            repositoryFullName: resolvedVersion.repositoryFullName,
+            locator: locator,
+            revision: resolvedVersion.commitSHA,
+            selectedSkillPath: skillPath,
+            archiveIsReleaseAsset: resolvedVersion.selectedReleaseAsset != nil
+        )
+        return GitHubSnapshot(version: resolvedVersion, candidates: candidates)
+    }
+
+    private func downloadRequest(url: URL) async throws -> URLRequest {
+        var request = URLRequest(url: url)
         request.setValue("SkillBox/1", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2026-03-10", forHTTPHeaderField: "X-GitHub-Api-Version")
         if let token = try await tokenProvider.accessToken() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        let data = try await downloadData(request: request)
-        let candidates = try await extractCandidates(
-            data: data,
-            repositoryFullName: version.repositoryFullName,
-            locator: locator,
-            revision: version.commitSHA,
-            selectedSkillPath: skillPath
-        )
-        return GitHubSnapshot(version: version, candidates: candidates)
+        return request
+    }
+
+    private func verifyReleaseAsset(_ data: Data, asset: GitHubReleaseAsset?) async throws -> String? {
+        guard let asset else { return nil }
+        let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        if let digest = asset.digest,
+           digest.lowercased().hasPrefix("sha256:"),
+           String(digest.dropFirst("sha256:".count)).lowercased() != actual
+        {
+            throw GitHubSourceError.checksumMismatch(asset.name)
+        }
+        guard let checksumURL = asset.checksumDownloadURL else { return actual }
+        let checksumData = try await downloadData(request: downloadRequest(url: checksumURL))
+        guard let checksumText = String(data: checksumData, encoding: .utf8),
+              let expected = firstSHA256(in: checksumText),
+              expected == actual
+        else {
+            throw GitHubSourceError.checksumMismatch(asset.name)
+        }
+        return actual
+    }
+
+    private func firstSHA256(in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: #"(?i)\b[0-9a-f]{64}\b"#),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range, in: text)
+        else { return nil }
+        return text[range].lowercased()
     }
 
     private func downloadData(request: URLRequest) async throws -> Data {
@@ -313,7 +412,8 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         repositoryFullName: String,
         locator: String,
         revision: String,
-        selectedSkillPath: String?
+        selectedSkillPath: String?,
+        archiveIsReleaseAsset: Bool = false
     ) async throws -> [SkillCandidate] {
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("SkillBoxGitHub-\(UUID().uuidString)")
         let archive = temporary.appendingPathComponent("source.zip")
@@ -335,20 +435,25 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         guard try archiveExpandedSize(archive) <= limits.maximumExpandedBytes else { throw GitHubSourceError.archiveTooLarge }
         try run("/usr/bin/ditto", arguments: ["-x", "-k", archive.path, extracted.path])
         try validateExpandedTree(extracted)
-        let repositoryRoot = try firstDirectory(in: extracted)
-        let selectedRoot = selectedSkillPath.map { repositoryRoot.appendingPathComponent($0) } ?? repositoryRoot
+        let repositoryRoot = try archiveContentRoot(in: extracted)
+        let selectedRoot = archiveIsReleaseAsset
+            ? repositoryRoot
+            : selectedSkillPath.map { repositoryRoot.appendingPathComponent($0) } ?? repositoryRoot
         let result = await scanner.scan(roots: [selectedRoot], sourceName: { _ in "GitHub" })
         guard !result.candidates.isEmpty else { throw GitHubSourceError.noSkillsFound }
         let candidates = result.candidates.map { candidate in
             var updated = candidate
             let relative = String(candidate.sourceURL.standardizedFileURL.path.dropFirst(repositoryRoot.standardizedFileURL.path.count + 1))
+            let sourceSkillPath = archiveIsReleaseAsset && selectedSkillPath?.isEmpty == false
+                ? selectedSkillPath
+                : relative
             updated.source = .init(
                 kind: .github,
                 displayName: repositoryFullName,
                 locator: locator,
                 repository: repositoryFullName,
                 revision: revision,
-                skillPath: relative
+                skillPath: sourceSkillPath
             )
             return updated
         }
@@ -426,6 +531,13 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         return directory
     }
 
+    private func archiveContentRoot(in extracted: URL) throws -> URL {
+        if FileManager.default.fileExists(atPath: extracted.appendingPathComponent("SKILL.md").path) {
+            return extracted
+        }
+        return try firstDirectory(in: extracted)
+    }
+
     @discardableResult
     private func run(_ executable: String, arguments: [String]) throws -> String {
         let process = Process()
@@ -494,6 +606,7 @@ private struct ReleaseResponse: Decodable {
     var name: String?
     var publishedAt: Date?
     var zipballURL: URL
+    var assets: [GitHubReleaseAsset]
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -501,6 +614,7 @@ private struct ReleaseResponse: Decodable {
         case name
         case publishedAt = "published_at"
         case zipballURL = "zipball_url"
+        case assets
     }
 }
 

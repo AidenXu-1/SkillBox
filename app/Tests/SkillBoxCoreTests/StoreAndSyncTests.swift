@@ -467,6 +467,10 @@ struct SyncTests {
             currentVersionIdentifier: "release-1",
             currentVersionName: "v1",
             currentTreeSHA: "tree-1",
+            currentReleaseID: 41,
+            currentAssetID: 101,
+            currentAssetName: "demo-pure.zip",
+            currentAssetDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             status: .current
         )
         try await store.updateSourceState(previousState)
@@ -480,6 +484,10 @@ struct SyncTests {
             currentVersionIdentifier: "release-2",
             currentVersionName: "v2",
             currentTreeSHA: "tree-2",
+            currentReleaseID: 42,
+            currentAssetID: 102,
+            currentAssetName: "demo-pure.zip",
+            currentAssetDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             status: .current
         )
 
@@ -489,6 +497,10 @@ struct SyncTests {
         let restoredState = try #require(await store.currentSnapshot().sourceStates.first)
         #expect(restoredState.currentVersionIdentifier == "release-1")
         #expect(restoredState.currentTreeSHA == "tree-1")
+        #expect(restoredState.currentReleaseID == 41)
+        #expect(restoredState.currentAssetID == 101)
+        #expect(restoredState.currentAssetName == "demo-pure.zip")
+        #expect(restoredState.currentAssetDigest == "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
     }
 
     @Test("Updating a Skill never turns a pending deselection into an uninstall")

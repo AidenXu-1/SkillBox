@@ -10,7 +10,9 @@ Skill 会持续迭代，中央原件和多个 Agent 副本需要可预测地跟�
 ## 决定
 
 - GitHub 来源只支持“最新正式 Release”和“默认分支”两种跟踪方式。
-- 检查版本只读取仓库、Commit 和目录 SHA；用户确认后才下载对应 Tag 或 Commit 的完整源码快照。
+- 检查版本只读取仓库、Commit、目录 SHA 与 Release Assets 元数据；用户确认后才下载内容。
+- Release 优先使用作者上传的 ZIP 安装包。一个 ZIP 直接使用，多个 ZIP 由用户选择，没有 ZIP 时明确警告后才回退到 Tag 对应的完整源码。
+- 同名 `.sha256` 作为可选旁车校验；下载后保存 Release ID、Asset ID 与实际 SHA-256，用于识别同一 Release 内的资源替换。
 - 多 Skill 仓库以准确子目录的 Tree SHA 判断变化，仓库其他文件不制造该 Skill 的更新提醒。
 - 不自动下载、更新或安装；不增加固定版本模式，提供“忽略这个版本”和“停止检查更新”。
 - 私人仓库使用 GitHub App Device Flow 用户令牌。GitHub App 只请求 Contents 读权限，用户在 GitHub 选择可访问的仓库。
@@ -21,6 +23,7 @@ Skill 会持续迭代，中央原件和多个 Agent 副本需要可预测地跟�
 ## 后果
 
 - Release 成为默认的稳定发布源，高频迭代或无 Release 项目可选择默认分支。
+- 开发仓库可以继续保留 CI、测试和发布脚本，只要 Release 附带纯净 ZIP，这些文件就不会进入 SkillBox 的中央原件。
 - 既有 GitHub 来源迁移为默认分支跟踪，首次只显示“需要核对一次”，不自动下载。
 - 授权失效时保留中央原件和已安装副本，只暂停远程检查。
 - 真实私人仓库验收依赖已注册的 GitHub App Client ID 与安装地址；没有这两项时只能完成模拟授权验证。

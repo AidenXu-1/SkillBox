@@ -29,6 +29,19 @@ struct AssignmentProposal: Identifiable {
     }
 }
 
+enum GitHubReleasePackagePurpose {
+    case importSkill
+    case updateSkill(UUID)
+}
+
+struct GitHubReleasePackageChoice: Identifiable {
+    let id = UUID()
+    let version: GitHubRemoteVersion
+    let locator: String
+    let skillPath: String?
+    let purpose: GitHubReleasePackagePurpose
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var snapshot = LibrarySnapshot()
@@ -57,6 +70,7 @@ final class AppModel: ObservableObject {
     @Published var operationProgress: SkillBoxOperationProgress?
     @Published private(set) var lastDeletedSkill: DeletedSkillBackup?
     @Published var canRetryGitHubWithDefaultBranch = false
+    @Published var pendingReleasePackageChoice: GitHubReleasePackageChoice?
 
     let libraryRoot: URL
     private let store: LibraryStore
@@ -197,11 +211,16 @@ final class AppModel: ObservableObject {
             operationProgress = nil
         }
         do {
-            let result = try await githubProvider.preview(locator: githubURL, trackingMode: githubTrackingMode)
+            let remote = try await githubProvider.checkRemoteVersion(locator: githubURL, trackingMode: githubTrackingMode)
+            let skillPath = try githubProvider.skillPath(in: githubURL)
             canRetryGitHubWithDefaultBranch = false
-            pendingGitHubVersion = result.version
-            pendingCandidates = result.candidates
-            selectedCandidateIDs = Set(result.candidates.filter { !$0.riskReport.isBlocked }.map(\.id))
+            if pauseForReleasePackageChoice(
+                remote,
+                locator: githubURL,
+                skillPath: skillPath,
+                purpose: .importSkill
+            ) { return }
+            try await prepareGitHubImport(remote: remote, locator: githubURL, skillPath: skillPath)
         } catch GitHubSourceError.noStableRelease {
             canRetryGitHubWithDefaultBranch = true
             errorMessage = GitHubSourceError.noStableRelease.localizedDescription
@@ -255,23 +274,13 @@ final class AppModel: ObservableObject {
                 skillPath: state.skillPath,
                 trackingMode: state.trackingMode
             )
-            let result = try await githubProvider.downloadSnapshot(version: remote, skillPath: state.skillPath, locator: skill.source.locator)
-            let matching = result.candidates.filter { candidate in
-                if let path = state.skillPath { return candidate.source.skillPath == path }
-                return candidate.canonicalName == skill.canonicalName
-            }
-            guard let candidate = matching.first else { throw GitHubSourceError.noSkillsFound }
-            let current = await store.contentURL(for: skill)
-            pendingUpdateChanges = try SkillDiffAnalyzer().compare(before: current, after: candidate.sourceURL)
-            async let beforeMarkdown = readMarkdown(at: current.appendingPathComponent("SKILL.md"))
-            async let afterMarkdown = readMarkdown(at: candidate.sourceURL.appendingPathComponent("SKILL.md"))
-            pendingUpdateBeforeMarkdown = await beforeMarkdown
-            pendingUpdateAfterMarkdown = await afterMarkdown
-            pendingGitHubVersion = remote
-            activeConflict = nil
-            updatingSkillID = skill.id
-            pendingCandidates = [candidate]
-            selectedCandidateIDs = candidate.riskReport.isBlocked ? [] : [candidate.id]
+            if pauseForReleasePackageChoice(
+                remote,
+                locator: skill.source.locator,
+                skillPath: state.skillPath,
+                purpose: .updateSkill(skill.id)
+            ) { return }
+            try await prepareGitHubUpdate(remote: remote, skill: skill, skillPath: state.skillPath)
         } catch {
             if isCancellation(error) { statusMessage = "已取消更新检查" }
             else { present(error) }
@@ -291,6 +300,97 @@ final class AppModel: ObservableObject {
         statusMessage = "已取消当前操作"
     }
 
+    func continueReleasePackageChoice(assetID: Int64?) {
+        guard let choice = pendingReleasePackageChoice else { return }
+        pendingReleasePackageChoice = nil
+        remoteOperationTask?.cancel()
+        remoteOperationTask = Task { await downloadReleasePackageChoice(choice, assetID: assetID) }
+    }
+
+    func cancelReleasePackageChoice() {
+        pendingReleasePackageChoice = nil
+        statusMessage = "已取消 GitHub 下载"
+    }
+
+    private func pauseForReleasePackageChoice(
+        _ remote: GitHubRemoteVersion,
+        locator: String,
+        skillPath: String?,
+        purpose: GitHubReleasePackagePurpose
+    ) -> Bool {
+        guard remote.requiresReleaseAssetSelection || remote.usesSourceArchiveFallback else { return false }
+        pendingReleasePackageChoice = .init(
+            version: remote,
+            locator: locator,
+            skillPath: skillPath,
+            purpose: purpose
+        )
+        statusMessage = remote.requiresReleaseAssetSelection ? "请选择要下载的 Release 安装包" : "这个 Release 没有独立安装包"
+        return true
+    }
+
+    private func downloadReleasePackageChoice(_ choice: GitHubReleasePackageChoice, assetID: Int64?) async {
+        isBusy = true
+        operationProgress = .init(title: "正在获取完整版本", detail: "下载文件、校验完整性并进行使用前检查…", canCancel: true)
+        defer {
+            isBusy = false
+            operationProgress = nil
+        }
+        do {
+            let remote = try assetID.map { try choice.version.selectingReleaseAsset(id: $0) } ?? choice.version
+            switch choice.purpose {
+            case .importSkill:
+                try await prepareGitHubImport(remote: remote, locator: choice.locator, skillPath: choice.skillPath)
+            case let .updateSkill(skillID):
+                guard let skill = snapshot.skills.first(where: { $0.id == skillID }) else { return }
+                try await prepareGitHubUpdate(remote: remote, skill: skill, skillPath: choice.skillPath)
+            }
+        } catch {
+            if isCancellation(error) { statusMessage = "已取消 GitHub 下载" }
+            else { present(error) }
+        }
+    }
+
+    private func prepareGitHubImport(
+        remote: GitHubRemoteVersion,
+        locator: String,
+        skillPath: String?
+    ) async throws {
+        let result = try await githubProvider.downloadSnapshot(version: remote, skillPath: skillPath, locator: locator)
+        pendingGitHubVersion = result.version
+        pendingCandidates = result.candidates
+        selectedCandidateIDs = Set(result.candidates.filter { !$0.riskReport.isBlocked }.map(\.id))
+    }
+
+    private func prepareGitHubUpdate(
+        remote: GitHubRemoteVersion,
+        skill: SkillRecord,
+        skillPath: String?
+    ) async throws {
+        let result = try await githubProvider.downloadSnapshot(
+            version: remote,
+            skillPath: skillPath,
+            locator: skill.source.locator
+        )
+        let matching = result.candidates.filter { candidate in
+            if remote.selectedReleaseAsset != nil { return candidate.canonicalName == skill.canonicalName }
+            if let skillPath { return candidate.source.skillPath == skillPath }
+            return candidate.canonicalName == skill.canonicalName
+        }
+        guard let candidate = matching.first else { throw GitHubSourceError.noSkillsFound }
+        let current = await store.contentURL(for: skill)
+        pendingUpdateChanges = try SkillDiffAnalyzer().compare(before: current, after: candidate.sourceURL)
+        async let beforeMarkdown = readMarkdown(at: current.appendingPathComponent("SKILL.md"))
+        async let afterMarkdown = readMarkdown(at: candidate.sourceURL.appendingPathComponent("SKILL.md"))
+        pendingUpdateBeforeMarkdown = await beforeMarkdown
+        pendingUpdateAfterMarkdown = await afterMarkdown
+        pendingGitHubVersion = result.version
+        activeConflict = nil
+        updatingSkillID = skill.id
+        pendingCandidates = [candidate]
+        selectedCandidateIDs = candidate.riskReport.isBlocked ? [] : [candidate.id]
+    }
+
     func importSelectedCandidates() async {
         isBusy = true
         defer { isBusy = false }
@@ -300,12 +400,7 @@ final class AppModel: ObservableObject {
             for candidate in selected {
                 let record = try await store.importCandidate(candidate)
                 if candidate.source.kind == .github, let remote = pendingGitHubVersion {
-                    let exact = try await githubProvider.checkRemoteVersion(
-                        repositoryFullName: remote.repositoryFullName,
-                        skillPath: candidate.source.skillPath,
-                        trackingMode: remote.trackingMode
-                    )
-                    try await store.updateSourceState(sourceState(skillID: record.id, skillPath: candidate.source.skillPath, remote: exact))
+                    try await store.updateSourceState(sourceState(skillID: record.id, skillPath: candidate.source.skillPath, remote: remote))
                 }
             }
             cleanupGitHubCandidates(pendingCandidates)
@@ -368,6 +463,10 @@ final class AppModel: ObservableObject {
         state.availableVersionName = nil
         state.availableCommitSHA = nil
         state.availableTreeSHA = nil
+        state.availableReleaseID = nil
+        state.availableAssetID = nil
+        state.availableAssetName = nil
+        state.availableAssetDigest = nil
         state.ignoredVersionIdentifier = nil
         state.status = .needsInitialCheck
         do {
@@ -1012,6 +1111,10 @@ final class AppModel: ObservableObject {
             currentVersionName: remote.versionName,
             currentCommitSHA: remote.commitSHA,
             currentTreeSHA: remote.treeSHA,
+            currentReleaseID: remote.releaseID,
+            currentAssetID: remote.selectedReleaseAsset?.id,
+            currentAssetName: remote.selectedReleaseAsset?.name,
+            currentAssetDigest: remote.selectedReleaseAsset?.digest,
             lastCheckedAt: Date(),
             checkingEnabled: true,
             status: .current

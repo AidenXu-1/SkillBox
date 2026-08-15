@@ -7,6 +7,13 @@
 
 ## 2026-08-15
 
+- ✅ GitHub Release 导入改为优先使用作者上传的 ZIP 安装包：单一 ZIP 直接继续，多个 ZIP 弹窗让用户选择，没有 ZIP 时明确提示将导入测试、CI 和开发文件。
+- ✅ 同名 `.sha256` 会在下载后自动校验，校验错误直接阻止导入；来源记录新增 Release ID、Asset ID、Asset 名称与已验证 SHA-256，同一 Release 中替换资源也能识别为更新。
+- ✅ Agent Team 纯净包回归样本只导入 5 个运行文件，不包含 `.github/workflows/ci.yml`；未修改 Agent Team 运行文件或删除仓库 CI。
+- ✅ GitHub Actions 工作流中纯粹的 `${{ github.token }}` / `${{ secrets.GITHUB_TOKEN }}` 改为蓝色“仅说明”；本地脚本读取令牌、通过变量外传或直接外传令牌仍保持高风险。
+- ✅ 新增 v12 多 ZIP 选择与源码回退可视化预览，正式 SwiftUI 已接入同一流程；66 项自动化测试、release 构建、打包、`Info.plist` 与 Hardened Runtime ad-hoc 签名校验通过。
+- 📌 本轮未启动真实 SkillBox 或写入 Agent 目录；新 Release 弹窗的真实鼠标、键盘、VoiceOver 与减少动态效果仍保留为独立验收门。
+
 - ✅ 「这个 Skill 怎么用」重做为普通用户指南：先说能帮什么，有资料时再展示适用时机、不适用情况、可一键复制给 AI 的示例话术，以及最多 3 步的可选体验流程。
 - ✅ 使用指南改为渐进降级：优先读取 `agents/openai.yaml` 的用户展示信息，再读作者明确写在 `README.md` / `SKILL.md` 的用户章节，最后只保留 `description` 中可确定的用途。不完整时自动省略缺失项，不使用 AI 补写。
 - ✅ 修复原有误判：`SKILL.md` 中的「执行步骤」、安全规则和 Agent 内部指令不再显示为用户流程；只有作者明确写了「使用时会发生什么」才展示对应步骤。

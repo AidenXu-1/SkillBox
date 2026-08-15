@@ -101,6 +101,9 @@ struct ContentView: View {
         .frame(minWidth: 1100, minHeight: 720)
         .sheet(isPresented: $model.showOnboarding) { OnboardingView(model: model) }
         .sheet(isPresented: $showGitHub) { GitHubImportView(model: model, isPresented: $showGitHub) }
+        .sheet(item: $model.pendingReleasePackageChoice) { choice in
+            GitHubReleasePackageChoiceView(model: model, choice: choice)
+        }
         .sheet(isPresented: $showImportPreview) { ImportPreviewView(model: model, isPresented: $showImportPreview) }
         .sheet(isPresented: $showUpdatePreview) { UpdatePreviewView(model: model, isPresented: $showUpdatePreview) }
         .sheet(isPresented: $showSyncPreview) { SyncPreviewView(model: model, isPresented: $showSyncPreview) }
@@ -1425,6 +1428,7 @@ private struct SkillDetailView: View {
         case .network where finding.severity == .info: "说明文档里提到了网址或下载命令"
         case .network: "脚本可能访问网络或下载文件"
         case .privilege: "脚本可能请求更高的系统权限"
+        case .credentialAccess where finding.severity == .info: finding.title
         case .credentialAccess: "脚本可能读取账号信息或密钥"
         case .dynamicExecution: "脚本可能启动其他程序或命令"
         default: finding.title
@@ -1433,6 +1437,12 @@ private struct SkillDetailView: View {
 
     private func riskFindingExplanation(_ finding: RiskFinding) -> String {
         let location = "文件：\(finding.relativePath)"
+        if finding.category == .credentialAccess,
+           finding.severity == .info,
+           finding.title == "GitHub 自动化使用临时仓库令牌"
+        {
+            return "\(finding.evidence)。\(location)"
+        }
         if finding.severity == .info {
             return "这只是说明文字，SkillBox 不会执行。\(location)"
         }
@@ -2575,6 +2585,142 @@ private struct GitHubImportView: View {
         case .defaultBranch:
             "适合持续开发的 Skill。每次检查都会锁定当时的完整 Commit，README 或其他 Skill 的变化不会误报。"
         }
+    }
+}
+
+private struct GitHubReleasePackageChoiceView: View {
+    @ObservedObject var model: AppModel
+    let choice: GitHubReleasePackageChoice
+    @State private var selectedAssetID: Int64?
+    @State private var hoveredAssetID: Int64?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "arrow.down")
+                    .font(.headline)
+                    .foregroundStyle(.blue)
+                    .frame(width: 42, height: 42)
+                    .background(.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(choice.version.usesSourceArchiveFallback ? "这个 Release 没有独立安装包" : (isUpdate ? "选择用于更新的安装包" : "选择要添加的安装包"))
+                        .font(.title3.bold())
+                    Text(choice.version.usesSourceArchiveFallback
+                         ? "SkillBox 找不到可直接安装的 ZIP。"
+                         : "这个 Release 提供了多个 ZIP。请选择一个，SkillBox 不会自行猜测。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if choice.version.usesSourceArchiveFallback {
+                fallbackNotice
+            } else {
+                VStack(spacing: 9) {
+                    ForEach(choice.version.releaseAssets) { asset in
+                        releaseAssetRow(asset)
+                    }
+                }
+            }
+
+            Text(footerText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button("取消") { model.cancelReleasePackageChoice() }
+                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                Button(primaryButtonTitle) {
+                    model.continueReleasePackageChoice(assetID: selectedAssetID)
+                }
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                .disabled(!choice.version.usesSourceArchiveFallback && selectedAssetID == nil)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(26)
+        .frame(width: 610)
+    }
+
+    private var fallbackNotice: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark")
+                .font(.callout.bold())
+                .foregroundStyle(.orange)
+                .frame(width: 34, height: 34)
+                .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 5) {
+                Text("将导入完整源码").font(.headline)
+                Text(choice.version.sourceArchiveFallbackNotice ?? "")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Text("SkillBox 会继续做大小、文件数量和安全检查，并在添加前让你预览内容。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(15)
+        .background(.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(.orange.opacity(0.35)))
+    }
+
+    private func releaseAssetRow(_ asset: GitHubReleaseAsset) -> some View {
+        Button {
+            selectedAssetID = asset.id
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: selectedAssetID == asset.id ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(selectedAssetID == asset.id ? .blue : .secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(asset.name).font(.callout.weight(.semibold)).foregroundStyle(.primary)
+                    Text(ByteCountFormatter.string(fromByteCount: Int64(asset.size), countStyle: .file))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if asset.checksumDownloadURL != nil || asset.digest?.lowercased().hasPrefix("sha256:") == true {
+                    Text("带完整性校验")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.green)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(.green.opacity(0.09), in: Capsule())
+                }
+            }
+            .padding(14)
+            .contentShape(Rectangle())
+            .background(
+                selectedAssetID == asset.id ? .blue.opacity(0.07) : (hoveredAssetID == asset.id ? Color.primary.opacity(0.035) : .clear),
+                in: RoundedRectangle(cornerRadius: 12)
+            )
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(selectedAssetID == asset.id ? .blue : Color.secondary.opacity(0.2), lineWidth: selectedAssetID == asset.id ? 2 : 1))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in hoveredAssetID = hovering ? asset.id : nil }
+        .accessibilityLabel("选择 \(asset.name)")
+        .accessibilityValue(selectedAssetID == asset.id ? "已选择" : "未选择")
+    }
+
+    private var footerText: String {
+        if choice.version.usesSourceArchiveFallback {
+            return "添加和安装时不会运行任何文件。如果你期待的是精简版，可以取消并联系仓库作者上传安装包。"
+        }
+        return "下一步会检查 ZIP 的内容，并在添加前让你预览 Skill。不会运行里面的文件。"
+    }
+
+    private var isUpdate: Bool {
+        if case .updateSkill = choice.purpose { return true }
+        return false
+    }
+
+    private var primaryButtonTitle: String {
+        if choice.version.usesSourceArchiveFallback {
+            return isUpdate ? "用完整源码更新" : "导入完整源码"
+        }
+        return isUpdate ? "下载并查看更新" : "下载并预览"
     }
 }
 

@@ -5,9 +5,9 @@
 
 ## 当前状态快照
 
-- **阶段**：GitHub 版本跟踪核心与正式 SwiftUI 已接入，真实外部验收前
-- **最近在做**：GitHub 来源卡片、Release/默认分支导入、差异对照、授权仓库设置与联合更新界面
-- **下一步**：配置 GitHub App 的公开 Client ID/安装地址，完成公开+私人仓库真实验收；Computer Use 通道恢复后补鼠标、键盘、VoiceOver 和减少动态效果验收
+- **阶段**：GitHub Release 纯净 ZIP 导入、完整性校验和风险上下文已接入，真实外部验收前
+- **最近在做**：Release Asset 选择、无 ZIP 源码回退、SHA-256 校验、Asset 版本记录和 GitHub Actions 令牌风险分级
+- **下一步**：用一个真实公开 Release 完成 ZIP/多 ZIP/无 ZIP 验收；Computer Use 通道恢复后补鼠标、键盘、VoiceOver 和减少动态效果验收
 
 ## 怎么把环境跑起来
 
@@ -33,7 +33,8 @@ swift test
 
 - 扫描阶段必须只读，不可顺手创建不存在的 Agent 目录。
 - GitHub 版本检查只请求元数据，用户确认后才能下载完整快照；候选文件位于临时目录，只能在导入/更新完成或取消后清理。
-- Release 和 `main` 相互独立；Release 模式用 Tag 对应的源码 ZIP，不读取用户上传的任意附件。
+- Release 和 `main` 相互独立；Release 模式优先使用作者上传的 ZIP 安装包，多个 ZIP 必须由用户选择，没有 ZIP 时明示确认后才使用 Tag 源码。
+- Release ZIP 的同名 `.sha256` 必须校验；版本记录要保留 Release ID、Asset ID 和实际 SHA-256，不能只用仓库 Tree SHA 判断 Release 资源是否变化。
 - GitHub Token 只能保存在 macOS 钥匙串，不要加入持久化 JSON、诊断输出或操作记录。
 - 未托管同名目录与外部改动必须阻塞；仅有用户明确授权才能接管或替换。
 - 撤销时也要重新校验当前指纹，不得覆盖事务后的外部修改。
@@ -50,6 +51,7 @@ swift test
 - 设计参考:`design/`
 - GitHub 原型：`design/ui/skillbox-github-v7.html`
 - GitHub 设计说明：`design/ui/skillbox-github-v7.md`
+- Release 安装包选择说明：`design/ui/skillbox-release-package-v12.md`
 - GitHub 来源决策：`docs/decisions/0004-github-source-tracking-and-auth.md`
 
 ---

@@ -72,10 +72,18 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
     public var currentVersionName: String?
     public var currentCommitSHA: String?
     public var currentTreeSHA: String?
+    public var currentReleaseID: Int64?
+    public var currentAssetID: Int64?
+    public var currentAssetName: String?
+    public var currentAssetDigest: String?
     public var availableVersionIdentifier: String?
     public var availableVersionName: String?
     public var availableCommitSHA: String?
     public var availableTreeSHA: String?
+    public var availableReleaseID: Int64?
+    public var availableAssetID: Int64?
+    public var availableAssetName: String?
+    public var availableAssetDigest: String?
     public var ignoredVersionIdentifier: String?
     public var lastCheckedAt: Date?
     public var checkingEnabled: Bool
@@ -92,10 +100,18 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
         currentVersionName: String? = nil,
         currentCommitSHA: String? = nil,
         currentTreeSHA: String? = nil,
+        currentReleaseID: Int64? = nil,
+        currentAssetID: Int64? = nil,
+        currentAssetName: String? = nil,
+        currentAssetDigest: String? = nil,
         availableVersionIdentifier: String? = nil,
         availableVersionName: String? = nil,
         availableCommitSHA: String? = nil,
         availableTreeSHA: String? = nil,
+        availableReleaseID: Int64? = nil,
+        availableAssetID: Int64? = nil,
+        availableAssetName: String? = nil,
+        availableAssetDigest: String? = nil,
         ignoredVersionIdentifier: String? = nil,
         lastCheckedAt: Date? = nil,
         checkingEnabled: Bool = true,
@@ -111,14 +127,67 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
         self.currentVersionName = currentVersionName
         self.currentCommitSHA = currentCommitSHA
         self.currentTreeSHA = currentTreeSHA
+        self.currentReleaseID = currentReleaseID
+        self.currentAssetID = currentAssetID
+        self.currentAssetName = currentAssetName
+        self.currentAssetDigest = currentAssetDigest
         self.availableVersionIdentifier = availableVersionIdentifier
         self.availableVersionName = availableVersionName
         self.availableCommitSHA = availableCommitSHA
         self.availableTreeSHA = availableTreeSHA
+        self.availableReleaseID = availableReleaseID
+        self.availableAssetID = availableAssetID
+        self.availableAssetName = availableAssetName
+        self.availableAssetDigest = availableAssetDigest
         self.ignoredVersionIdentifier = ignoredVersionIdentifier
         self.lastCheckedAt = lastCheckedAt
         self.checkingEnabled = checkingEnabled
         self.status = status
+    }
+}
+
+public struct GitHubReleaseAsset: Codable, Hashable, Identifiable, Sendable {
+    public var id: Int64
+    public var name: String
+    public var state: String
+    public var contentType: String
+    public var size: Int
+    public var digest: String?
+    public var browserDownloadURL: URL
+    public var checksumAssetID: Int64?
+    public var checksumDownloadURL: URL?
+
+    public init(
+        id: Int64,
+        name: String,
+        state: String = "uploaded",
+        contentType: String = "application/zip",
+        size: Int,
+        digest: String? = nil,
+        browserDownloadURL: URL,
+        checksumAssetID: Int64? = nil,
+        checksumDownloadURL: URL? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.state = state
+        self.contentType = contentType
+        self.size = size
+        self.digest = digest
+        self.browserDownloadURL = browserDownloadURL
+        self.checksumAssetID = checksumAssetID
+        self.checksumDownloadURL = checksumDownloadURL
+    }
+
+    public var isInstallableZIP: Bool {
+        state == "uploaded" && name.lowercased().hasSuffix(".zip")
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, state, size, digest
+        case contentType = "content_type"
+        case browserDownloadURL = "browser_download_url"
+        case checksumAssetID, checksumDownloadURL
     }
 }
 
@@ -135,6 +204,10 @@ public struct GitHubRemoteVersion: Codable, Hashable, Sendable {
     public var treeSHA: String
     public var publishedAt: Date?
     public var archiveURL: URL
+    public var releaseID: Int64?
+    public var releaseAssets: [GitHubReleaseAsset]
+    public var selectedReleaseAssetID: Int64?
+    public var usesSourceArchiveFallback: Bool
 
     public init(
         repositoryID: Int64,
@@ -148,7 +221,11 @@ public struct GitHubRemoteVersion: Codable, Hashable, Sendable {
         commitSHA: String,
         treeSHA: String,
         publishedAt: Date? = nil,
-        archiveURL: URL
+        archiveURL: URL,
+        releaseID: Int64? = nil,
+        releaseAssets: [GitHubReleaseAsset] = [],
+        selectedReleaseAssetID: Int64? = nil,
+        usesSourceArchiveFallback: Bool = false
     ) {
         self.repositoryID = repositoryID
         self.repositoryFullName = repositoryFullName
@@ -162,6 +239,37 @@ public struct GitHubRemoteVersion: Codable, Hashable, Sendable {
         self.treeSHA = treeSHA
         self.publishedAt = publishedAt
         self.archiveURL = archiveURL
+        self.releaseID = releaseID
+        self.releaseAssets = releaseAssets
+        self.selectedReleaseAssetID = selectedReleaseAssetID
+        self.usesSourceArchiveFallback = usesSourceArchiveFallback
+    }
+
+    public var selectedReleaseAsset: GitHubReleaseAsset? {
+        guard let selectedReleaseAssetID else { return nil }
+        return releaseAssets.first { $0.id == selectedReleaseAssetID }
+    }
+
+    public var requiresReleaseAssetSelection: Bool {
+        trackingMode == .latestStableRelease && releaseAssets.count > 1 && selectedReleaseAssetID == nil
+    }
+
+    public var sourceArchiveFallbackNotice: String? {
+        guard usesSourceArchiveFallback else { return nil }
+        return "该 Release 没有独立安装包，本次将导入完整源码，可能包含测试、CI 和开发文件。"
+    }
+
+    public func selectingReleaseAsset(id: Int64) throws -> GitHubRemoteVersion {
+        guard let releaseID,
+              let asset = releaseAssets.first(where: { $0.id == id })
+        else { throw GitHubSourceError.releaseAssetUnavailable }
+        var selected = self
+        selected.selectedReleaseAssetID = id
+        selected.archiveURL = asset.browserDownloadURL
+        selected.usesSourceArchiveFallback = false
+        let digestIdentity = asset.digest?.lowercased() ?? "digest:unavailable"
+        selected.versionIdentifier = "release:\(releaseID):asset:\(asset.id):\(digestIdentity)"
+        return selected
     }
 }
 

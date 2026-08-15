@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SkillBox Release 安装包选择 v12</title>
+  <style>
+    *{box-sizing:border-box} body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif;color:#202124;background:#f4f5f7}
+    .window{width:1200px;height:800px;margin:0 auto;background:#fff;border-radius:24px;overflow:hidden;position:relative;box-shadow:0 18px 60px #17203322}
+    .sidebar{position:absolute;inset:0 auto 0 0;width:218px;background:#f7f7f8;border-right:1px solid #e8e8ea;padding:28px 18px}.traffic{display:flex;gap:10px;margin-bottom:34px}.dot{width:13px;height:13px;border-radius:50%}.r{background:#ff5f57}.y{background:#ffbd2e}.g{background:#28c840}.nav{padding:10px 13px;margin:5px 0;border-radius:9px;font-weight:600}.nav.on{background:#087af5;color:white}
+    .main{margin-left:218px;padding:38px 42px}.eyebrow{color:#087af5;font-size:13px;font-weight:700}.title{font-size:31px;font-weight:750;margin:10px 0 4px;letter-spacing:-.02em}.sub{color:#777;font-size:15px}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:30px}.card{height:104px;border:1px solid #ececef;border-radius:15px;padding:18px;background:#fff}.card b{display:block;font-size:18px;margin-top:12px}
+    .scrim{position:absolute;inset:0;background:#1118273f;backdrop-filter:blur(2px);display:grid;place-items:center}.sheet{width:610px;background:#fff;border:1px solid #ffffffaa;border-radius:20px;box-shadow:0 24px 70px #10182842;padding:25px}.header{display:flex;gap:13px}.icon{width:42px;height:42px;border-radius:12px;background:#eaf3ff;color:#087af5;display:grid;place-items:center;font-size:21px}.header h1{font-size:21px;margin:1px 0 5px}.header p{margin:0;color:#73777f;font-size:14px;line-height:1.45}.list{margin:22px 0 19px;display:grid;gap:9px}.option{display:flex;align-items:center;gap:13px;border:1px solid #dedfe3;border-radius:13px;padding:14px 15px;cursor:pointer}.option:hover{background:#f7faff;border-color:#96c2ff}.option.selected{background:#edf5ff;border:2px solid #1681f8;padding:13px 14px}.radio{width:18px;height:18px;border-radius:50%;border:2px solid #a4a8af;display:grid;place-items:center}.selected .radio{border-color:#087af5}.selected .radio:after{content:"";width:8px;height:8px;border-radius:50%;background:#087af5}.name{font-size:15px;font-weight:650}.meta{font-size:12px;color:#81858d;margin-top:4px}.verify{margin-left:auto;color:#25824f;background:#edf9f2;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:650}.actions{display:flex;justify-content:flex-end;gap:10px;padding-top:17px;border-top:1px solid #ececef}.button{border:0;border-radius:9px;padding:9px 16px;font-size:14px;font-weight:650;background:#ececef}.button:hover{filter:brightness(.97)}.button:active{transform:scale(.98)}.primary{background:#087af5;color:#fff}.warning{background:#fff7e8;border:1px solid #f5d398;border-radius:14px;padding:16px;margin:22px 0 17px;display:flex;gap:12px}.warning .icon{width:34px;height:34px;min-width:34px;background:#ffedd1;color:#b45a00;font-size:17px}.warning b{display:block;margin:0 0 5px}.warning p{margin:0;color:#6f665b;line-height:1.5;font-size:13px}.note{font-size:12px;color:#848891;line-height:1.5;margin-bottom:20px}
+    @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+  </style>
+</head>
+<body>
+<div class="window">
+  <aside class="sidebar"><div class="traffic"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i></div><div class="nav">总览</div><div class="nav on">我的 Skills</div><div class="nav">安装到应用</div><div class="nav">最近操作</div><div class="nav">设置</div></aside>
+  <main class="main"><div class="eyebrow">集中管理</div><div class="title">我的 Skills</div><div class="sub">每个 Skill 在这里保留一份，再由你决定安装到哪些应用。</div><div class="cards"><div class="card">正在添加<b>Agent Team</b></div><div class="card">版本来源<b>最新正式 Release</b></div><div class="card">文件检查<b>下载后进行</b></div></div></main>
+  <div class="scrim"><section class="sheet" id="sheet"></section></div>
+</div>
+<script>
+const fallback=new URLSearchParams(location.search).get('state')==='fallback';
+document.querySelector('#sheet').innerHTML=fallback?`
+  <div class="header"><div class="icon">↓</div><div><h1>这个 Release 没有独立安装包</h1><p>SkillBox 找不到可直接安装的 ZIP。</p></div></div>
+  <div class="warning"><div class="icon">!</div><div><b>将导入完整源码</b><p>这个 Release 可能包含测试、CI 和开发文件。SkillBox 会继续做大小、文件数量和安全检查，并在添加前让你预览内容。</p></div></div>
+  <div class="note">添加和安装时不会运行任何文件。如果你期待的是精简版，可以取消并联系仓库作者上传安装包。</div>
+  <div class="actions"><button class="button">取消</button><button class="button primary">导入完整源码</button></div>`:`
+  <div class="header"><div class="icon">↓</div><div><h1>选择要添加的安装包</h1><p>这个 Release 提供了多个 ZIP。请选择一个，SkillBox 不会自行猜测。</p></div></div>
+  <div class="list"><div class="option"><span class="radio"></span><div><div class="name">agent-team-2.0-macos.zip</div><div class="meta">3.2 MB</div></div></div><div class="option selected"><span class="radio"></span><div><div class="name">agent-team-2.0-pure.zip</div><div class="meta">86 KB · Release 上传的完整 ZIP</div></div><span class="verify">带完整性校验</span></div></div>
+  <div class="note">下一步会检查 ZIP 的内容，并在添加前让你预览 Skill。不会运行里面的文件。</div>
+  <div class="actions"><button class="button">取消</button><button class="button primary">下载并预览</button></div>`;
+</script>
+</body></html>

@@ -105,7 +105,6 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
         let patterns: [(RiskCategory, String, RiskSeverity, String)] = [
             (.network, #"\b(curl|wget)\b|https?://"#, .caution, "可能访问网络或下载文件"),
             (.privilege, #"\bsudo\b|chmod\s+[0-7]*7"#, .high, "可能请求更高的系统权限"),
-            (.credentialAccess, #"\.ssh|\.aws|keychain|security\s+find-|GH_TOKEN|GITHUB_TOKEN|API_KEY"#, .high, "可能读取账号信息或密钥"),
             (.dynamicExecution, #"\beval\s*\(|exec\s*\(|child_process|Process\s*\("#, .high, "可能启动其他程序或命令"),
         ]
 
@@ -121,7 +120,67 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
                 evidence: isDocumentation ? "只在说明文字里发现，添加时不会运行" : "建议在添加前查看这个文件"
             ))
         }
+        inspectCredentialAccess(text, relativePath: relativePath, isDocumentation: isDocumentation, findings: &findings)
         inspectDeletion(text, relativePath: relativePath, isDocumentation: isDocumentation, findings: &findings)
+    }
+
+    private func inspectCredentialAccess(
+        _ text: String,
+        relativePath: String,
+        isDocumentation: Bool,
+        findings: inout [RiskFinding]
+    ) {
+        let pattern = #"\.ssh|\.aws|keychain|security\s+find-|GH_TOKEN|GITHUB_TOKEN|API_KEY|github\.token"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+              regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+        else { return }
+
+        if isGitHubActionsWorkflow(relativePath), containsOnlyGitHubActionsTemporaryTokenReferences(text) {
+            findings.append(.init(
+                severity: .info,
+                category: .credentialAccess,
+                relativePath: relativePath,
+                title: "GitHub 自动化使用临时仓库令牌",
+                evidence: "GitHub 自动化流程使用了任务期间生成的临时仓库令牌。该文件不会在本机安装 Skill 时自动运行"
+            ))
+            return
+        }
+
+        findings.append(.init(
+            severity: isDocumentation ? .info : .high,
+            category: .credentialAccess,
+            relativePath: relativePath,
+            title: isDocumentation ? "说明文字中提到了相关命令" : "可能读取账号信息或密钥",
+            evidence: isDocumentation ? "只在说明文字里发现，添加时不会运行" : "建议在添加前查看这个文件"
+        ))
+    }
+
+    private func isGitHubActionsWorkflow(_ relativePath: String) -> Bool {
+        let path = relativePath.lowercased()
+        return path.hasPrefix(".github/workflows/") && (path.hasSuffix(".yml") || path.hasSuffix(".yaml"))
+    }
+
+    private func containsOnlyGitHubActionsTemporaryTokenReferences(_ text: String) -> Bool {
+        let broadSensitivePattern = #"\.ssh|\.aws|keychain|security\s+find-|API_KEY"#
+        if let regex = try? NSRegularExpression(pattern: broadSensitivePattern, options: [.caseInsensitive]),
+           regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+        {
+            return false
+        }
+
+        let safeAssignment = #"^\s*(?:GH_TOKEN|GITHUB_TOKEN|[A-Za-z0-9_-]*token[A-Za-z0-9_-]*)\s*:\s*\$\{\{\s*(?:github\.token|secrets\.GITHUB_TOKEN)\s*\}\}\s*$"#
+        guard let assignmentRegex = try? NSRegularExpression(pattern: safeAssignment, options: [.caseInsensitive])
+        else { return false }
+
+        let sensitiveLines = text.split(whereSeparator: \Character.isNewline).map(String.init).filter { line in
+            let lowercased = line.lowercased()
+            return lowercased.contains("gh_token") || lowercased.contains("github_token") || lowercased.contains("github.token")
+        }
+        guard !sensitiveLines.isEmpty else { return false }
+        return sensitiveLines.allSatisfy { line in
+            let range = NSRange(line.startIndex..., in: line)
+            return assignmentRegex.firstMatch(in: line, range: range) != nil
+        }
     }
 
     private func inspectDeletion(

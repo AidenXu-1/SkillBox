@@ -32,10 +32,14 @@ public actor GitHubUpdateChecker {
             state.availableVersionName = remote.versionName
             state.availableCommitSHA = remote.commitSHA
             state.availableTreeSHA = remote.treeSHA
+            state.availableReleaseID = remote.releaseID
+            state.availableAssetID = remote.selectedReleaseAsset?.id
+            state.availableAssetName = remote.selectedReleaseAsset?.name
+            state.availableAssetDigest = remote.selectedReleaseAsset?.digest
             state.lastCheckedAt = now()
             if state.currentTreeSHA == nil {
                 state.status = .needsInitialCheck
-            } else if state.currentTreeSHA == remote.treeSHA {
+            } else if isCurrent(state: state, remote: remote) {
                 state.status = .current
             } else if state.ignoredVersionIdentifier == remote.versionIdentifier {
                 state.status = .ignored
@@ -56,6 +60,35 @@ public actor GitHubUpdateChecker {
             try await store.updateSourceState(state)
             throw error
         }
+    }
+
+    private func isCurrent(state: GitHubSourceState, remote: GitHubRemoteVersion) -> Bool {
+        guard remote.trackingMode == .latestStableRelease else {
+            return state.currentTreeSHA == remote.treeSHA
+        }
+
+        guard let remoteReleaseID = remote.releaseID else {
+            return state.currentTreeSHA == remote.treeSHA
+        }
+
+        guard state.currentReleaseID == remoteReleaseID else { return false }
+
+        if remote.usesSourceArchiveFallback {
+            return state.currentAssetID == nil && state.currentCommitSHA == remote.commitSHA
+        }
+
+        guard let currentAssetID = state.currentAssetID,
+              let remoteAsset = remote.selectedReleaseAsset
+                ?? remote.releaseAssets.first(where: { $0.id == currentAssetID }),
+              currentAssetID == remoteAsset.id
+        else { return false }
+
+        guard let remoteDigest = normalizedDigest(remoteAsset.digest) else { return true }
+        return normalizedDigest(state.currentAssetDigest) == remoteDigest
+    }
+
+    private func normalizedDigest(_ digest: String?) -> String? {
+        digest?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     public func ignoreAvailableVersion(skillID: UUID) async throws {

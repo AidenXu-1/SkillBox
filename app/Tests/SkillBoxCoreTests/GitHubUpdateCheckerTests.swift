@@ -49,6 +49,91 @@ struct GitHubUpdateCheckerTests {
         #expect(state?.status == .authenticationRequired)
         #expect(await store.currentSnapshot().skills.contains { $0.id == skill.id })
     }
+
+    @Test("Replacing a Release asset is detected even when the repository tree is unchanged")
+    func replacedReleaseAssetIsAnUpdate() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        var state = fixture.state(skillID: skill.id)
+        state.currentReleaseID = 42
+        state.currentAssetID = 101
+        state.currentAssetName = "demo-pure.zip"
+        state.currentAssetDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        state.currentVersionIdentifier = "release:42:asset:101:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        state.currentTreeSHA = "tree-1"
+        try await store.updateSourceState(state)
+
+        let asset = GitHubReleaseAsset(
+            id: 101,
+            name: "demo-pure.zip",
+            size: 1_024,
+            digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            browserDownloadURL: URL(string: "https://github.com/example/skills/releases/download/v1.4.0/demo-pure.zip")!
+        )
+        let remote = GitHubRemoteVersion(
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            isPrivate: false,
+            trackingMode: .latestStableRelease,
+            defaultBranch: "main",
+            versionIdentifier: "release:42:asset:101:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            versionName: "v1.4.0",
+            revision: "v1.4.0",
+            commitSHA: "commit-1",
+            treeSHA: "tree-1",
+            archiveURL: asset.browserDownloadURL,
+            releaseID: 42,
+            releaseAssets: [asset],
+            selectedReleaseAssetID: 101
+        )
+
+        let result = try await GitHubUpdateChecker(checker: MockVersionChecker(version: remote), store: store).check(skillID: skill.id)
+        #expect(result?.status == .updateAvailable)
+    }
+
+    @Test("An unchanged asset stays current when GitHub omits its digest")
+    func sameReleaseAssetWithoutRemoteDigestStaysCurrent() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        var state = fixture.state(skillID: skill.id)
+        state.currentReleaseID = 42
+        state.currentAssetID = 101
+        state.currentAssetName = "demo-pure.zip"
+        state.currentAssetDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        state.currentTreeSHA = "tree-1"
+        try await store.updateSourceState(state)
+
+        let asset = GitHubReleaseAsset(
+            id: 101,
+            name: "demo-pure.zip",
+            size: 1_024,
+            digest: nil,
+            browserDownloadURL: URL(string: "https://github.com/example/skills/releases/download/v1.4.0/demo-pure.zip")!
+        )
+        let remote = GitHubRemoteVersion(
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            isPrivate: false,
+            trackingMode: .latestStableRelease,
+            defaultBranch: "main",
+            versionIdentifier: "release:42:asset:101:digest:unavailable",
+            versionName: "v1.4.0",
+            revision: "v1.4.0",
+            commitSHA: "commit-1",
+            treeSHA: "tree-1",
+            archiveURL: asset.browserDownloadURL,
+            releaseID: 42,
+            releaseAssets: [asset],
+            selectedReleaseAssetID: 101
+        )
+
+        let result = try await GitHubUpdateChecker(checker: MockVersionChecker(version: remote), store: store).check(skillID: skill.id)
+        #expect(result?.status == .current)
+    }
 }
 
 private struct AuthenticationRequiredChecker: GitHubRemoteVersionChecking {

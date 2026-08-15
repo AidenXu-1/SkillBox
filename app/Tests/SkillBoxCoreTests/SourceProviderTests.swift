@@ -1,10 +1,11 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import SkillBoxCore
 
 @Suite("GitHub source provider", .serialized)
 struct SourceProviderTests {
-    @Test("Release checks resolve the selected Skill tree without downloading an archive")
+    @Test("A Release with one ZIP selects the uploaded install package without downloading it")
     func releaseMetadataCheck() async throws {
         let session = RemoteVersionFixture.session()
         let provider = GitHubSourceProvider(session: session)
@@ -14,11 +15,12 @@ struct SourceProviderTests {
             trackingMode: .latestStableRelease
         )
 
-        #expect(version.versionIdentifier == "release:42")
+        #expect(version.versionIdentifier == "release:42:asset:101:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         #expect(version.versionName == "v1.4.0")
         #expect(version.revision == "v1.4.0")
         #expect(version.commitSHA == "commit-release")
         #expect(version.treeSHA == "demo-tree")
+        #expect(version.archiveURL.absoluteString == "https://github.com/example/skills/releases/download/v1.4.0/demo-pure.zip")
         #expect(RemoteVersionMockURLProtocol.archiveRequestCount == 0)
     }
 
@@ -64,6 +66,122 @@ struct SourceProviderTests {
         #expect(FileManager.default.fileExists(atPath: candidate.sourceURL.appendingPathComponent("SKILL.md").path))
         #expect(FileManager.default.fileExists(atPath: candidate.sourceURL.appendingPathComponent("README.md").path))
         removeRetainedGitHubTemporaryDirectory(for: candidate.sourceURL)
+    }
+
+    @Test("A pure Release package imports only its five runtime files")
+    func pureReleasePackageDownload() async throws {
+        let fixture = try PureReleaseArchiveFixture()
+        defer { fixture.remove() }
+        let provider = GitHubSourceProvider(session: fixture.session())
+        let version = fixture.releaseVersionWithChecksum()
+
+        let snapshot = try await provider.downloadSnapshot(
+            version: version,
+            skillPath: "skills/agent-team",
+            locator: "https://github.com/example/agent-team/tree/main/skills/agent-team"
+        )
+        let candidate = try #require(snapshot.candidates.first)
+        let files = try FileManager.default.subpathsOfDirectory(atPath: candidate.sourceURL.path)
+            .filter { relativePath in
+                try candidate.sourceURL.appendingPathComponent(relativePath)
+                    .resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true
+            }
+            .sorted()
+        #expect(files == [
+            "SKILL.md",
+            "agents/openai.yaml",
+            "references/temporary-executor.md",
+            "scripts/scaffold_team.py",
+            "scripts/temporary_executor_runtime.py",
+        ])
+        #expect(!files.contains(".github/workflows/ci.yml"))
+        removeRetainedGitHubTemporaryDirectory(for: candidate.sourceURL)
+    }
+
+    @Test("A Release with multiple ZIP packages requires the user to choose")
+    func multipleReleasePackagesRequireSelection() async throws {
+        let session = RemoteVersionFixture.session(releaseAssets: [
+            #"{"id":101,"name":"demo-macos.zip","state":"uploaded","content_type":"application/zip","size":2048,"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","browser_download_url":"https://github.com/example/skills/releases/download/v1.4.0/demo-macos.zip"}"#,
+            #"{"id":102,"name":"demo-pure.zip","state":"uploaded","content_type":"application/zip","size":1024,"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","browser_download_url":"https://github.com/example/skills/releases/download/v1.4.0/demo-pure.zip"}"#,
+            #"{"id":103,"name":"demo-pure.zip.sha256","state":"uploaded","content_type":"text/plain","size":80,"digest":null,"browser_download_url":"https://github.com/example/skills/releases/download/v1.4.0/demo-pure.zip.sha256"}"#,
+        ])
+        let provider = GitHubSourceProvider(session: session)
+        let version = try await provider.checkRemoteVersion(
+            repositoryFullName: "example/skills",
+            skillPath: "skills/demo",
+            trackingMode: .latestStableRelease
+        )
+
+        #expect(version.releaseAssets.map(\.name) == ["demo-macos.zip", "demo-pure.zip"])
+        #expect(version.releaseAssets.last?.checksumAssetID == 103)
+        #expect(version.requiresReleaseAssetSelection)
+        do {
+            _ = try await provider.downloadSnapshot(
+                version: version,
+                skillPath: "skills/demo",
+                locator: "https://github.com/example/skills/tree/main/skills/demo"
+            )
+            Issue.record("Expected Release asset selection to be required")
+        } catch GitHubSourceError.releaseAssetSelectionRequired(let assets) {
+            #expect(assets.map(\.name) == ["demo-macos.zip", "demo-pure.zip"])
+        }
+
+        let chosen = try version.selectingReleaseAsset(id: 102)
+        #expect(chosen.selectedReleaseAssetID == 102)
+        #expect(chosen.archiveURL.absoluteString.hasSuffix("/demo-pure.zip"))
+        #expect(chosen.versionIdentifier == "release:42:asset:102:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+    }
+
+    @Test("A Release without a ZIP safely falls back to source with a clear warning")
+    func releaseWithoutPackageFallsBackToSource() async throws {
+        let provider = GitHubSourceProvider(session: RemoteVersionFixture.session(releaseAssets: [
+            #"{"id":103,"name":"demo-pure.zip.sha256","state":"uploaded","content_type":"text/plain","size":80,"digest":null,"browser_download_url":"https://github.com/example/skills/releases/download/v1.4.0/demo-pure.zip.sha256"}"#,
+        ]))
+        let version = try await provider.checkRemoteVersion(
+            repositoryFullName: "example/skills",
+            skillPath: "skills/demo",
+            trackingMode: .latestStableRelease
+        )
+
+        #expect(version.releaseAssets.isEmpty)
+        #expect(version.usesSourceArchiveFallback)
+        #expect(version.archiveURL.absoluteString.hasSuffix("/zipball/v1.4.0"))
+        #expect(version.sourceArchiveFallbackNotice == "该 Release 没有独立安装包，本次将导入完整源码，可能包含测试、CI 和开发文件。")
+    }
+
+    @Test("A matching SHA-256 sidecar allows the Release package to import")
+    func matchingReleaseChecksumImports() async throws {
+        let fixture = try PureReleaseArchiveFixture()
+        defer { fixture.remove() }
+        let provider = GitHubSourceProvider(session: fixture.session(checksum: fixture.correctChecksum))
+        let snapshot = try await provider.downloadSnapshot(
+            version: fixture.releaseVersionWithChecksum(),
+            skillPath: nil,
+            locator: "https://github.com/example/agent-team"
+        )
+
+        let candidate = try #require(snapshot.candidates.first)
+        #expect(candidate.canonicalName == "agent-team")
+        #expect(snapshot.version.selectedReleaseAsset?.digest == "sha256:\(fixture.correctChecksum)")
+        removeRetainedGitHubTemporaryDirectory(for: candidate.sourceURL)
+    }
+
+    @Test("A mismatched SHA-256 sidecar blocks the Release package")
+    func mismatchedReleaseChecksumBlocksImport() async throws {
+        let fixture = try PureReleaseArchiveFixture()
+        defer { fixture.remove() }
+        let provider = GitHubSourceProvider(session: fixture.session(checksum: String(repeating: "0", count: 64)))
+
+        do {
+            _ = try await provider.downloadSnapshot(
+                version: fixture.releaseVersionWithChecksum(),
+                skillPath: nil,
+                locator: "https://github.com/example/agent-team"
+            )
+            Issue.record("Expected a checksum mismatch")
+        } catch GitHubSourceError.checksumMismatch(let name) {
+            #expect(name == "agent-team-2.0-pure.zip")
+        }
     }
 
     @Test("GitHub settings show repositories actually authorized to the app")
@@ -186,6 +304,9 @@ private func removeRetainedGitHubTemporaryDirectory(for sourceURL: URL) {
 
 private final class RemoteVersionMockURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var archiveRequestCount = 0
+    nonisolated(unsafe) static var releaseAssets = [
+        #"{"id":101,"name":"demo-pure.zip","state":"uploaded","content_type":"application/zip","size":2048,"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","browser_download_url":"https://github.com/example/skills/releases/download/v1.4.0/demo-pure.zip"}"#,
+    ]
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -196,7 +317,7 @@ private final class RemoteVersionMockURLProtocol: URLProtocol, @unchecked Sendab
         case "/repos/example/skills":
             payload = #"{"id":7,"full_name":"example/skills","default_branch":"main","private":false}"#
         case "/repos/example/skills/releases/latest":
-            payload = #"{"id":42,"tag_name":"v1.4.0","name":"Version 1.4","published_at":"2026-08-15T00:00:00Z","zipball_url":"https://api.github.com/repos/example/skills/zipball/v1.4.0"}"#
+            payload = #"{"id":42,"tag_name":"v1.4.0","name":"Version 1.4","published_at":"2026-08-15T00:00:00Z","zipball_url":"https://api.github.com/repos/example/skills/zipball/v1.4.0","assets":["# + Self.releaseAssets.joined(separator: ",") + "]}"
         case "/repos/example/skills/commits/v1.4.0":
             payload = #"{"sha":"commit-release","commit":{"tree":{"sha":"root-tree"}}}"#
         case "/repos/example/skills/commits/main":
@@ -219,8 +340,14 @@ private final class RemoteVersionMockURLProtocol: URLProtocol, @unchecked Sendab
 }
 
 private enum RemoteVersionFixture {
-    static func session() -> URLSession {
+    static func session(releaseAssets: [String]? = nil) -> URLSession {
         RemoteVersionMockURLProtocol.archiveRequestCount = 0
+        if let releaseAssets { RemoteVersionMockURLProtocol.releaseAssets = releaseAssets }
+        else {
+            RemoteVersionMockURLProtocol.releaseAssets = [
+                #"{"id":101,"name":"demo-pure.zip","state":"uploaded","content_type":"application/zip","size":2048,"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","browser_download_url":"https://github.com/example/skills/releases/download/v1.4.0/demo-pure.zip"}"#,
+            ]
+        }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [RemoteVersionMockURLProtocol.self]
         return URLSession(configuration: configuration)
@@ -272,6 +399,93 @@ private struct GitHubArchiveFixture {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockGitHubURLProtocol.self]
         return URLSession(configuration: configuration)
+    }
+
+    func remove() { try? FileManager.default.removeItem(at: root) }
+}
+
+private final class PureReleaseArchiveMockURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var archiveData = Data()
+    nonisolated(unsafe) static var checksumData = Data()
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let isChecksum = request.url?.path.hasSuffix(".sha256") == true
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Type": isChecksum ? "text/plain" : "application/zip"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: isChecksum ? Self.checksumData : Self.archiveData)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+private struct PureReleaseArchiveFixture {
+    let root: URL
+    let archive: URL
+    var correctChecksum: String {
+        SHA256.hash(data: PureReleaseArchiveMockURLProtocol.archiveData).map { String(format: "%02x", $0) }.joined()
+    }
+
+    init() throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("SkillBoxPureReleaseTests-\(UUID().uuidString)")
+        let package = root.appendingPathComponent("package")
+        try FileManager.default.createDirectory(at: package.appendingPathComponent("agents"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: package.appendingPathComponent("references"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: package.appendingPathComponent("scripts"), withIntermediateDirectories: true)
+        try "---\nname: agent-team\ndescription: Coordinate agents\n---\n".write(to: package.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+        try "interface: {}\n".write(to: package.appendingPathComponent("agents/openai.yaml"), atomically: true, encoding: .utf8)
+        try "temporary executor\n".write(to: package.appendingPathComponent("references/temporary-executor.md"), atomically: true, encoding: .utf8)
+        try "print('scaffold')\n".write(to: package.appendingPathComponent("scripts/scaffold_team.py"), atomically: true, encoding: .utf8)
+        try "print('runtime')\n".write(to: package.appendingPathComponent("scripts/temporary_executor_runtime.py"), atomically: true, encoding: .utf8)
+        archive = root.appendingPathComponent("agent-team-2.0-pure.zip")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+        process.arguments = ["-qr", archive.path, "."]
+        process.currentDirectoryURL = package
+        try process.run(); process.waitUntilExit()
+        guard process.terminationStatus == 0 else { throw CocoaError(.fileWriteUnknown) }
+        PureReleaseArchiveMockURLProtocol.archiveData = try Data(contentsOf: archive)
+    }
+
+    func session(checksum: String? = nil) -> URLSession {
+        PureReleaseArchiveMockURLProtocol.checksumData = Data("\(checksum ?? correctChecksum)  agent-team-2.0-pure.zip\n".utf8)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [PureReleaseArchiveMockURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
+    func releaseVersionWithChecksum() -> GitHubRemoteVersion {
+        let asset = GitHubReleaseAsset(
+            id: 101,
+            name: "agent-team-2.0-pure.zip",
+            size: PureReleaseArchiveMockURLProtocol.archiveData.count,
+            digest: nil,
+            browserDownloadURL: URL(string: "https://github.com/example/agent-team/releases/download/v2.0.0/agent-team-2.0-pure.zip")!,
+            checksumAssetID: 102,
+            checksumDownloadURL: URL(string: "https://github.com/example/agent-team/releases/download/v2.0.0/agent-team-2.0-pure.zip.sha256")!
+        )
+        return GitHubRemoteVersion(
+            repositoryID: 7,
+            repositoryFullName: "example/agent-team",
+            isPrivate: false,
+            trackingMode: .latestStableRelease,
+            defaultBranch: "main",
+            versionIdentifier: "release:42",
+            versionName: "v2.0.0",
+            revision: "v2.0.0",
+            commitSHA: "release-commit",
+            treeSHA: "release-tree",
+            archiveURL: asset.browserDownloadURL,
+            releaseID: 42,
+            releaseAssets: [asset],
+            selectedReleaseAssetID: asset.id
+        )
     }
 
     func remove() { try? FileManager.default.removeItem(at: root) }
