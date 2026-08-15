@@ -288,6 +288,32 @@ struct LibraryStoreTests {
         #expect(deletion.evidence == #"rm -rf "$TMP_ROOT""#)
     }
 
+    @Test("Refreshing stored Skills repairs descriptions with the current metadata parser")
+    func refreshesStoredMetadata() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        var candidate = try fixture.candidate(name: "writing", body: "# Writing")
+        try """
+        ---
+        name: writing
+        description: >-
+          完成内容写作与质量把关。
+          适合完整创作和轻量编辑。
+        ---
+
+        # Writing
+        """.write(to: candidate.sourceURL.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+        candidate.description = ">-"
+        candidate.fingerprint = try SHA256SkillFingerprinter().fingerprint(directory: candidate.sourceURL)
+        let record = try await store.importCandidate(candidate)
+
+        try await store.refreshRiskReports(using: StaticRiskAnalyzer())
+
+        let refreshed = try #require(await store.currentSnapshot().skills.first { $0.id == record.id })
+        #expect(refreshed.description == "完成内容写作与质量把关。 适合完整创作和轻量编辑。")
+    }
+
     @Test("GitHub-style updates archive the prior central version")
     func updateArchivesOldContent() async throws {
         let fixture = try SyncFixture()

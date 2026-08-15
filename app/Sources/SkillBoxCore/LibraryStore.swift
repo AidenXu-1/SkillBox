@@ -113,6 +113,16 @@ public actor LibraryStore {
         for index in snapshot.skills.indices {
             let content = root.appendingPathComponent(snapshot.skills[index].contentRelativePath)
             snapshot.skills[index].riskReport = try analyzer.analyze(skillDirectory: content)
+            let skillMarkdown = content.appendingPathComponent("SKILL.md")
+            if let text = try? String(contentsOf: skillMarkdown, encoding: .utf8) {
+                let metadata = SkillMetadataParser.parse(
+                    text: text,
+                    fallbackName: snapshot.skills[index].canonicalName
+                )
+                if metadata.description != "未提供描述" {
+                    snapshot.skills[index].description = metadata.description
+                }
+            }
         }
         do { try persist() } catch {
             snapshot = previousSnapshot

@@ -553,7 +553,7 @@ private struct SkillOrganizerSidebar: View {
                 return model.snapshot.installations.contains { $0.skillID == skill.id }
             case .attention:
                 let sourceState = model.snapshot.sourceStates.first { $0.skillID == skill.id }
-                return skill.riskReport.highestSeverity >= .caution ||
+                return skill.riskReport.requiresUserAttention ||
                     sourceState?.lastCheckIssue != nil ||
                     sourceState?.status == .authenticationRequired ||
                     sourceState?.status == .unavailable
@@ -665,9 +665,11 @@ private struct SkillOrganizerRow: View {
     var body: some View {
         Button { selectedSkillID = skill.id } label: {
             HStack(spacing: 9) {
-                Image(systemName: riskIcon)
-                    .foregroundStyle(riskColor)
-                    .frame(width: 17)
+                Text(skillInitial)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.blue)
+                    .frame(width: 26, height: 26)
+                    .background(.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 7))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(skill.displayName)
                         .font(.callout.weight(.medium))
@@ -678,6 +680,12 @@ private struct SkillOrganizerRow: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 4)
+                if skill.riskReport.requiresUserAttention {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(skill.riskReport.isBlocked ? Color.red : Color.orange)
+                        .help("安装前有内容需要确认")
+                }
                 let status = model.snapshot.sourceStates.first(where: { $0.skillID == skill.id })?.status
                 if status == .updateAvailable || status == .releasePackageAvailable {
                     Text("有更新")
@@ -724,22 +732,9 @@ private struct SkillOrganizerRow: View {
         return .clear
     }
 
-    private var riskIcon: String {
-        switch skill.riskReport.highestSeverity {
-        case .blocked: "xmark.shield.fill"
-        case .high: "exclamationmark.triangle.fill"
-        case .caution: "info.circle.fill"
-        case .info: "checkmark.circle.fill"
-        }
-    }
-
-    private var riskColor: Color {
-        switch skill.riskReport.highestSeverity {
-        case .blocked: .red
-        case .high: .orange
-        case .caution: .blue
-        case .info: .green
-        }
+    private var skillInitial: String {
+        let name = skill.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.first.map { String($0).uppercased() } ?? "S"
     }
 }
 
@@ -1223,7 +1218,9 @@ private struct SkillDetailView: View {
                     SkillUsageGuideCard(guide: usageGuide)
                 }
 
-                riskSummary
+                if skill.riskReport.requiresUserAttention {
+                    riskSummary
+                }
 
                 VStack(spacing: 0) {
                     Button {
@@ -1380,22 +1377,7 @@ private struct SkillDetailView: View {
 
     @ViewBuilder
     private var riskSummary: some View {
-        if skill.riskReport.findings.isEmpty {
-            HStack(spacing: 10) {
-                Image(systemName: "checkmark.shield.fill")
-                    .foregroundStyle(.green)
-                Text("文件检查未发现需要处理的内容")
-                    .font(.callout.weight(.medium))
-                Spacer()
-                Text("只读检查")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 11)
-            .background(.secondary.opacity(0.045), in: RoundedRectangle(cornerRadius: 11))
-        } else {
-            VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
                 Button {
                     if reduceMotion { showSafetyDetails.toggle() }
                     else {
@@ -1406,9 +1388,9 @@ private struct SkillDetailView: View {
                         Image(systemName: riskSummaryIcon)
                             .foregroundStyle(riskTint)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("文件检查")
+                            Text("安装前需要确认")
                                 .font(.callout.weight(.medium))
-                            Text("\(skill.riskReport.findings.count) 项内容提示 · 安装时不会运行这些文件")
+                            Text("\(skill.riskReport.actionableFindings.count) 项内容需要你决定后再安装")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -1427,7 +1409,7 @@ private struct SkillDetailView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(showSafetyDetails ? "收起文件检查" : "查看文件检查的具体提示")
+                .help(showSafetyDetails ? "收起需要确认的内容" : "查看安装前需要确认的内容")
 
                 if showSafetyDetails {
                     Divider()
@@ -1444,7 +1426,7 @@ private struct SkillDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                        ForEach(skill.riskReport.findings.prefix(6)) { finding in
+                        ForEach(skill.riskReport.actionableFindings.prefix(6)) { finding in
                             Divider().opacity(0.45)
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
@@ -1475,7 +1457,6 @@ private struct SkillDetailView: View {
             }
             .background(riskTint.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
             .overlay(RoundedRectangle(cornerRadius: 13).stroke(riskTint.opacity(0.15)))
-        }
     }
 
     private var confirmationTitle: String {

@@ -4,6 +4,23 @@ import Testing
 
 @Suite("Skill scanning and fingerprints")
 struct ScannerTests {
+    @Test("YAML multiline descriptions become readable Skill summaries")
+    func multilineDescription() {
+        let metadata = SkillMetadataParser.parse(
+            text: """
+            ---
+            name: zhaoji-writing
+            description: >-
+              完成五类内容写作与质量把关。
+              适合完整创作和轻量编辑。
+            ---
+            """,
+            fallbackName: "fallback"
+        )
+
+        #expect(metadata.description == "完成五类内容写作与质量把关。 适合完整创作和轻量编辑。")
+    }
+
     @Test("Identical copies collapse and divergent copies conflict")
     func grouping() async throws {
         let fixture = try TemporaryFixture()
@@ -86,6 +103,116 @@ struct ScannerTests {
 
 @Suite("Skill usage guidance")
 struct SkillUsageGuideTests {
+    @Test("An explicit README usage example beats an internal default prompt")
+    func prefersREADMEUsageExample() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.remove() }
+        let skill = try fixture.makeSkill(root: "root", directory: "zhaoji-writing", name: "zhaoji-writing", body: "# Writing")
+        let agents = skill.appendingPathComponent("agents")
+        try FileManager.default.createDirectory(at: agents, withIntermediateDirectories: true)
+        try """
+        interface:
+          short_description: "完成五类内容写作与质量把关"
+          default_prompt: "使用 $zhaoji-writing 先判断任务类型，严格遵守技术约束、事实日志和审查门。"
+        """.write(to: agents.appendingPathComponent("openai.yaml"), atomically: true, encoding: .utf8)
+        try """
+        # 兆基写作
+
+        ## 使用示例
+
+        请使用 zhaoji-writing，把这些材料写成一篇图文展示。
+        先帮我确定主题和话题，确认后再继续。
+        """.write(to: skill.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+
+        let guide = try #require(SkillUsageGuideExtractor().extract(from: skill))
+
+        #expect(guide.starterPrompt == "请使用 zhaoji-writing，把这些材料写成一篇图文展示。 先帮我确定主题和话题，确认后再继续。")
+    }
+
+    @Test("A technical default prompt is omitted when no user example exists")
+    func omitsTechnicalDefaultPrompt() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.remove() }
+        let skill = try fixture.makeSkill(root: "root", directory: "technical", name: "technical", body: "# Technical")
+        let agents = skill.appendingPathComponent("agents")
+        try FileManager.default.createDirectory(at: agents, withIntermediateDirectories: true)
+        try """
+        interface:
+          short_description: "帮你稳定组织多会话团队"
+          default_prompt: "使用 $technical 建立四文档接班、原子任务负值和事实日志协作层。"
+        """.write(to: agents.appendingPathComponent("openai.yaml"), atomically: true, encoding: .utf8)
+
+        let guide = try #require(SkillUsageGuideExtractor().extract(from: skill))
+
+        #expect(guide.starterPrompt == nil)
+    }
+
+    @Test("Multiline frontmatter produces a readable purpose")
+    func readsMultilineDescription() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.remove() }
+        let skill = try fixture.makeSkill(root: "root", directory: "multiline", name: "multiline", body: "# Multiline")
+        try """
+        ---
+        name: multiline
+        description: >-
+          完成五类内容写作与质量把关。
+          适合完整创作和轻量编辑。
+        ---
+
+        # Multiline
+        """.write(to: skill.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+
+        let guide = try #require(SkillUsageGuideExtractor().extract(from: skill))
+
+        #expect(guide.purpose == "完成五类内容写作与质量把关。 适合完整创作和轻量编辑。")
+    }
+
+    @Test("Trigger fragments are not presented as a user-facing suitability guide")
+    func doesNotExposeDescriptionFragment() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.remove() }
+        let skill = try fixture.makeSkill(root: "root", directory: "agent-team", name: "agent-team", body: "# Agent Team")
+        try """
+        ---
+        name: agent-team
+        description: Build low-context teams. Use when a project needs separate management, execution, and review roles.
+        ---
+
+        # Agent Team
+
+        一个会话对应一个部门，让分工、审核和换会话接班都能稳定延续。
+        """.write(to: skill.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+        let agents = skill.appendingPathComponent("agents")
+        try FileManager.default.createDirectory(at: agents, withIntermediateDirectories: true)
+        try """
+        interface:
+          short_description: "搭建低上下文多会话团队"
+        """.write(to: agents.appendingPathComponent("openai.yaml"), atomically: true, encoding: .utf8)
+
+        let guide = try #require(SkillUsageGuideExtractor().extract(from: skill))
+
+        #expect(guide.purpose == "搭建低上下文多会话团队")
+        #expect(guide.useWhen == nil)
+    }
+
+    @Test("A trigger-only description does not pretend to explain what the Skill does")
+    func omitsTriggerOnlyGuide() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.remove() }
+        let skill = try fixture.makeSkill(root: "root", directory: "trigger-only", name: "trigger-only", body: "# Trigger Only")
+        try """
+        ---
+        name: trigger-only
+        description: Use when a project needs separate management, execution, and review roles.
+        ---
+
+        # Trigger Only
+        """.write(to: skill.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+
+        #expect(SkillUsageGuideExtractor().extract(from: skill) == nil)
+    }
+
     @Test("User-facing metadata and README produce a concise guide")
     func extractsUserFacingGuide() throws {
         let fixture = try TemporaryFixture()
@@ -176,6 +303,22 @@ struct SkillUsageGuideTests {
 
 @Suite("Risk analysis")
 struct RiskAnalyzerTests {
+    @Test("Only high or blocked findings require user attention")
+    func presentationPolicyHidesOrdinaryFindings() {
+        let ordinary = RiskReport(scannedFileCount: 2, findings: [
+            .init(severity: .info, category: .network, relativePath: "README.md", title: "说明", evidence: "https://example.com"),
+            .init(severity: .caution, category: .executableFile, relativePath: "script.sh", title: "脚本", evidence: "755"),
+        ])
+        let important = RiskReport(scannedFileCount: 1, findings: [
+            .init(severity: .high, category: .credentialAccess, relativePath: "script.sh", title: "密钥", evidence: "GH_TOKEN"),
+        ])
+
+        #expect(ordinary.requiresUserAttention == false)
+        #expect(ordinary.actionableFindings.isEmpty)
+        #expect(important.requiresUserAttention)
+        #expect(important.actionableFindings.count == 1)
+    }
+
     @Test("GitHub Actions' temporary repository token is informational")
     func githubActionsTokenIsInformational() throws {
         let fixture = try TemporaryFixture()

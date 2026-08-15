@@ -382,6 +382,16 @@ public struct RiskReport: Codable, Hashable, Sendable {
     public var isBlocked: Bool {
         findings.contains { $0.severity == .blocked }
     }
+
+    /// Ordinary informational and caution findings remain available to the
+    /// safety engine without competing for attention in the consumer UI.
+    public var requiresUserAttention: Bool {
+        highestSeverity >= .high
+    }
+
+    public var actionableFindings: [RiskFinding] {
+        findings.filter { $0.severity >= .high }
+    }
 }
 
 public struct SkillRecord: Codable, Hashable, Identifiable, Sendable {

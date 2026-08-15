@@ -19,14 +19,32 @@ public enum SkillMetadataParser {
 
         if lines.first?.trimmingCharacters(in: .whitespacesAndNewlines) == "---",
            let closing = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines) == "---" }) {
-            for line in lines[1..<closing] {
+            var index = 1
+            while index < closing {
+                let line = lines[index]
                 let pair = line.split(separator: ":", maxSplits: 1).map(String.init)
-                guard pair.count == 2 else { continue }
+                guard pair.count == 2 else { index += 1; continue }
                 let key = pair[0].trimmingCharacters(in: .whitespacesAndNewlines)
                 let value = pair[1].trimmingCharacters(in: .whitespacesAndNewlines)
                     .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
                 if key == "name", !value.isEmpty { name = value }
+                if key == "description", isBlockScalarMarker(value) {
+                    let baseIndent = line.prefix { $0 == " " || $0 == "\t" }.count
+                    var parts: [String] = []
+                    index += 1
+                    while index < closing {
+                        let continuation = lines[index]
+                        let trimmed = continuation.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let indent = continuation.prefix { $0 == " " || $0 == "\t" }.count
+                        guard trimmed.isEmpty || indent > baseIndent else { break }
+                        if !trimmed.isEmpty { parts.append(trimmed) }
+                        index += 1
+                    }
+                    description = parts.joined(separator: value.hasPrefix("|") ? "\n" : " ")
+                    continue
+                }
                 if key == "description", !value.isEmpty { description = value }
+                index += 1
             }
         }
 
@@ -54,5 +72,10 @@ public enum SkillMetadataParser {
         return String(allowed)
             .replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    }
+
+    private static func isBlockScalarMarker(_ value: String) -> Bool {
+        guard let first = value.first, first == ">" || first == "|" else { return false }
+        return value.dropFirst().allSatisfy { $0 == "+" || $0 == "-" }
     }
 }

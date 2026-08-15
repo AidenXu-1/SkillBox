@@ -32,14 +32,17 @@ public struct SkillUsageGuideExtractor: Sendable {
         let readmeMarkdown = readableText(at: skillDirectory.appendingPathComponent("README.md"))
         let openAIYAML = readableText(at: skillDirectory.appendingPathComponent("agents/openai.yaml"))
         let documents = [readmeMarkdown, markdownBody(skillMarkdown)].compactMap { $0 }
-        let description = frontmatterValue(named: "description", in: skillMarkdown)
+        let parsedMetadata = SkillMetadataParser.parse(
+            text: skillMarkdown,
+            fallbackName: skillDirectory.lastPathComponent
+        )
+        let description = parsedMetadata.description == "未提供描述" ? nil : parsedMetadata.description
         let descriptionParts = splitDescription(description)
 
         let purpose = firstNonEmpty([
             yamlValue(named: "short_description", in: openAIYAML),
             sectionSummary(in: documents, headings: purposeHeadings),
             descriptionParts.purpose,
-            description,
         ]).map { limited(cleanInline($0), to: 100) }
         guard let purpose, !purpose.isEmpty else { return nil }
 
@@ -47,15 +50,14 @@ public struct SkillUsageGuideExtractor: Sendable {
         let useWhen = firstNonEmpty([
             suitability.useWhen,
             sectionListSummary(in: documents, headings: useWhenHeadings, maximumItems: 2),
-            descriptionParts.useWhen,
         ]).map { limited(cleanInline($0), to: 180) }
         let avoidWhen = firstNonEmpty([
             suitability.avoidWhen,
             sectionListSummary(in: documents, headings: avoidWhenHeadings, maximumItems: 1),
         ]).map { limited(cleanInline($0), to: 120) }
         let starterPrompt = firstNonEmpty([
-            yamlValue(named: "default_prompt", in: openAIYAML),
             promptFromSection(in: documents),
+            yamlValue(named: "default_prompt", in: openAIYAML).flatMap { isUserFriendlyPrompt($0) ? $0 : nil },
         ]).map { limited(cleanInline($0), to: 180) }
         let experienceSteps = experience(in: documents)
 
@@ -81,7 +83,7 @@ public struct SkillUsageGuideExtractor: Sendable {
     }
 
     private var promptHeadings: [String] {
-        ["触发方式", "可以这样说", "可以这样告诉ai", "怎么开始", "starterprompt", "exampleprompt", "howtostart"]
+        ["使用示例", "触发方式", "可以这样说", "可以这样告诉ai", "怎么开始", "usageexample", "starterprompt", "exampleprompt", "howtostart"]
     }
 
     private var experienceHeadings: [String] {
@@ -122,19 +124,6 @@ public struct SkillUsageGuideExtractor: Sendable {
             .replacingOccurrences(of: #"\""#, with: "\"")
             .replacingOccurrences(of: #"\n"#, with: " ")
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func frontmatterValue(named name: String, in markdown: String) -> String? {
-        let lines = normalizedLines(markdown)
-        guard lines.first?.trimmingCharacters(in: .whitespaces) == "---",
-              let closing = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" })
-        else { return nil }
-        for line in lines[1..<closing] {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("\(name):") else { continue }
-            return decodedScalar(String(trimmed.dropFirst(name.count + 1)).trimmingCharacters(in: .whitespaces))
-        }
-        return nil
     }
 
     private func markdownBody(_ markdown: String) -> String {
@@ -203,14 +192,35 @@ public struct SkillUsageGuideExtractor: Sendable {
         for document in documents {
             guard let lines = sectionLines(in: document, headings: promptHeadings) else { continue }
             var inFence = false
+            var paragraph: [String] = []
             for line in lines {
                 let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.hasPrefix("```") { inFence.toggle(); continue }
-                if inFence, !trimmed.isEmpty { return trimmed }
+                if inFence, !trimmed.isEmpty { return cleanInline(trimmed) }
+                if trimmed.isEmpty {
+                    if !paragraph.isEmpty { break }
+                    continue
+                }
+                guard heading(from: trimmed) == nil, listItem(from: trimmed) == nil, !trimmed.hasPrefix(">") else {
+                    if !paragraph.isEmpty { break }
+                    continue
+                }
+                paragraph.append(cleanInline(trimmed))
             }
-            if let line = firstReadableLine(in: lines) { return line }
+            let value = paragraph.filter { !$0.isEmpty }.joined(separator: " ")
+            if !value.isEmpty { return value }
         }
         return nil
+    }
+
+    private func isUserFriendlyPrompt(_ value: String) -> Bool {
+        let cleaned = cleanInline(value)
+        guard !cleaned.isEmpty, cleaned.count <= 120 else { return false }
+        let internalMarkers = [
+            "$", "`", "sha", "json", "yaml", "原子任务", "事实日志", "四文档", "审查门", "技术约束",
+        ]
+        let lowered = cleaned.lowercased()
+        return !internalMarkers.contains { lowered.contains($0) }
     }
 
     private func experience(in documents: [String]) -> [String] {
