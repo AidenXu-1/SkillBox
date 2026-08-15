@@ -86,8 +86,8 @@ struct ScannerTests {
 
 @Suite("Skill usage guidance")
 struct SkillUsageGuideTests {
-    @Test("Structured SKILL instructions become a short user-facing flow")
-    func extractsStructuredWorkflow() throws {
+    @Test("User-facing metadata and README produce a concise guide")
+    func extractsUserFacingGuide() throws {
         let fixture = try TemporaryFixture()
         defer { fixture.remove() }
         let skill = try fixture.makeSkill(
@@ -99,54 +99,78 @@ struct SkillUsageGuideTests {
 
             ## 执行步骤
 
-            ### 1. 收集资料
-            先确认用户要处理的文件和目标。
-
-            ### 2. 生成结果
-            按模板生成内容，并让用户确认。
+            ### 1. 安全检查
+            这是 Agent 内部规则，不应展示成用户流程。
             """
         )
-
-        let guide = try #require(SkillUsageGuideExtractor().extract(from: skill))
-
-        #expect(guide.sourceFile == "SKILL.md")
-        #expect(guide.steps.map(\.title) == ["收集资料", "生成结果"])
-        #expect(guide.steps.first?.detail == "先确认用户要处理的文件和目标。")
-    }
-
-    @Test("README usage is used when SKILL does not contain a structured flow")
-    func fallsBackToReadme() throws {
-        let fixture = try TemporaryFixture()
-        defer { fixture.remove() }
-        let skill = try fixture.makeSkill(root: "root", directory: "readme-guided", name: "readme-guided", body: "# Readme Guided")
+        let agents = skill.appendingPathComponent("agents")
+        try FileManager.default.createDirectory(at: agents, withIntermediateDirectories: true)
         try """
-        # Readme Guided
+        interface:
+          display_name: "Guided Skill"
+          short_description: "帮你在开始前整理好项目基础"
+          default_prompt: "帮我为这个新项目做开发前准备。"
+        """.write(to: agents.appendingPathComponent("openai.yaml"), atomically: true, encoding: .utf8)
+        try """
+        # Guided Skill
 
-        ## Quick start
+        ## 适用场景
 
-        1. Add the source files
-        2. Run the review
-        3. Confirm the result
+        适合：
+
+        - 全新的软件项目。
+        - 需要长期维护的项目。
+
+        不适合：
+
+        - 已经有代码的老项目。
         """.write(to: skill.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
 
         let guide = try #require(SkillUsageGuideExtractor().extract(from: skill))
 
-        #expect(guide.sourceFile == "README.md")
-        #expect(guide.steps.map(\.title) == ["Add the source files", "Run the review", "Confirm the result"])
+        #expect(guide.purpose == "帮你在开始前整理好项目基础")
+        #expect(guide.useWhen == "全新的软件项目；需要长期维护的项目")
+        #expect(guide.avoidWhen == "已经有代码的老项目")
+        #expect(guide.starterPrompt == "帮我为这个新项目做开发前准备。")
+        #expect(guide.experienceSteps.isEmpty)
     }
 
-    @Test("No usage card is invented when the author did not provide a recognizable flow")
-    func omitsMissingWorkflow() throws {
+    @Test("Only an explicitly user-facing experience section becomes a flow")
+    func extractsExplicitExperience() throws {
         let fixture = try TemporaryFixture()
         defer { fixture.remove() }
-        let skill = try fixture.makeSkill(
-            root: "root",
-            directory: "unguided",
-            name: "unguided",
-            body: "# Unguided\n\nThis file only describes the background."
-        )
+        let skill = try fixture.makeSkill(root: "root", directory: "experience", name: "experience", body: "# Experience")
+        try """
+        # Experience
 
-        #expect(SkillUsageGuideExtractor().extract(from: skill) == nil)
+        ## 使用时会发生什么
+
+        1. AI 会先询问必要信息。
+        2. 根据回答完成工作。
+        3. 给出结果和下一步。
+        4. 这一条不应展示。
+        """.write(to: skill.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+
+        let guide = try #require(SkillUsageGuideExtractor().extract(from: skill))
+
+        #expect(guide.experienceSteps == [
+            "AI 会先询问必要信息",
+            "根据回答完成工作",
+            "给出结果和下一步",
+        ])
+    }
+
+    @Test("A valid description degrades to a small honest guide without inventing details")
+    func degradesToDescription() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.remove() }
+        let skill = try fixture.makeSkill(root: "root", directory: "unguided", name: "unguided", body: "# Unguided")
+
+        let guide = try #require(SkillUsageGuideExtractor().extract(from: skill))
+        #expect(guide.purpose == "Test unguided")
+        #expect(guide.useWhen == nil)
+        #expect(guide.starterPrompt == nil)
+        #expect(guide.experienceSteps.isEmpty)
     }
 }
 

@@ -1464,11 +1464,12 @@ private struct SkillDetailView: View {
 
 private struct SkillUsageGuideCard: View {
     let guide: SkillUsageGuide
+    @State private var copiedPrompt = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 11) {
-                Image(systemName: "list.number")
+                Image(systemName: "wand.and.stars")
                     .font(.title3)
                     .foregroundStyle(.blue)
                     .frame(width: 38, height: 38)
@@ -1476,50 +1477,105 @@ private struct SkillUsageGuideCard: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("这个 Skill 怎么用")
                         .font(.headline)
-                    Text("根据 Skill 自带的说明整理")
+                    Text("根据作者提供的说明整理")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
             }
 
-            if let summary = guide.summary, !summary.isEmpty {
-                Text(summary)
+            guideSection(title: "能帮你什么", icon: "sparkles") {
+                Text(guide.purpose)
                     .font(.callout)
-                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(Array(guide.steps.enumerated()), id: \.offset) { index, step in
-                    HStack(alignment: .top, spacing: 11) {
-                        Text("\(index + 1)")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.blue)
-                            .frame(width: 24, height: 24)
-                            .background(.blue.opacity(0.10), in: Circle())
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(step.title)
-                                .font(.callout.weight(.medium))
-                            if let detail = step.detail, !detail.isEmpty {
-                                Text(detail)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            }
+            if let useWhen = guide.useWhen {
+                Divider()
+                guideSection(title: "什么时候适合", icon: "checkmark.circle") {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(useWhen)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let avoidWhen = guide.avoidWhen {
+                            Text("不适合：\(avoidWhen)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
             }
 
-            Text(guide.sourceFile == "SKILL.md" ? "来自 Skill 主说明" : "来自作者的 README 说明")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            if let starterPrompt = guide.starterPrompt {
+                Divider()
+                guideSection(title: "可以这样告诉 AI", icon: "quote.bubble") {
+                    HStack(alignment: .center, spacing: 12) {
+                        Text(starterPrompt)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Button(copiedPrompt ? "已复制" : "复制") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(starterPrompt, forType: .string)
+                            copiedPrompt = true
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .seconds(1.5))
+                                copiedPrompt = false
+                            }
+                        }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                        .accessibilityHint("复制这句话，可以粘贴给 AI 应用")
+                    }
+                    .padding(11)
+                    .background(.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
+                }
+            }
+
+            if !guide.experienceSteps.isEmpty {
+                Divider()
+                guideSection(title: "使用时会发生什么", icon: "point.3.connected.trianglepath.dotted") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(Array(guide.experienceSteps.enumerated()), id: \.offset) { index, step in
+                            HStack(alignment: .top, spacing: 10) {
+                                Text("\(index + 1)")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.blue)
+                                    .frame(width: 22, height: 22)
+                                    .background(.blue.opacity(0.09), in: Circle())
+                                Text(step)
+                                    .font(.callout)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(15)
         .background(.blue.opacity(0.045), in: RoundedRectangle(cornerRadius: 13))
         .overlay(RoundedRectangle(cornerRadius: 13).stroke(.blue.opacity(0.13)))
+    }
+
+    @ViewBuilder
+    private func guideSection<Content: View>(
+        title: String,
+        icon: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.callout)
+                .foregroundStyle(.blue)
+                .frame(width: 18, height: 20)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.callout.weight(.semibold))
+                content()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
