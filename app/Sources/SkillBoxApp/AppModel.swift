@@ -494,25 +494,18 @@ final class AppModel: ObservableObject {
         isBusy = true
         statusMessage = "正在检查 GitHub 更新…"
         defer { isBusy = false }
-        var updateCount = 0
-        var unavailableCount = 0
+        var checkedStatuses: [GitHubSourceStatus] = []
         for state in states {
             do {
-                switch try await githubUpdateChecker.check(skillID: state.skillID)?.status {
-                case .updateAvailable, .releasePackageAvailable: updateCount += 1
-                case .authenticationRequired, .unavailable: unavailableCount += 1
-                default: break
+                if let status = try await githubUpdateChecker.check(skillID: state.skillID)?.status {
+                    checkedStatuses.append(status)
                 }
             } catch {
-                unavailableCount += 1
+                checkedStatuses.append(.unavailable)
             }
         }
         await reload()
-        if unavailableCount > 0 {
-            statusMessage = "检查完成：\(updateCount) 个更新，\(unavailableCount) 个来源暂时不可用"
-        } else {
-            statusMessage = updateCount == 0 ? "所有 GitHub Skills 都是最新内容" : "发现 \(updateCount) 个 Skill 有新版本"
-        }
+        statusMessage = GitHubUpdateSummary(statuses: checkedStatuses).statusMessage
     }
 
     func cancelCandidatePreview() {
