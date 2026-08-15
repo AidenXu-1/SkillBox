@@ -12,6 +12,7 @@ struct LibraryStoreTests {
         let store = try LibraryStore(root: fixture.storeRoot)
         let record = try await store.importCandidate(candidate)
 
+        #expect(record.contentRelativePath == "Library/demo/content")
         #expect(FileManager.default.fileExists(atPath: fixture.storeRoot.appendingPathComponent(record.contentRelativePath).appendingPathComponent("SKILL.md").path))
         let catalogData = try Data(contentsOf: fixture.storeRoot.appendingPathComponent("catalog.json"))
         let json = try #require(JSONSerialization.jsonObject(with: catalogData) as? [String: Any])
@@ -19,6 +20,21 @@ struct LibraryStoreTests {
 
         let reloaded = try LibraryStore(root: fixture.storeRoot)
         #expect(await reloaded.currentSnapshot().skills.count == 1)
+    }
+
+    @Test("Same-name versions keep readable folders without colliding")
+    func readableFoldersHandleSameNameVersions() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let first = try await store.importCandidate(fixture.candidate(name: "demo", body: "v1"))
+        try FileManager.default.removeItem(at: fixture.sourceRoot.appendingPathComponent("demo"))
+        let second = try await store.importCandidate(fixture.candidate(name: "demo", body: "v2"))
+
+        #expect(first.contentRelativePath == "Library/demo/content")
+        #expect(second.contentRelativePath.hasPrefix("Library/demo--"))
+        #expect(second.contentRelativePath.hasSuffix("/content"))
+        #expect(FileManager.default.fileExists(atPath: await store.contentURL(for: second).appendingPathComponent("SKILL.md").path))
     }
 
     @Test("Schema v1 GitHub records migrate without downloading or losing content")
@@ -58,6 +74,37 @@ struct LibraryStoreTests {
         let migratedData = try Data(contentsOf: fixture.storeRoot.appendingPathComponent("catalog.json"))
         let migratedJSON = try #require(JSONSerialization.jsonObject(with: migratedData) as? [String: Any])
         #expect(migratedJSON["schemaVersion"] as? Int == 2)
+    }
+
+    @Test("Legacy UUID folders migrate to readable Skill names")
+    func migratesLegacyStorageFolder() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        try FileManager.default.createDirectory(at: fixture.storeRoot, withIntermediateDirectories: true)
+        let candidate = try fixture.candidate(name: "demo", body: "central")
+        let record = SkillRecord(
+            canonicalName: candidate.canonicalName,
+            displayName: candidate.displayName,
+            description: candidate.description,
+            fingerprint: candidate.fingerprint,
+            source: candidate.source,
+            riskReport: candidate.riskReport,
+            contentRelativePath: "Library/\(UUID().uuidString)/content"
+        )
+        let legacyContent = fixture.storeRoot.appendingPathComponent(record.contentRelativePath)
+        try FileManager.default.createDirectory(at: legacyContent.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try SafeFileOperations.copyDirectory(from: candidate.sourceURL, to: legacyContent)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(PersistedEnvelope(value: [record]))
+            .write(to: fixture.storeRoot.appendingPathComponent("catalog.json"))
+
+        let store = try LibraryStore(root: fixture.storeRoot)
+
+        let migrated = try #require(await store.currentSnapshot().skills.first)
+        #expect(migrated.contentRelativePath == "Library/demo/content")
+        #expect(FileManager.default.fileExists(atPath: await store.contentURL(for: migrated).appendingPathComponent("SKILL.md").path))
+        #expect(!FileManager.default.fileExists(atPath: legacyContent.deletingLastPathComponent().path))
     }
 
     @Test("Clearing GitHub information keeps Skills as local copies and removes repository metadata")
@@ -127,6 +174,31 @@ struct LibraryStoreTests {
         #expect(await store.currentSnapshot().skills.isEmpty)
     }
 
+    @Test("Stored Skills can be rescanned when risk rules improve")
+    func refreshesStoredRiskReports() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        var candidate = try fixture.candidate(name: "cleanup", body: "central")
+        try #"rm -rf "$TMP_ROOT""#.write(
+            to: candidate.sourceURL.appendingPathComponent("cleanup.sh"),
+            atomically: true,
+            encoding: .utf8
+        )
+        candidate.fingerprint = try SHA256SkillFingerprinter().fingerprint(directory: candidate.sourceURL)
+        candidate.riskReport = RiskReport(scannedFileCount: 2, findings: [
+            .init(severity: .high, category: .deletion, relativePath: "cleanup.sh", title: "旧规则", evidence: "旧规则"),
+        ])
+        let record = try await store.importCandidate(candidate)
+
+        try await store.refreshRiskReports(using: StaticRiskAnalyzer())
+
+        let refreshed = try #require(await store.currentSnapshot().skills.first { $0.id == record.id })
+        let deletion = try #require(refreshed.riskReport.findings.first { $0.category == .deletion })
+        #expect(deletion.severity == .caution)
+        #expect(deletion.evidence == #"rm -rf "$TMP_ROOT""#)
+    }
+
     @Test("GitHub-style updates archive the prior central version")
     func updateArchivesOldContent() async throws {
         let fixture = try SyncFixture()
@@ -138,7 +210,8 @@ struct LibraryStoreTests {
         let updated = try await store.updateSkill(id: original.id, with: updatedCandidate)
         #expect(updated.id == original.id)
         #expect(updated.fingerprint != original.fingerprint)
-        let archived = fixture.storeRoot.appendingPathComponent("Library/\(original.id.uuidString)/versions/\(original.fingerprint)/SKILL.md")
+        let archived = await store.contentURL(for: original).deletingLastPathComponent()
+            .appendingPathComponent("versions/\(original.fingerprint)/SKILL.md")
         #expect(FileManager.default.fileExists(atPath: archived.path))
     }
 
@@ -186,7 +259,7 @@ struct LibraryStoreTests {
         #expect(snapshot.skills.isEmpty)
         #expect(snapshot.assignments.isEmpty)
         #expect(FileManager.default.fileExists(atPath: deletion.archivedURL.appendingPathComponent("content/SKILL.md").path))
-        #expect(!FileManager.default.fileExists(atPath: fixture.storeRoot.appendingPathComponent("Library/\(record.id.uuidString)").path))
+        #expect(!FileManager.default.fileExists(atPath: await store.contentURL(for: record).deletingLastPathComponent().path))
     }
 
     @Test("A recently deleted Skill can be restored with its organization and source state")
@@ -211,8 +284,24 @@ struct LibraryStoreTests {
         #expect(snapshot.skills.map(\.id) == [record.id])
         #expect(snapshot.organization.placements.first { $0.skillID == record.id }?.folderID == folder.id)
         #expect(snapshot.sourceStates.first { $0.skillID == record.id }?.repositoryFullName == "owner/demo")
-        #expect(FileManager.default.fileExists(atPath: fixture.storeRoot.appendingPathComponent("Library/\(record.id.uuidString)/content/SKILL.md").path))
+        #expect(FileManager.default.fileExists(atPath: await store.contentURL(for: record).appendingPathComponent("SKILL.md").path))
         #expect(!FileManager.default.fileExists(atPath: deletion.archivedURL.path))
+    }
+
+    @Test("Restoring a deleted Skill avoids a new same-name folder")
+    func restoreDeletedSkillWithSameNameCollision() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let original = try await store.importCandidate(fixture.candidate(name: "demo", body: "v1"))
+        let deletion = try await store.deleteSkill(id: original.id)
+        try FileManager.default.removeItem(at: fixture.sourceRoot.appendingPathComponent("demo"))
+        _ = try await store.importCandidate(fixture.candidate(name: "demo", body: "v2"))
+
+        let restored = try await store.restoreDeletedSkill(deletion)
+
+        #expect(restored.contentRelativePath.hasPrefix("Library/demo--"))
+        #expect(FileManager.default.fileExists(atPath: await store.contentURL(for: restored).appendingPathComponent("SKILL.md").path))
     }
 
     @Test("Removing a custom installation location clears only its pending choices")

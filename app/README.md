@@ -30,7 +30,9 @@ swift build
 
 默认使用 ad-hoc 签名并启用 Hardened Runtime，只用于本机测试。设置 `SKILLBOX_CODESIGN_IDENTITY` 后可以使用 Developer ID 签名；公证和 DMG 仍属于正式发行门槛。
 
-需要测试私人 GitHub 仓库时，先注册只有 `Contents: read` 权限且已开启 Device Flow 的 GitHub App，再在打包时提供可公开的配置：
+SkillBox 已内置正式 GitHub 应用的公开 Client ID 和安装地址。用户只需在浏览器中登录 GitHub，选择允许 SkillBox 读取的仓库，无需自行注册或下载 GitHub App。
+
+如果开发者需要在本机测试另一个 GitHub App，可在打包时临时覆盖这两项公开配置：
 
 ```bash
 SKILLBOX_GITHUB_CLIENT_ID=... \

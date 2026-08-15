@@ -326,8 +326,8 @@ private struct LibraryView: View {
                         .disabled(model.isBusy)
                     }
                     if !model.isGitHubConnected {
-                        Button(action: connectGitHub) {
-                            Label("连接私人仓库", systemImage: "lock.open")
+                        Button(action: model.isGitHubConfigured ? connectGitHub : openSettings) {
+                            Label(model.isGitHubConfigured ? "连接私人仓库" : "私人仓库暂不可用", systemImage: "lock.open")
                         }
                         .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                     }
@@ -353,7 +353,7 @@ private struct LibraryView: View {
                         Button("从 GitHub 添加", action: importGitHub)
                             .buttonStyle(.borderedProminent)
                         if !model.isGitHubConnected {
-                            Button("连接私人仓库", action: connectGitHub)
+                            Button(model.isGitHubConfigured ? "连接私人仓库" : "了解私人仓库状态", action: model.isGitHubConfigured ? connectGitHub : openSettings)
                         }
                     }
                 }
@@ -690,11 +690,21 @@ private struct SkillOrganizerRow: View {
     }
 
     private var riskIcon: String {
-        skill.riskReport.highestSeverity >= .high ? "exclamationmark.triangle.fill" : skill.riskReport.highestSeverity == .caution ? "exclamationmark.circle.fill" : "checkmark.circle.fill"
+        switch skill.riskReport.highestSeverity {
+        case .blocked: "xmark.shield.fill"
+        case .high: "exclamationmark.triangle.fill"
+        case .caution: "info.circle.fill"
+        case .info: "checkmark.circle.fill"
+        }
     }
 
     private var riskColor: Color {
-        skill.riskReport.highestSeverity >= .high ? .red : skill.riskReport.highestSeverity == .caution ? .orange : .green
+        switch skill.riskReport.highestSeverity {
+        case .blocked: .red
+        case .high: .orange
+        case .caution: .blue
+        case .info: .green
+        }
     }
 }
 
@@ -1250,30 +1260,47 @@ private struct SkillDetailView: View {
             .background(.green.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
             .overlay(RoundedRectangle(cornerRadius: 13).stroke(.green.opacity(0.15)))
         } else {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("使用前检查")
-                    .font(.headline)
-                ForEach(skill.riskReport.findings.prefix(6)) { finding in
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: riskSummaryIcon)
+                        .font(.title3)
+                        .foregroundStyle(riskTint)
                     VStack(alignment: .leading, spacing: 3) {
-                        HStack {
-                            Text(riskTitle(finding.category)).font(.callout.weight(.medium))
-                            Spacer()
-                            Text(riskLevel(finding.severity))
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(finding.severity >= .high ? .red : finding.severity == .caution ? .orange : .secondary)
-                        }
-                        Text("\(riskAdvice(finding.severity)) 位置：\(finding.relativePath)")
+                        Text(riskSummaryTitle)
+                            .font(.headline)
+                        Text("添加和安装 Skill 时不会运行这些文件。下面的命令只有在你或 AI 应用主动运行脚本时才可能执行。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
-                Text("SkillBox 只查看文件，不会运行里面的内容。静态检查无法保证绝对安全。")
+                ForEach(skill.riskReport.findings.prefix(6)) { finding in
+                    Divider().opacity(0.45)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(riskFindingTitle(finding)).font(.callout.weight(.medium))
+                            Spacer()
+                            Text(riskLevel(finding.severity))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(riskFindingColor(finding.severity))
+                        }
+                        Text(riskFindingExplanation(finding))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if let evidence = riskEvidence(finding) {
+                            Text(evidence)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+                Text("这是文件内容提示，不代表 Skill 已经运行，也不代表它一定有问题。静态检查无法保证绝对安全。")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
             .padding(14)
-            .background(.orange.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
-            .overlay(RoundedRectangle(cornerRadius: 13).stroke(.orange.opacity(0.15)))
+            .background(riskTint.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
+            .overlay(RoundedRectangle(cornerRadius: 13).stroke(riskTint.opacity(0.15)))
         }
     }
 
@@ -1308,28 +1335,86 @@ private struct SkillDetailView: View {
         return "将为 \(availableNames) 准备安装。未找到或不可写的 \(skippedNames) 会被跳过，也不会创建文件夹。"
     }
 
-    private func riskTitle(_ category: RiskCategory) -> String {
-        switch category {
-        case .invalidFormat: "文件结构不完整"
-        case .executableFile: "包含可以直接运行的文件"
-        case .binaryFile: "包含无法直接阅读的程序文件"
-        case .oversizedFile: "有文件体积较大"
-        case .symlink: "包含指向其他文件的连接"
-        case .pathEscape: "文件连接指向 Skill 文件夹之外"
-        case .network: "可能访问网络"
-        case .privilege: "可能请求更高的系统权限"
-        case .deletion: "可能删除文件"
-        case .credentialAccess: "可能读取账号或密钥"
-        case .dynamicExecution: "可能启动其他程序或命令"
+    private func riskLevel(_ severity: RiskSeverity) -> String {
+        switch severity { case .info: "仅说明"; case .caution: "需要了解"; case .high: "需要确认"; case .blocked: "无法添加" }
+    }
+
+    private var riskSummaryIcon: String {
+        switch skill.riskReport.highestSeverity {
+        case .blocked: "xmark.shield.fill"
+        case .high: "exclamationmark.shield.fill"
+        case .caution, .info: "info.circle.fill"
         }
     }
 
-    private func riskLevel(_ severity: RiskSeverity) -> String {
-        switch severity { case .info: "说明"; case .caution: "请留意"; case .high: "高风险"; case .blocked: "已阻止" }
+    private var riskSummaryTitle: String {
+        switch skill.riskReport.highestSeverity {
+        case .blocked: "有内容为了安全已被阻止"
+        case .high: "有内容需要你确认后再使用"
+        case .caution, .info: "这份 Skill 有几项文件内容需要了解"
+        }
     }
 
-    private func riskAdvice(_ severity: RiskSeverity) -> String {
-        switch severity { case .info: "只在说明文字里出现，添加时不会运行。"; case .caution: "建议使用前查看这个文件。"; case .high: "建议确认用途后再安装。"; case .blocked: "为了安全，SkillBox 已阻止添加。" }
+    private var riskTint: Color {
+        switch skill.riskReport.highestSeverity {
+        case .blocked: .red
+        case .high: .orange
+        case .caution, .info: .blue
+        }
+    }
+
+    private func riskFindingColor(_ severity: RiskSeverity) -> Color {
+        switch severity {
+        case .blocked: .red
+        case .high: .orange
+        case .caution: .blue
+        case .info: .secondary
+        }
+    }
+
+    private func riskFindingTitle(_ finding: RiskFinding) -> String {
+        switch finding.category {
+        case .executableFile: "这个 Skill 带有可运行的脚本"
+        case .deletion where finding.severity == .info: "说明文档里提到了清理命令"
+        case .deletion where finding.evidence.contains("$"): "脚本会按变量指定的位置清理文件"
+        case .deletion: "脚本里有清理文件的命令"
+        case .network where finding.severity == .info: "说明文档里提到了网址或下载命令"
+        case .network: "脚本可能访问网络或下载文件"
+        case .privilege: "脚本可能请求更高的系统权限"
+        case .credentialAccess: "脚本可能读取账号信息或密钥"
+        case .dynamicExecution: "脚本可能启动其他程序或命令"
+        default: finding.title
+        }
+    }
+
+    private func riskFindingExplanation(_ finding: RiskFinding) -> String {
+        let location = "文件：\(finding.relativePath)"
+        if finding.severity == .info {
+            return "这只是说明文字，SkillBox 不会执行。\(location)"
+        }
+        if finding.severity == .blocked {
+            return "为了避免访问 Skill 文件夹之外的内容，SkillBox 已经停止添加。\(location)"
+        }
+        switch finding.category {
+        case .executableFile:
+            return "只有你或 AI 应用主动调用它时才会运行。\(location)"
+        case .deletion:
+            return "只有这个脚本被主动运行时才会清理，建议先确认变量最终指向哪个位置。\(location)"
+        default:
+            let advice: String = finding.severity == .high ? "建议确认用途后再安装。" : "建议使用前查看这个文件。"
+            return "\(advice)\(location)"
+        }
+    }
+
+    private func riskEvidence(_ finding: RiskFinding) -> String? {
+        switch finding.category {
+        case .deletion, .privilege, .credentialAccess, .dynamicExecution:
+            return finding.evidence.hasPrefix("建议") ? nil : "发现：\(finding.evidence)"
+        case .symlink, .pathEscape:
+            return "指向：\(finding.evidence)"
+        default:
+            return nil
+        }
     }
 }
 
@@ -1513,10 +1598,10 @@ private struct AgentsView: View {
                     .padding()
                     .background(.background, in: RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.45)))
-                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 28)
                     .padding(.bottom, 28)
                 }
+                .defaultScrollAnchor(.topLeading)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -1702,12 +1787,14 @@ private struct SettingsView: View {
             Section("GitHub 账号") {
                 if model.isGitHubConnected {
                     HStack(spacing: 12) {
-                        Image(systemName: "checkmark.circle.fill")
+                        Image(systemName: model.githubAuthorizedRepositories.isEmpty ? "person.crop.circle.badge.checkmark" : "checkmark.circle.fill")
                             .font(.title2)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(model.githubAuthorizedRepositories.isEmpty ? .blue : .green)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("私人仓库已连接").font(.headline)
-                            Text("SkillBox 只能读取你亲自选择的仓库，不能修改其中内容。")
+                            Text(model.githubAuthorizedRepositories.isEmpty ? "GitHub 身份已确认" : "私人仓库已连接").font(.headline)
+                            Text(model.githubAuthorizedRepositories.isEmpty
+                                 ? "还需在 GitHub 选择 SkillBox 可以读取的仓库。"
+                                 : "SkillBox 只能读取你亲自选择的仓库，不能修改其中内容。")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -1728,19 +1815,22 @@ private struct SettingsView: View {
 
                     if model.githubAuthorizedRepositories.isEmpty {
                         HStack(spacing: 12) {
-                            Text("2")
-                                .font(.callout.bold())
-                                .foregroundStyle(.white)
-                                .frame(width: 28, height: 28)
-                                .background(.blue, in: Circle())
+                            if model.isWaitingForGitHubRepositorySelection {
+                                ProgressView().controlSize(.small).frame(width: 28, height: 28)
+                            } else {
+                                Image(systemName: "folder.badge.plus")
+                                    .foregroundStyle(.blue)
+                                    .frame(width: 28, height: 28)
+                            }
                             VStack(alignment: .leading, spacing: 3) {
-                                Text("还差一步：选择仓库").font(.callout.weight(.semibold))
-                                Text("在 GitHub 页面勾选允许 SkillBox 读取的私人仓库。")
+                                Text(model.isWaitingForGitHubRepositorySelection ? "正在等待你选择仓库" : "还差一步：选择仓库")
+                                    .font(.callout.weight(.semibold))
+                                Text("在 GitHub 选好并安装后，直接回到 SkillBox，这里会自动完成。")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Button("选择仓库") { model.manageGitHubRepositories() }
+                            Button(model.isWaitingForGitHubRepositorySelection ? "重新打开 GitHub" : "选择仓库") { model.manageGitHubRepositories() }
                                 .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
                         }
                         .padding(12)
@@ -1783,6 +1873,9 @@ private struct SettingsView: View {
                         Text("只有添加私人仓库时才需要连接。整个过程在浏览器中完成，不用下载其他软件。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        Label("你只需在 GitHub 页面确认身份和选择仓库，页面跳转和结果检查由 SkillBox 完成。", systemImage: "wand.and.stars")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
                         HStack(spacing: 10) {
                             GitHubConnectionStep(number: 1, title: "确认身份", detail: "打开 GitHub")
@@ -1792,15 +1885,21 @@ private struct SettingsView: View {
                             GitHubConnectionStep(number: 3, title: "回到 SkillBox", detail: "开始检查更新")
                         }
 
-                        Button(model.isGitHubConfigured ? "开始连接" : "私人仓库连接正在准备中") {
-                            Task { await model.connectPrivateGitHub() }
-                        }
-                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
-                            .disabled(model.isBusy || !model.isGitHubConfigured)
-                        if !model.isGitHubConfigured {
-                            Label("公开仓库不受影响，可以直接添加。", systemImage: "info.circle")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                        if model.isGitHubConfigured {
+                            Button("开始连接") { Task { await model.connectPrivateGitHub() } }
+                                .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                                .disabled(model.isBusy)
+                        } else {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Label("当前版本尚未启用私人仓库", systemImage: "exclamationmark.circle.fill")
+                                    .font(.callout.weight(.semibold))
+                                Text("这不是加载过程，不需要继续等待。公开仓库仍然可以直接添加。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 11))
                         }
                     }
                     if let authorization = model.githubAuthorization {
@@ -1942,9 +2041,14 @@ private struct GitHubImportView: View {
                     Text("连接后选择允许 SkillBox 读取的仓库。整个过程在浏览器中完成，不用下载其他软件。公开仓库可以直接继续。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("连接私人仓库") { Task { await model.connectPrivateGitHub() } }
-                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                        .disabled(!model.isGitHubConfigured)
+                    if model.isGitHubConfigured {
+                        Button("连接私人仓库") { Task { await model.connectPrivateGitHub() } }
+                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                    } else {
+                        Label("当前版本尚未启用私人仓库，公开仓库仍可直接添加。", systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     if let authorization = model.githubAuthorization {
                         GitHubDeviceAuthorizationCard(model: model, authorization: authorization)
                     }
@@ -2022,6 +2126,9 @@ private struct GitHubDeviceAuthorizationCard: View {
             Label("无需下载其他软件", systemImage: "checkmark.circle.fill")
                 .font(.caption)
                 .foregroundStyle(.green)
+            Label("这一步只确认你的身份，不会创建仓库或修改文件。重新开始只会换一个会过期的临时验证码。", systemImage: "info.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(14)
         .background(.blue.opacity(0.07), in: RoundedRectangle(cornerRadius: 11))

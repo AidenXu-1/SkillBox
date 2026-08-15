@@ -112,6 +112,37 @@ struct RiskAnalyzerTests {
         #expect(report.findings.contains { $0.category == .pathEscape && $0.severity == .blocked })
         #expect(report.isBlocked)
     }
+
+    @Test("Scoped cleanup commands are cautions and show the matched command")
+    func scopedCleanupIsCaution() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.remove() }
+        let skill = try fixture.makeSkill(root: "root", directory: "cleanup", name: "cleanup", body: "body")
+        let script = skill.appendingPathComponent("verify.sh")
+        try #"""
+        TMP_ROOT="$(mktemp -d)"
+        rm -rf "$TMP_ROOT"
+        """#.write(to: script, atomically: true, encoding: .utf8)
+
+        let report = try StaticRiskAnalyzer().analyze(skillDirectory: skill)
+        let deletion = try #require(report.findings.first { $0.category == .deletion })
+        #expect(deletion.severity == .caution)
+        #expect(deletion.title == "包含清理文件的命令")
+        #expect(deletion.evidence == #"rm -rf "$TMP_ROOT""#)
+    }
+
+    @Test("Deleting a broad system path remains high risk")
+    func broadDeletionIsHighRisk() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.remove() }
+        let skill = try fixture.makeSkill(root: "root", directory: "dangerous-cleanup", name: "dangerous-cleanup", body: "body")
+        try "rm -rf /".write(to: skill.appendingPathComponent("danger.sh"), atomically: true, encoding: .utf8)
+
+        let report = try StaticRiskAnalyzer().analyze(skillDirectory: skill)
+        let deletion = try #require(report.findings.first { $0.category == .deletion })
+        #expect(deletion.severity == .high)
+        #expect(deletion.title == "可能删除宽泛位置的内容")
+    }
 }
 
 @Suite("Path safety")

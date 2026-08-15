@@ -105,7 +105,6 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
         let patterns: [(RiskCategory, String, RiskSeverity, String)] = [
             (.network, #"\b(curl|wget)\b|https?://"#, .caution, "可能访问网络或下载文件"),
             (.privilege, #"\bsudo\b|chmod\s+[0-7]*7"#, .high, "可能请求更高的系统权限"),
-            (.deletion, #"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\b|FileManager\.default\.removeItem"#, .high, "可能删除文件夹中的内容"),
             (.credentialAccess, #"\.ssh|\.aws|keychain|security\s+find-|GH_TOKEN|GITHUB_TOKEN|API_KEY"#, .high, "可能读取账号信息或密钥"),
             (.dynamicExecution, #"\beval\s*\(|exec\s*\(|child_process|Process\s*\("#, .high, "可能启动其他程序或命令"),
         ]
@@ -122,6 +121,46 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
                 evidence: isDocumentation ? "只在说明文字里发现，添加时不会运行" : "建议在添加前查看这个文件"
             ))
         }
+        inspectDeletion(text, relativePath: relativePath, isDocumentation: isDocumentation, findings: &findings)
+    }
+
+    private func inspectDeletion(
+        _ text: String,
+        relativePath: String,
+        isDocumentation: Bool,
+        findings: inout [RiskFinding]
+    ) {
+        let deletionPattern = #"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\b|FileManager\.default\.removeItem"#
+        guard let deletionRegex = try? NSRegularExpression(pattern: deletionPattern, options: [.caseInsensitive]) else { return }
+        guard let matchedLine = text.split(whereSeparator: \Character.isNewline).map(String.init).first(where: { line in
+            deletionRegex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil
+        }) else { return }
+        let command = matchedLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isDocumentation {
+            findings.append(.init(
+                severity: .info,
+                category: .deletion,
+                relativePath: relativePath,
+                title: "说明文字中提到了相关命令",
+                evidence: "只在说明文字里发现，添加时不会运行"
+            ))
+            return
+        }
+
+        let broadPathPattern = #"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\s+(?:--\s+)?[\"']?(?:/|~|\$HOME|\$\{HOME\})"#
+        let removesBroadPath = (try? NSRegularExpression(pattern: broadPathPattern, options: [.caseInsensitive]))?.firstMatch(
+            in: command,
+            range: NSRange(command.startIndex..., in: command)
+        ) != nil
+        let usesFileManager = command.localizedCaseInsensitiveContains("FileManager.default.removeItem")
+        let severity: RiskSeverity = removesBroadPath || usesFileManager ? .high : .caution
+        findings.append(.init(
+            severity: severity,
+            category: .deletion,
+            relativePath: relativePath,
+            title: severity == .high ? "可能删除宽泛位置的内容" : "包含清理文件的命令",
+            evidence: command
+        ))
     }
 
     private func relativePath(of url: URL, root: URL) -> String {

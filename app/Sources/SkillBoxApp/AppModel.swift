@@ -31,6 +31,7 @@ final class AppModel: ObservableObject {
     @Published var pendingUpdateAfterMarkdown = ""
     @Published var githubAuthorization: GitHubDeviceAuthorization?
     @Published var isGitHubConnected = false
+    @Published var isWaitingForGitHubRepositorySelection = false
     @Published var githubLoginStatus = ""
     @Published var githubAuthorizedRepositories: [GitHubRepositorySummary] = []
     @Published var operationProgress: SkillBoxOperationProgress?
@@ -83,6 +84,7 @@ final class AppModel: ObservableObject {
         let builtin = BuiltinAgentAdapters.all.map { $0.makeTarget(homeDirectory: homeDirectory, fileManager: .default) }
         let custom = persisted.targets.filter(\.isCustom)
         do { try await store.replaceTargets(builtin + custom) } catch { present(error) }
+        do { try await store.refreshRiskReports(using: StaticRiskAnalyzer()) } catch { present(error) }
         await reload()
         await scanInstalledSkills()
         isGitHubConnected = await githubSession.isConnected()
@@ -407,6 +409,8 @@ final class AppModel: ObservableObject {
 
     func beginGitHubLogin() async {
         do {
+            githubLoginTask?.cancel()
+            isWaitingForGitHubRepositorySelection = false
             let authorization = try await githubDeviceClient.beginAuthorization()
             githubAuthorization = authorization
             githubLoginStatus = "等待你在浏览器中确认…"
@@ -415,7 +419,7 @@ final class AppModel: ObservableObject {
 
     func connectPrivateGitHub() async {
         guard isGitHubConfigured else {
-            noticeMessage = "私人仓库连接正在准备中。公开仓库仍然可以直接添加。"
+            noticeMessage = "当前版本尚未启用私人仓库连接。公开仓库仍然可以直接添加。"
             return
         }
         await beginGitHubLogin()
@@ -431,7 +435,10 @@ final class AppModel: ObservableObject {
     }
 
     func manageGitHubRepositories() {
-        if let githubInstallURL { NSWorkspace.shared.open(githubInstallURL) }
+        if let githubInstallURL {
+            isWaitingForGitHubRepositorySelection = isGitHubConnected && githubAuthorizedRepositories.isEmpty
+            NSWorkspace.shared.open(githubInstallURL)
+        }
         else { noticeMessage = "暂时无法打开仓库选择页，本地 Skills 不受影响。" }
     }
 
@@ -440,6 +447,7 @@ final class AppModel: ObservableObject {
             githubLoginTask?.cancel()
             try await githubSession.disconnect()
             isGitHubConnected = false
+            isWaitingForGitHubRepositorySelection = false
             githubAuthorization = nil
             githubLoginStatus = "已断开私人仓库连接。公开仓库仍会正常检查更新。"
             githubAuthorizedRepositories = []
@@ -452,6 +460,7 @@ final class AppModel: ObservableObject {
             try await githubSession.disconnect()
             try await store.clearGitHubInformation()
             isGitHubConnected = false
+            isWaitingForGitHubRepositorySelection = false
             githubAuthorization = nil
             githubAuthorizedRepositories = []
             lastDeletedSkill = nil
@@ -472,8 +481,13 @@ final class AppModel: ObservableObject {
         }
         do {
             githubAuthorizedRepositories = try await githubProvider.authorizedRepositories()
+            if !githubAuthorizedRepositories.isEmpty {
+                isWaitingForGitHubRepositorySelection = false
+                githubLoginStatus = "连接完成，已找到 (githubAuthorizedRepositories.count) 个可读取的仓库。"
+            }
         } catch GitHubSourceError.authenticationRequired {
             isGitHubConnected = false
+            isWaitingForGitHubRepositorySelection = false
             githubAuthorizedRepositories = []
             githubLoginStatus = "连接已失效，请重新连接 GitHub"
         } catch {
@@ -887,14 +901,21 @@ final class AppModel: ObservableObject {
                 case let .authorized(tokens):
                     try await githubSession.save(tokens)
                     isGitHubConnected = true
-                    githubLoginStatus = "身份确认完成。接下来请选择 SkillBox 可以读取的仓库。"
                     githubAuthorization = nil
                     await refreshGitHubRepositories()
+                    if githubAuthorizedRepositories.isEmpty {
+                        isWaitingForGitHubRepositorySelection = true
+                        githubLoginStatus = "身份确认完成。正在打开仓库选择页…"
+                        manageGitHubRepositories()
+                        await waitForGitHubRepositorySelection()
+                    }
                     return
                 case .expired:
+                    isWaitingForGitHubRepositorySelection = false
                     githubLoginStatus = "验证码已过期，请重新连接"
                     return
                 case .denied:
+                    isWaitingForGitHubRepositorySelection = false
                     githubLoginStatus = "你取消了这次连接"
                     return
                 }
@@ -903,6 +924,31 @@ final class AppModel: ObservableObject {
                 return
             }
         }
+    }
+
+    private func waitForGitHubRepositorySelection() async {
+        for _ in 0..<100 {
+            do {
+                try await Task.sleep(for: .seconds(3))
+                if Task.isCancelled { return }
+                let repositories = try await githubProvider.authorizedRepositories()
+                guard !repositories.isEmpty else { continue }
+                githubAuthorizedRepositories = repositories
+                isWaitingForGitHubRepositorySelection = false
+                githubLoginStatus = "连接完成，已找到 (repositories.count) 个可读取的仓库。"
+                return
+            } catch is CancellationError {
+                return
+            } catch GitHubSourceError.authenticationRequired {
+                isGitHubConnected = false
+                isWaitingForGitHubRepositorySelection = false
+                githubLoginStatus = "连接已失效，请重新连接 GitHub"
+                return
+            } catch {
+                continue
+            }
+        }
+        githubLoginStatus = "还没有找到已选仓库。你可以重新打开 GitHub 选择页。"
     }
 
     private func present(_ error: Error) {

@@ -61,10 +61,24 @@ public actor LibraryStore {
         try fileManager.createDirectory(at: deletedDirectory, withIntermediateDirectories: true)
         var warnings: [String] = []
         let loaded = try Self.loadSnapshot(root: root, fileManager: fileManager, decoder: decoder, warnings: &warnings)
-        snapshot = loaded.snapshot
+        var loadedSnapshot = loaded.snapshot
+        let storageMoves = try Self.migrateReadableStorageFolders(
+            snapshot: &loadedSnapshot,
+            root: self.root,
+            libraryDirectory: libraryDirectory,
+            fileManager: fileManager
+        )
+        snapshot = loadedSnapshot
         recoveryWarnings = warnings
-        if loaded.didMigrate {
-            try Self.persist(snapshot: snapshot, root: self.root, encoder: encoder, fileManager: fileManager)
+        if loaded.didMigrate || !storageMoves.isEmpty {
+            do {
+                try Self.persist(snapshot: snapshot, root: self.root, encoder: encoder, fileManager: fileManager)
+            } catch {
+                for move in storageMoves.reversed() where fileManager.fileExists(atPath: move.to.path) {
+                    try? fileManager.moveItem(at: move.to, to: move.from)
+                }
+                throw error
+            }
         }
     }
 
@@ -92,6 +106,18 @@ public actor LibraryStore {
         normalized.normalize(skillIDs: snapshot.skills.map(\.id))
         snapshot.organization = normalized
         try persist()
+    }
+
+    public func refreshRiskReports(using analyzer: any RiskAnalyzer) throws {
+        let previousSnapshot = snapshot
+        for index in snapshot.skills.indices {
+            let content = root.appendingPathComponent(snapshot.skills[index].contentRelativePath)
+            snapshot.skills[index].riskReport = try analyzer.analyze(skillDirectory: content)
+        }
+        do { try persist() } catch {
+            snapshot = previousSnapshot
+            throw error
+        }
     }
 
     public func replaceSourceStates(_ states: [GitHubSourceState]) throws {
@@ -184,7 +210,8 @@ public actor LibraryStore {
         }) { return existing }
 
         let id = UUID()
-        let recordRoot = libraryDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
+        let storageFolderName = availableStorageFolderName(for: candidate.canonicalName, id: id)
+        let recordRoot = libraryDirectory.appendingPathComponent(storageFolderName, isDirectory: true)
         let content = recordRoot.appendingPathComponent("content", isDirectory: true)
         let temporary = libraryDirectory.appendingPathComponent(".import-\(id.uuidString)", isDirectory: true)
         try SafeFileOperations.copyDirectory(from: candidate.sourceURL, to: temporary, fileManager: fileManager)
@@ -203,7 +230,7 @@ public actor LibraryStore {
             fingerprint: candidate.fingerprint,
             source: candidate.source,
             riskReport: candidate.riskReport,
-            contentRelativePath: "Library/\(id.uuidString)/content"
+            contentRelativePath: "Library/\(storageFolderName)/content"
         )
         snapshot.skills.append(record)
         snapshot.organization.normalize(skillIDs: snapshot.skills.map(\.id))
@@ -225,7 +252,7 @@ public actor LibraryStore {
             throw LibraryStoreError.candidateChanged
         }
         let old = snapshot.skills[index]
-        let recordRoot = libraryDirectory.appendingPathComponent(id.uuidString)
+        let recordRoot = recordRoot(for: old)
         let content = recordRoot.appendingPathComponent("content")
         let versions = recordRoot.appendingPathComponent("versions")
         let archived = versions.appendingPathComponent(old.fingerprint)
@@ -264,7 +291,7 @@ public actor LibraryStore {
               snapshot.skills[index].fingerprint == backup.updatedFingerprint
         else { throw LibraryStoreError.candidateChanged }
         let current = snapshot.skills[index]
-        let recordRoot = libraryDirectory.appendingPathComponent(previous.id.uuidString)
+        let recordRoot = recordRoot(for: current)
         let content = recordRoot.appendingPathComponent("content")
         let versions = recordRoot.appendingPathComponent("versions")
         let previousContent = versions.appendingPathComponent(previous.fingerprint)
@@ -298,7 +325,7 @@ public actor LibraryStore {
             throw LibraryStoreError.skillStillInstalled
         }
 
-        let recordRoot = libraryDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
+        let recordRoot = recordRoot(for: record)
         let archived = deletedDirectory.appendingPathComponent("\(Int(Date().timeIntervalSince1970))-\(id.uuidString)", isDirectory: true)
         let deletion = DeletedSkillBackup(
             record: record,
@@ -330,10 +357,16 @@ public actor LibraryStore {
         guard fileManager.fileExists(atPath: deletion.archivedURL.path) else {
             throw LibraryStoreError.skillNotFound
         }
-        let recordRoot = libraryDirectory.appendingPathComponent(deletion.record.id.uuidString, isDirectory: true)
+        var restoredRecord = deletion.record
+        var recordRoot = recordRoot(for: restoredRecord)
+        if fileManager.fileExists(atPath: recordRoot.path) {
+            let folderName = availableStorageFolderName(for: restoredRecord.canonicalName, id: restoredRecord.id)
+            restoredRecord.contentRelativePath = "Library/\(folderName)/content"
+            recordRoot = self.recordRoot(for: restoredRecord)
+        }
         let previousSnapshot = snapshot
         try fileManager.moveItem(at: deletion.archivedURL, to: recordRoot)
-        snapshot.skills.append(deletion.record)
+        snapshot.skills.append(restoredRecord)
         snapshot.assignments.append(contentsOf: deletion.assignments)
         if let placement = deletion.placement { snapshot.organization.placements.append(placement) }
         if let sourceState = deletion.sourceState { snapshot.sourceStates.append(sourceState) }
@@ -345,7 +378,7 @@ public actor LibraryStore {
             try? fileManager.moveItem(at: recordRoot, to: deletion.archivedURL)
             throw error
         }
-        return deletion.record
+        return restoredRecord
     }
 
     public func removeCustomTarget(id: UUID) throws {
@@ -373,6 +406,71 @@ public actor LibraryStore {
     public func replaceInstallations(_ installations: [ManagedInstallation]) throws {
         snapshot.installations = installations
         try persist()
+    }
+
+    private func recordRoot(for record: SkillRecord) -> URL {
+        root.appendingPathComponent(record.contentRelativePath).deletingLastPathComponent()
+    }
+
+    private func availableStorageFolderName(for canonicalName: String, id: UUID) -> String {
+        let base = Self.readableStorageFolderName(for: canonicalName)
+        guard !fileManager.fileExists(atPath: libraryDirectory.appendingPathComponent(base).path) else {
+            return "\(base)--\(id.uuidString.prefix(8).lowercased())"
+        }
+        return base
+    }
+
+    private static func readableStorageFolderName(for canonicalName: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+        let pieces = canonicalName.unicodeScalars.map { allowed.contains($0) ? String($0) : "-" }
+        let readable = pieces.joined()
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".-_"))
+        return readable.isEmpty ? "skill" : readable
+    }
+
+    private static func migrateReadableStorageFolders(
+        snapshot: inout LibrarySnapshot,
+        root: URL,
+        libraryDirectory: URL,
+        fileManager: FileManager
+    ) throws -> [(from: URL, to: URL)] {
+        var moves: [(from: URL, to: URL)] = []
+        let originalSnapshot = snapshot
+        do {
+            for index in snapshot.skills.indices {
+                let currentContent = root.appendingPathComponent(snapshot.skills[index].contentRelativePath)
+                let currentRoot = currentContent.deletingLastPathComponent()
+                guard currentRoot.deletingLastPathComponent().standardizedFileURL == libraryDirectory.standardizedFileURL,
+                      UUID(uuidString: currentRoot.lastPathComponent) != nil,
+                      fileManager.fileExists(atPath: currentRoot.path)
+                else { continue }
+
+                let base = readableStorageFolderName(for: snapshot.skills[index].canonicalName)
+                var folderName = base
+                var destination = libraryDirectory.appendingPathComponent(folderName, isDirectory: true)
+                if fileManager.fileExists(atPath: destination.path) {
+                    folderName = "\(base)--\(snapshot.skills[index].id.uuidString.prefix(8).lowercased())"
+                    destination = libraryDirectory.appendingPathComponent(folderName, isDirectory: true)
+                }
+                guard !fileManager.fileExists(atPath: destination.path) else { continue }
+
+                try fileManager.moveItem(at: currentRoot, to: destination)
+                moves.append((from: currentRoot, to: destination))
+                let relativePath = "Library/\(folderName)/content"
+                snapshot.skills[index].contentRelativePath = relativePath
+                for transactionIndex in snapshot.transactions.indices {
+                    guard snapshot.transactions[transactionIndex].libraryUpdate?.previousRecord.id == snapshot.skills[index].id else { continue }
+                    snapshot.transactions[transactionIndex].libraryUpdate?.previousRecord.contentRelativePath = relativePath
+                }
+            }
+            return moves
+        } catch {
+            snapshot = originalSnapshot
+            for move in moves.reversed() where fileManager.fileExists(atPath: move.to.path) {
+                try? fileManager.moveItem(at: move.to, to: move.from)
+            }
+            throw error
+        }
     }
 
     private func persist() throws {
