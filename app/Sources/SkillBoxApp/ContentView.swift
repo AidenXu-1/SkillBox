@@ -311,6 +311,7 @@ private struct LibraryView: View {
     let connectGitHub: () -> Void
     @State private var searchText = ""
     @State private var filter: SkillListFilter = .all
+    @State private var isAddMenuHovered = false
     var selected: SkillRecord? { model.snapshot.skills.first { $0.id == selectedSkillID } ?? model.snapshot.skills.first }
     var body: some View {
         VStack(spacing: 0) {
@@ -318,29 +319,52 @@ private struct LibraryView: View {
                 PageHeader(eyebrow: "集中管理", title: "我的 Skills", subtitle: "每个 Skill 在这里保留一份，再由你决定安装到哪些应用。")
                 Spacer()
                 if !model.snapshot.skills.isEmpty {
-                    if !model.snapshot.sourceStates.isEmpty {
-                        Button {
-                            Task { await model.checkAllGitHubUpdates() }
+                    HStack(spacing: 10) {
+                        if !model.snapshot.sourceStates.isEmpty {
+                            Button {
+                                Task { await model.checkAllGitHubUpdates() }
+                            } label: {
+                                Label("检查更新", systemImage: "arrow.triangle.2.circlepath")
+                            }
+                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                            .disabled(model.isBusy)
+                            .help("检查 GitHub 来源是否有新版本")
+                        }
+                        if !model.isGitHubConnected {
+                            Button(action: model.isGitHubConfigured ? connectGitHub : openSettings) {
+                                Label(model.isGitHubConfigured ? "连接私人仓库" : "私人仓库暂不可用", systemImage: "lock.open")
+                            }
+                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                            .help(model.isGitHubConfigured ? "连接 GitHub 后可以添加和跟踪私人仓库" : "查看私人仓库连接状态")
+                        }
+                        Menu {
+                            Button("从电脑文件夹添加", action: importLocal)
+                            Button("从 GitHub 仓库添加", action: importGitHub)
                         } label: {
-                            Label("检查全部更新", systemImage: "arrow.triangle.2.circlepath")
+                            HStack(spacing: 6) {
+                                Image(systemName: "plus")
+                                Text("添加 Skill")
+                                Image(systemName: "chevron.down")
+                                    .font(.caption2.weight(.bold))
+                            }
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(
+                                Color.accentColor.opacity(isAddMenuHovered ? 0.86 : 1),
+                                in: RoundedRectangle(cornerRadius: 8)
+                            )
+                            .contentShape(RoundedRectangle(cornerRadius: 8))
                         }
-                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                        .disabled(model.isBusy)
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .onHover { isAddMenuHovered = $0 }
+                        .help("从电脑文件夹或 GitHub 仓库添加 Skill")
+                        .accessibilityLabel("添加 Skill")
                     }
-                    if !model.isGitHubConnected {
-                        Button(action: model.isGitHubConfigured ? connectGitHub : openSettings) {
-                            Label(model.isGitHubConfigured ? "连接私人仓库" : "私人仓库暂不可用", systemImage: "lock.open")
-                        }
-                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                    }
-                    Menu {
-                        Button("从电脑文件夹添加", action: importLocal)
-                        Button("从 GitHub 仓库添加", action: importGitHub)
-                    } label: {
-                        Label("添加 Skill", systemImage: "plus")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
+                    .padding(.top, 1)
                 }
             }
             .padding(28)
@@ -1031,31 +1055,45 @@ private struct SkillDetailView: View {
                 }
                 Divider()
 
-                VStack(alignment: .leading, spacing: 13) {
-                    HStack(alignment: .center, spacing: 14) {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .top, spacing: 14) {
                         VStack(alignment: .leading, spacing: 5) {
                             Text("安装到你的 AI 应用")
                                 .font(.headline)
-                            Text("只会选择已经找到且可以写入的位置，继续后先给你看安装清单。")
+                            Text(installationAvailabilityMessage)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        HStack(spacing: 8) {
-                            Button {
-                                confirmation = .installEverywhere
-                            } label: {
-                                Label("安装到全部可用应用", systemImage: "square.and.arrow.down")
-                            }
-                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
-                            Button {
-                                confirmation = .uninstallEverywhere
-                            } label: {
-                                Text("全部卸载")
-                            }
-                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                            .disabled(!hasInstallations && !hasDesiredAssignments)
+                        Text("\(availableTargets.count) 个可用")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(availableTargets.isEmpty ? Color.secondary : Color.accentColor)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background(
+                                (availableTargets.isEmpty ? Color.secondary : Color.accentColor).opacity(0.09),
+                                in: Capsule()
+                            )
+                    }
+                    HStack(spacing: 8) {
+                        Button {
+                            confirmation = .installEverywhere
+                        } label: {
+                            Label("安装到全部应用", systemImage: "square.and.arrow.down")
                         }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                        .fixedSize(horizontal: true, vertical: false)
+                        .disabled(availableTargets.isEmpty)
+                        .help(availableTargets.isEmpty ? "本机还没有找到可安装 Skill 的应用" : "先查看完整安装清单")
+                        Button {
+                            confirmation = .uninstallEverywhere
+                        } label: {
+                            Label("卸载全部", systemImage: "square.and.arrow.up")
+                        }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                        .fixedSize(horizontal: true, vertical: false)
+                        .disabled(!hasInstallations && !hasDesiredAssignments)
+                        Spacer()
                     }
                     Divider().opacity(0.55)
                     HStack {
@@ -1069,7 +1107,7 @@ private struct SkillDetailView: View {
                         .buttonStyle(SkillBoxHoverButtonStyle(kind: .destructiveText))
                     }
                 }
-                .padding(15)
+                .padding(16)
                 .background(.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
                 .overlay(RoundedRectangle(cornerRadius: 13).stroke(.blue.opacity(0.15)))
 
@@ -1380,6 +1418,13 @@ private struct SkillDetailView: View {
         }
         let skippedNames = unavailableTargets.map(\.displayName).joined(separator: "、")
         return "将为 \(availableNames) 准备安装。未找到或不可写的 \(skippedNames) 会被跳过，也不会创建文件夹。"
+    }
+
+    private var installationAvailabilityMessage: String {
+        guard !availableTargets.isEmpty else {
+            return "本机还没有找到可安装的应用，SkillBox 不会代为创建目录。"
+        }
+        return "已找到 \(availableTargets.count) 个可安装应用。继续后会先让你查看完整清单。"
     }
 
     private func riskLevel(_ severity: RiskSeverity) -> String {
