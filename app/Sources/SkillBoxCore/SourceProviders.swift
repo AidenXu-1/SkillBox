@@ -69,6 +69,8 @@ public enum GitHubSourceError: LocalizedError {
     case noStableRelease
     case authenticationRequired
     case repositoryUnavailableOrUnauthorized
+    case repositoryPermissionRequired
+    case rateLimited(retryAt: Date)
     case skillPathMissing(String)
     case releaseAssetSelectionRequired([GitHubReleaseAsset])
     case checksumMismatch(String)
@@ -88,6 +90,8 @@ public enum GitHubSourceError: LocalizedError {
         case .noStableRelease: "这个仓库还没有正式 Release，可以改为跟随默认分支"
         case .authenticationRequired: "这个仓库需要 GitHub 授权才能查看"
         case .repositoryUnavailableOrUnauthorized: "找不到这个仓库，或者 SkillBox 还没有访问权限"
+        case .repositoryPermissionRequired: "SkillBox 还没有获准读取这个私人仓库"
+        case let .rateLimited(retryAt): "GitHub 暂时限制了查询，请在 \(retryAt.formatted(date: .omitted, time: .shortened)) 后重试"
         case .skillPathMissing: "GitHub 上找不到原来的 Skill 目录"
         case .releaseAssetSelectionRequired: "这个 Release 有多个可用安装包，请选择要导入的 ZIP"
         case let .checksumMismatch(name): "\(name) 的 SHA-256 校验未通过，已停止导入"
@@ -101,6 +105,7 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
     private let limits: GitHubDownloadLimits
     private let scanner: any SkillScanner
     private let tokenProvider: any GitHubAccessTokenProvider
+    private let authorizationPreference: GitHubAuthorizationPreference
 
     public init(
         session: URLSession = .shared,
@@ -112,6 +117,7 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         self.limits = limits
         self.scanner = scanner
         self.tokenProvider = tokenProvider
+        authorizationPreference = GitHubAuthorizationPreference()
     }
 
     public func checkRemoteVersion(
@@ -124,6 +130,9 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         do {
             info = try await requestAPI(path: "/repos/\(repository.owner)/\(repository.name)")
         } catch GitHubSourceError.requestFailed(404) {
+            if await preferredAccessToken() != nil {
+                throw GitHubSourceError.repositoryPermissionRequired
+            }
             throw GitHubSourceError.repositoryUnavailableOrUnauthorized
         }
         let revision: String
@@ -293,7 +302,13 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
     }
 
     public func authorizedRepositories() async throws -> [GitHubRepositorySummary] {
-        guard try await tokenProvider.accessToken() != nil else {
+        let accessToken: String?
+        do {
+            accessToken = try await tokenProvider.accessToken()
+        } catch {
+            throw GitHubSourceError.authenticationRequired
+        }
+        guard accessToken != nil else {
             throw GitHubSourceError.authenticationRequired
         }
         let installations: InstallationsResponse = try await requestAPI(path: "/user/installations")
@@ -355,7 +370,7 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         request.setValue("SkillBox/1", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2026-03-10", forHTTPHeaderField: "X-GitHub-Api-Version")
-        if let token = try await tokenProvider.accessToken() {
+        if let token = await preferredAccessToken() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         return request
@@ -392,6 +407,17 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
     private func downloadData(request: URLRequest) async throws -> Data {
         let (bytes, response) = try await session.bytes(for: request)
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            if let retryAt = rateLimitRetryDate(from: http) {
+                throw GitHubSourceError.rateLimited(retryAt: retryAt)
+            }
+            if request.value(forHTTPHeaderField: "Authorization") != nil,
+               http.statusCode == 401 || http.statusCode == 403
+            {
+                await rejectAuthorization(in: request)
+                var anonymousRequest = request
+                anonymousRequest.setValue(nil, forHTTPHeaderField: "Authorization")
+                return try await downloadData(request: anonymousRequest)
+            }
             if http.statusCode == 401 || http.statusCode == 403 { throw GitHubSourceError.authenticationRequired }
             throw GitHubSourceError.requestFailed(http.statusCode)
         }
@@ -485,11 +511,23 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         request.setValue("SkillBox/1", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2026-03-10", forHTTPHeaderField: "X-GitHub-Api-Version")
-        if let token = try await tokenProvider.accessToken() {
+        if let token = await preferredAccessToken() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        let (data, response) = try await session.data(for: request)
+        var (data, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse,
+           request.value(forHTTPHeaderField: "Authorization") != nil,
+           rateLimitRetryDate(from: http) == nil,
+           http.statusCode == 401 || http.statusCode == 403
+        {
+            await rejectAuthorization(in: request)
+            request.setValue(nil, forHTTPHeaderField: "Authorization")
+            (data, response) = try await session.data(for: request)
+        }
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            if let retryAt = rateLimitRetryDate(from: http) {
+                throw GitHubSourceError.rateLimited(retryAt: retryAt)
+            }
             if http.statusCode == 401 || http.statusCode == 403 {
                 throw GitHubSourceError.authenticationRequired
             }
@@ -498,6 +536,39 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try decoder.decode(Response.self, from: data)
+    }
+
+    private func preferredAccessToken() async -> String? {
+        do {
+            guard let token = try await tokenProvider.accessToken(),
+                  await authorizationPreference.shouldUse(token)
+            else { return nil }
+            return token
+        } catch {
+            return nil
+        }
+    }
+
+    private func rejectAuthorization(in request: URLRequest) async {
+        guard let authorization = request.value(forHTTPHeaderField: "Authorization"),
+              authorization.hasPrefix("Bearer ")
+        else { return }
+        await authorizationPreference.reject(String(authorization.dropFirst("Bearer ".count)))
+    }
+
+    private func rateLimitRetryDate(from response: HTTPURLResponse) -> Date? {
+        if let retryAfter = response.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init) {
+            return Date().addingTimeInterval(max(retryAfter, 60))
+        }
+        if response.value(forHTTPHeaderField: "X-RateLimit-Remaining") == "0",
+           let reset = response.value(forHTTPHeaderField: "X-RateLimit-Reset").flatMap(TimeInterval.init)
+        {
+            return Date(timeIntervalSince1970: reset)
+        }
+        if response.statusCode == 429 {
+            return Date().addingTimeInterval(60)
+        }
+        return nil
     }
 
     private func archiveExpandedSize(_ archive: URL) throws -> Int {
@@ -551,6 +622,18 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         let text = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         guard process.terminationStatus == 0 else { throw GitHubSourceError.extractionFailed(String(text.prefix(500))) }
         return text
+    }
+}
+
+private actor GitHubAuthorizationPreference {
+    private var rejectedToken: String?
+
+    func shouldUse(_ token: String) -> Bool {
+        token != rejectedToken
+    }
+
+    func reject(_ token: String) {
+        rejectedToken = token
     }
 }
 

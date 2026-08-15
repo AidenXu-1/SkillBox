@@ -5,6 +5,67 @@ import Testing
 
 @Suite("GitHub source provider", .serialized)
 struct SourceProviderTests {
+    @Test("GitHub rate limits are not mistaken for private repository authorization")
+    func rateLimitIsNotAuthenticationFailure() async throws {
+        let provider = GitHubSourceProvider(session: RateLimitFixture.session())
+
+        do {
+            _ = try await provider.checkRemoteVersion(
+                repositoryFullName: "example/skills",
+                skillPath: nil,
+                trackingMode: .latestStableRelease
+            )
+            Issue.record("Expected GitHub rate limiting")
+        } catch GitHubSourceError.rateLimited(let retryAt) {
+            #expect(retryAt == Date(timeIntervalSince1970: 1_786_809_641))
+        } catch {
+            Issue.record("Expected rate limiting, got \(error)")
+        }
+    }
+
+    @Test("An expired private-repository login never blocks public repository updates")
+    func invalidTokenFallsBackToAnonymousForPublicRepository() async throws {
+        let provider = GitHubSourceProvider(
+            session: InvalidTokenPublicRepositoryFixture.session(),
+            tokenProvider: FixedTokenProvider()
+        )
+
+        let version = try await provider.checkRemoteVersion(
+            repositoryFullName: "example/skills",
+            skillPath: nil,
+            trackingMode: .latestStableRelease
+        )
+
+        #expect(version.repositoryFullName == "example/skills")
+        #expect(version.isPrivate == false)
+        #expect(InvalidTokenPublicRepositoryMockURLProtocol.authenticatedRequestCount == 1)
+    }
+
+    @Test("A newly issued login token becomes usable without restarting the app")
+    func refreshedTokenRestoresPrivateRepositoryAccessImmediately() async throws {
+        let tokenProvider = RotatingTokenProvider(token: "expired-token")
+        let provider = GitHubSourceProvider(
+            session: ReconnectedTokenFixture.session(),
+            tokenProvider: tokenProvider
+        )
+
+        _ = try await provider.checkRemoteVersion(
+            repositoryFullName: "example/public-skill",
+            skillPath: nil,
+            trackingMode: .latestStableRelease
+        )
+        await tokenProvider.setToken("new-token")
+
+        let privateVersion = try await provider.checkRemoteVersion(
+            repositoryFullName: "example/private-skill",
+            skillPath: nil,
+            trackingMode: .latestStableRelease
+        )
+
+        #expect(privateVersion.isPrivate)
+        #expect(ReconnectedTokenMockURLProtocol.receivedNewToken)
+    }
+
     @Test("A Release with one ZIP selects the uploaded install package without downloading it")
     func releaseMetadataCheck() async throws {
         let session = RemoteVersionFixture.session()
@@ -252,8 +313,166 @@ struct SourceProviderTests {
     }
 }
 
+private final class RateLimitMockURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let data = Data(#"{"message":"API rate limit exceeded"}"#.utf8)
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 403,
+            httpVersion: nil,
+            headerFields: [
+                "Content-Type": "application/json",
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": "1786809641",
+            ]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+private enum RateLimitFixture {
+    static func session() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RateLimitMockURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+}
+
+private final class InvalidTokenPublicRepositoryMockURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var authenticatedRequestCount = 0
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let isAuthenticated = request.value(forHTTPHeaderField: "Authorization") != nil
+        if isAuthenticated {
+            Self.authenticatedRequestCount += 1
+            respond(status: 401, payload: #"{"message":"Bad credentials"}"#)
+            return
+        }
+
+        let payload: String
+        switch request.url?.path {
+        case "/repos/example/skills":
+            payload = #"{"id":7,"full_name":"example/skills","default_branch":"main","private":false}"#
+        case "/repos/example/skills/releases/latest":
+            payload = #"{"id":42,"tag_name":"v1.4.0","name":"Version 1.4","published_at":"2026-08-15T00:00:00Z","zipball_url":"https://api.github.com/repos/example/skills/zipball/v1.4.0","assets":[]}"#
+        case "/repos/example/skills/commits/v1.4.0":
+            payload = #"{"sha":"commit-release","commit":{"tree":{"sha":"root-tree"}}}"#
+        default:
+            payload = #"{}"#
+        }
+        respond(status: 200, payload: payload)
+    }
+
+    private func respond(status: Int, payload: String) {
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: status,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(payload.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+private enum InvalidTokenPublicRepositoryFixture {
+    static func session() -> URLSession {
+        InvalidTokenPublicRepositoryMockURLProtocol.authenticatedRequestCount = 0
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [InvalidTokenPublicRepositoryMockURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+}
+
 private struct FixedTokenProvider: GitHubAccessTokenProvider {
     func accessToken() async throws -> String? { "test-token" }
+}
+
+private actor RotatingTokenProvider: GitHubAccessTokenProvider {
+    private var token: String?
+
+    init(token: String?) {
+        self.token = token
+    }
+
+    func accessToken() async throws -> String? { token }
+
+    func setToken(_ token: String?) {
+        self.token = token
+    }
+}
+
+private final class ReconnectedTokenMockURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var receivedNewToken = false
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let authorization = request.value(forHTTPHeaderField: "Authorization")
+        if authorization == "Bearer expired-token" {
+            respond(status: 401, payload: #"{"message":"Bad credentials"}"#)
+            return
+        }
+        if authorization == "Bearer new-token" {
+            Self.receivedNewToken = true
+        }
+
+        let path = request.url?.path ?? ""
+        let requiresNewToken = path.contains("/private-skill")
+        if requiresNewToken, authorization != "Bearer new-token" {
+            respond(status: 404, payload: #"{"message":"Not Found"}"#)
+            return
+        }
+
+        let payload: String
+        switch path {
+        case "/repos/example/public-skill":
+            payload = #"{"id":7,"full_name":"example/public-skill","default_branch":"main","private":false}"#
+        case "/repos/example/private-skill":
+            payload = #"{"id":8,"full_name":"example/private-skill","default_branch":"main","private":true}"#
+        case "/repos/example/public-skill/releases/latest", "/repos/example/private-skill/releases/latest":
+            payload = #"{"id":42,"tag_name":"v1.0.0","name":"Version 1","published_at":"2026-08-15T00:00:00Z","zipball_url":"https://api.github.com/repos/example/skill/zipball/v1.0.0","assets":[]}"#
+        case "/repos/example/public-skill/commits/v1.0.0", "/repos/example/private-skill/commits/v1.0.0":
+            payload = #"{"sha":"commit-release","commit":{"tree":{"sha":"root-tree"}}}"#
+        default:
+            payload = #"{}"#
+        }
+        respond(status: 200, payload: payload)
+    }
+
+    private func respond(status: Int, payload: String) {
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: status,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(payload.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+private enum ReconnectedTokenFixture {
+    static func session() -> URLSession {
+        ReconnectedTokenMockURLProtocol.receivedNewToken = false
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ReconnectedTokenMockURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
 }
 
 private final class AuthorizedRepositoryMockURLProtocol: URLProtocol, @unchecked Sendable {

@@ -250,12 +250,29 @@ final class AppModel: ObservableObject {
         do {
             guard let state = try await githubUpdateChecker.check(skillID: skill.id) else { return }
             await reload()
+            if let issue = state.lastCheckIssue {
+                switch issue {
+                case .rateLimited:
+                    statusMessage = state.retryAfter.map {
+                        "GitHub 暂时限制了查询，请在 \($0.formatted(date: .omitted, time: .shortened)) 后重试"
+                    } ?? "GitHub 暂时限制了查询，请稍后重试"
+                case .authenticationRequired:
+                    noticeMessage = "这份 Skill 来自私人仓库，请重新连接 GitHub 后再检查。"
+                case .repositoryPermissionRequired:
+                    noticeMessage = "SkillBox 还没有获准读取这个私人仓库，请在设置中允许访问。"
+                case .repositoryMissing:
+                    statusMessage = "找不到原来的 GitHub 仓库，请确认它是否改名、删除或改为私人仓库"
+                case .temporarilyUnavailable:
+                    statusMessage = "暂时无法连接 GitHub，本地内容没有变化"
+                }
+                return
+            }
             switch state.status {
             case .updateAvailable: statusMessage = "发现新版本 \(state.availableVersionName ?? "")"
             case .releasePackageAvailable: statusMessage = "发现同一版本的纯净安装包"
             case .needsInitialCheck: statusMessage = "需要下载一次，才能确认当前内容是否最新"
             case .current: statusMessage = "这份 Skill 已经是最新内容"
-            case .authenticationRequired: noticeMessage = "这个仓库需要重新连接 GitHub"
+            case .authenticationRequired: noticeMessage = "这份旧记录需要重新核对 GitHub 连接"
             default: break
             }
         } catch { present(error) }
@@ -469,6 +486,8 @@ final class AppModel: ObservableObject {
         state.availableAssetName = nil
         state.availableAssetDigest = nil
         state.ignoredVersionIdentifier = nil
+        state.lastCheckIssue = nil
+        state.retryAfter = nil
         state.status = .needsInitialCheck
         do {
             try await store.updateSourceState(state)
@@ -494,18 +513,20 @@ final class AppModel: ObservableObject {
         isBusy = true
         statusMessage = "正在检查 GitHub 更新…"
         defer { isBusy = false }
-        var checkedStatuses: [GitHubSourceStatus] = []
+        var checkedStates: [GitHubSourceState] = []
         for state in states {
             do {
-                if let status = try await githubUpdateChecker.check(skillID: state.skillID)?.status {
-                    checkedStatuses.append(status)
+                if let checkedState = try await githubUpdateChecker.check(skillID: state.skillID) {
+                    checkedStates.append(checkedState)
                 }
             } catch {
-                checkedStatuses.append(.unavailable)
+                var unavailable = state
+                unavailable.lastCheckIssue = .temporarilyUnavailable
+                checkedStates.append(unavailable)
             }
         }
         await reload()
-        statusMessage = GitHubUpdateSummary(statuses: checkedStatuses).statusMessage
+        statusMessage = GitHubUpdateSummary(states: checkedStates).statusMessage
     }
 
     func cancelCandidatePreview() {
@@ -594,9 +615,25 @@ final class AppModel: ObservableObject {
         }
         do {
             githubAuthorizedRepositories = try await githubProvider.authorizedRepositories()
+            let accessByRepository = Dictionary(uniqueKeysWithValues: githubAuthorizedRepositories.map {
+                ($0.fullName.lowercased(), $0.isPrivate)
+            })
+            var sourceStates = await store.currentSnapshot().sourceStates
+            var sourceStatesChanged = false
+            for index in sourceStates.indices {
+                guard let isPrivate = accessByRepository[sourceStates[index].repositoryFullName.lowercased()] else { continue }
+                if sourceStates[index].repositoryIsPrivate != isPrivate {
+                    sourceStates[index].repositoryIsPrivate = isPrivate
+                    sourceStatesChanged = true
+                }
+            }
+            if sourceStatesChanged {
+                try await store.replaceSourceStates(sourceStates)
+                await reload()
+            }
             if !githubAuthorizedRepositories.isEmpty {
                 isWaitingForGitHubRepositorySelection = false
-                githubLoginStatus = "连接完成，已找到 (githubAuthorizedRepositories.count) 个可读取的仓库。"
+                githubLoginStatus = "连接完成，已找到 \(githubAuthorizedRepositories.count) 个可读取的仓库。"
             }
         } catch GitHubSourceError.authenticationRequired {
             isGitHubConnected = false
@@ -1098,6 +1135,7 @@ final class AppModel: ObservableObject {
             skillID: skillID,
             repositoryID: remote.repositoryID,
             repositoryFullName: remote.repositoryFullName,
+            repositoryIsPrivate: remote.isPrivate,
             skillPath: skillPath,
             trackingMode: remote.trackingMode,
             defaultBranch: remote.defaultBranch,

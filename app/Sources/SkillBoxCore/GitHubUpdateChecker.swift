@@ -20,6 +20,12 @@ public actor GitHubUpdateChecker {
         let snapshot = await store.currentSnapshot()
         guard var state = snapshot.sourceStates.first(where: { $0.skillID == skillID }) else { return nil }
         guard state.checkingEnabled else { return state }
+        if state.lastCheckIssue == .rateLimited,
+           let retryAfter = state.retryAfter,
+           retryAfter > now()
+        {
+            return state
+        }
         do {
             let remote = try await checker.checkRemoteVersion(
                 repositoryFullName: state.repositoryFullName,
@@ -27,6 +33,7 @@ public actor GitHubUpdateChecker {
                 trackingMode: state.trackingMode
             )
             state.repositoryID = remote.repositoryID
+            state.repositoryIsPrivate = remote.isPrivate
             state.defaultBranch = remote.defaultBranch
             state.availableVersionIdentifier = remote.versionIdentifier
             state.availableVersionName = remote.versionName
@@ -37,6 +44,8 @@ public actor GitHubUpdateChecker {
             state.availableAssetName = remote.selectedReleaseAsset?.name
             state.availableAssetDigest = remote.selectedReleaseAsset?.digest
             state.lastCheckedAt = now()
+            state.lastCheckIssue = nil
+            state.retryAfter = nil
             if legacySourceArchiveRecordIsCurrent(state: state, remote: remote) {
                 state.currentReleaseID = remote.releaseID
                 state.currentVersionIdentifier = remote.versionIdentifier
@@ -54,18 +63,63 @@ public actor GitHubUpdateChecker {
             }
             try await store.updateSourceState(state)
             return state
-        } catch GitHubSourceError.authenticationRequired,
-                GitHubSourceError.repositoryUnavailableOrUnauthorized {
-            state.status = .authenticationRequired
+        } catch GitHubSourceError.rateLimited(let retryAt) {
+            let checkedAt = now()
+            var states = snapshot.sourceStates
+            for index in states.indices where states[index].checkingEnabled {
+                states[index].status = restoredVersionStatus(states[index])
+                states[index].lastCheckIssue = .rateLimited
+                states[index].retryAfter = retryAt
+                states[index].lastCheckedAt = checkedAt
+            }
+            try await store.replaceSourceStates(states)
+            return states.first(where: { $0.skillID == skillID })
+        } catch GitHubSourceError.authenticationRequired {
+            state.status = restoredVersionStatus(state)
+            state.lastCheckIssue = state.repositoryIsPrivate == true ? .authenticationRequired : .temporarilyUnavailable
+            state.retryAfter = nil
+            state.lastCheckedAt = now()
+            try await store.updateSourceState(state)
+            return state
+        } catch GitHubSourceError.repositoryUnavailableOrUnauthorized {
+            state.status = restoredVersionStatus(state)
+            state.lastCheckIssue = state.repositoryIsPrivate == true ? .authenticationRequired : .repositoryMissing
+            state.retryAfter = nil
+            state.lastCheckedAt = now()
+            try await store.updateSourceState(state)
+            return state
+        } catch GitHubSourceError.repositoryPermissionRequired {
+            state.status = restoredVersionStatus(state)
+            state.lastCheckIssue = state.repositoryIsPrivate == true ? .repositoryPermissionRequired : .repositoryMissing
+            state.retryAfter = nil
             state.lastCheckedAt = now()
             try await store.updateSourceState(state)
             return state
         } catch {
-            state.status = .unavailable
+            state.status = restoredVersionStatus(state)
+            state.lastCheckIssue = .temporarilyUnavailable
+            state.retryAfter = nil
             state.lastCheckedAt = now()
             try await store.updateSourceState(state)
-            throw error
+            return state
         }
+    }
+
+    private func restoredVersionStatus(_ state: GitHubSourceState) -> GitHubSourceStatus {
+        guard state.status == .authenticationRequired || state.status == .unavailable else { return state.status }
+        guard state.checkingEnabled else { return .checkingStopped }
+        guard state.currentTreeSHA != nil else { return .needsInitialCheck }
+        if state.ignoredVersionIdentifier == state.availableVersionIdentifier,
+           state.availableVersionIdentifier != nil
+        {
+            return .ignored
+        }
+        if state.availableVersionIdentifier != nil,
+           state.availableVersionIdentifier != state.currentVersionIdentifier
+        {
+            return .updateAvailable
+        }
+        return .current
     }
 
     private func isCurrent(state: GitHubSourceState, remote: GitHubRemoteVersion) -> Bool {
@@ -137,6 +191,8 @@ public actor GitHubUpdateChecker {
         guard var state = snapshot.sourceStates.first(where: { $0.skillID == skillID }) else { return }
         state.checkingEnabled = enabled
         state.status = enabled ? .needsInitialCheck : .checkingStopped
+        state.lastCheckIssue = nil
+        state.retryAfter = nil
         try await store.updateSourceState(state)
     }
 }

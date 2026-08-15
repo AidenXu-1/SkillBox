@@ -139,6 +139,32 @@ struct LibraryStoreTests {
         #expect(state.status == .releasePackageAvailable)
     }
 
+    @Test("Legacy public-source authorization errors are migrated away from private-login prompts")
+    func normalizesLegacyPublicAuthorizationPromptOnLoad() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "central"))
+        try await store.updateSourceState(.init(
+            skillID: record.id,
+            repositoryFullName: "example/public-skill",
+            currentVersionIdentifier: "release:42",
+            currentCommitSHA: "commit-1",
+            currentTreeSHA: "tree-1",
+            availableVersionIdentifier: "release:42",
+            availableCommitSHA: "commit-1",
+            availableTreeSHA: "tree-1",
+            checkingEnabled: true,
+            status: .authenticationRequired
+        ))
+
+        let reloaded = try LibraryStore(root: fixture.storeRoot)
+        let state = try #require(await reloaded.currentSnapshot().sourceStates.first)
+
+        #expect(state.status == .current)
+        #expect(state.lastCheckIssue == .temporarilyUnavailable)
+    }
+
     @Test("Legacy UUID folders migrate to readable Skill names")
     func migratesLegacyStorageFolder() async throws {
         let fixture = try SyncFixture()

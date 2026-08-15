@@ -4,6 +4,61 @@ import Testing
 
 @Suite("GitHub update state")
 struct GitHubUpdateCheckerTests {
+    @Test("Rate limiting keeps the known version state and never asks for private repository access")
+    func rateLimitIsRecordedSeparatelyFromVersionState() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        let retryAt = Date(timeIntervalSince1970: 1_786_809_641)
+        let checker = GitHubUpdateChecker(checker: RateLimitedChecker(retryAt: retryAt), store: store)
+        try await store.updateSourceState(fixture.state(skillID: skill.id))
+
+        let state = try await checker.check(skillID: skill.id)
+
+        #expect(state?.status == .current)
+        #expect(state?.lastCheckIssue == .rateLimited)
+        #expect(state?.retryAfter == retryAt)
+    }
+
+    @Test("Repeated checks wait until GitHub's retry time instead of sending more requests")
+    func rateLimitStopsRepeatedRequests() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        let retryAt = Date(timeIntervalSince1970: 2_000)
+        let remote = CountingRateLimitedChecker(retryAt: retryAt)
+        let checker = GitHubUpdateChecker(checker: remote, store: store, now: { Date(timeIntervalSince1970: 1_000) })
+        try await store.updateSourceState(fixture.state(skillID: skill.id))
+
+        _ = try await checker.check(skillID: skill.id)
+        _ = try await checker.check(skillID: skill.id)
+
+        #expect(await remote.calls == 1)
+    }
+
+    @Test("One GitHub rate limit pauses the remaining repository checks")
+    func rateLimitPausesAllTrackedSources() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let first = try await fixture.importSkill(named: "first", into: store)
+        let second = try await fixture.importSkill(named: "second", into: store)
+        let retryAt = Date(timeIntervalSince1970: 2_000)
+        let remote = CountingRateLimitedChecker(retryAt: retryAt)
+        let checker = GitHubUpdateChecker(checker: remote, store: store, now: { Date(timeIntervalSince1970: 1_000) })
+        try await store.updateSourceState(fixture.state(skillID: first.id))
+        try await store.updateSourceState(fixture.state(skillID: second.id))
+
+        _ = try await checker.check(skillID: first.id)
+        _ = try await checker.check(skillID: second.id)
+
+        #expect(await remote.calls == 1)
+        let states = await store.currentSnapshot().sourceStates
+        #expect(states.allSatisfy { $0.lastCheckIssue == .rateLimited && $0.retryAfter == retryAt })
+    }
+
     @Test("Ignored versions stay quiet but the next version appears")
     func ignoreOnlyOneVersion() async throws {
         let fixture = try UpdateFixture()
@@ -43,11 +98,63 @@ struct GitHubUpdateCheckerTests {
         let store = try fixture.store()
         let skill = try await fixture.importSkill(into: store)
         let checker = GitHubUpdateChecker(checker: AuthenticationRequiredChecker(), store: store)
-        try await store.updateSourceState(fixture.state(skillID: skill.id))
+        var sourceState = fixture.state(skillID: skill.id)
+        sourceState.repositoryIsPrivate = true
+        try await store.updateSourceState(sourceState)
 
         let state = try await checker.check(skillID: skill.id)
-        #expect(state?.status == .authenticationRequired)
+        #expect(state?.status == .current)
+        #expect(state?.lastCheckIssue == .authenticationRequired)
         #expect(await store.currentSnapshot().skills.contains { $0.id == skill.id })
+    }
+
+    @Test("A public repository never asks the user to connect private GitHub")
+    func publicRepositoryAuthenticationFailureUsesNeutralIssue() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        let checker = GitHubUpdateChecker(checker: AuthenticationRequiredChecker(), store: store)
+        var sourceState = fixture.state(skillID: skill.id)
+        sourceState.repositoryIsPrivate = false
+        try await store.updateSourceState(sourceState)
+
+        let state = try await checker.check(skillID: skill.id)
+
+        #expect(state?.status == .current)
+        #expect(state?.lastCheckIssue == .temporarilyUnavailable)
+    }
+
+    @Test("A disconnected private repository asks to reconnect, not to change repository permissions")
+    func disconnectedPrivateRepositoryAsksToReconnect() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        let checker = GitHubUpdateChecker(checker: RepositoryUnavailableChecker(), store: store)
+        var sourceState = fixture.state(skillID: skill.id)
+        sourceState.repositoryIsPrivate = true
+        try await store.updateSourceState(sourceState)
+
+        let state = try await checker.check(skillID: skill.id)
+
+        #expect(state?.lastCheckIssue == .authenticationRequired)
+    }
+
+    @Test("A connected private repository outside the allowed list asks for repository permission")
+    func connectedPrivateRepositoryAsksForPermission() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        let checker = GitHubUpdateChecker(checker: RepositoryPermissionChecker(), store: store)
+        var sourceState = fixture.state(skillID: skill.id)
+        sourceState.repositoryIsPrivate = true
+        try await store.updateSourceState(sourceState)
+
+        let state = try await checker.check(skillID: skill.id)
+
+        #expect(state?.lastCheckIssue == .repositoryPermissionRequired)
     }
 
     @Test("Replacing a Release asset is detected even when the repository tree is unchanged")
@@ -224,6 +331,40 @@ private struct AuthenticationRequiredChecker: GitHubRemoteVersionChecking {
     }
 }
 
+private struct RepositoryUnavailableChecker: GitHubRemoteVersionChecking {
+    func checkRemoteVersion(repositoryFullName: String, skillPath: String?, trackingMode: GitHubTrackingMode) async throws -> GitHubRemoteVersion {
+        throw GitHubSourceError.repositoryUnavailableOrUnauthorized
+    }
+}
+
+private struct RepositoryPermissionChecker: GitHubRemoteVersionChecking {
+    func checkRemoteVersion(repositoryFullName: String, skillPath: String?, trackingMode: GitHubTrackingMode) async throws -> GitHubRemoteVersion {
+        throw GitHubSourceError.repositoryPermissionRequired
+    }
+}
+
+private struct RateLimitedChecker: GitHubRemoteVersionChecking {
+    let retryAt: Date
+
+    func checkRemoteVersion(repositoryFullName: String, skillPath: String?, trackingMode: GitHubTrackingMode) async throws -> GitHubRemoteVersion {
+        throw GitHubSourceError.rateLimited(retryAt: retryAt)
+    }
+}
+
+private actor CountingRateLimitedChecker: GitHubRemoteVersionChecking {
+    let retryAt: Date
+    var calls = 0
+
+    init(retryAt: Date) {
+        self.retryAt = retryAt
+    }
+
+    func checkRemoteVersion(repositoryFullName: String, skillPath: String?, trackingMode: GitHubTrackingMode) async throws -> GitHubRemoteVersion {
+        calls += 1
+        throw GitHubSourceError.rateLimited(retryAt: retryAt)
+    }
+}
+
 private actor MockVersionChecker: GitHubRemoteVersionChecking {
     var version: GitHubRemoteVersion
     var calls = 0
@@ -240,14 +381,17 @@ private struct UpdateFixture {
     init() throws { try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true) }
     func store() throws -> LibraryStore { try LibraryStore(root: root.appendingPathComponent("store")) }
     func importSkill(into store: LibraryStore) async throws -> SkillRecord {
-        let source = root.appendingPathComponent("source/demo")
+        try await importSkill(named: "demo", into: store)
+    }
+    func importSkill(named name: String, into store: LibraryStore) async throws -> SkillRecord {
+        let source = root.appendingPathComponent("source/\(name)")
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
-        try "---\nname: demo\ndescription: Demo\n---\n".write(to: source.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+        try "---\nname: \(name)\ndescription: Demo\n---\n".write(to: source.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
         let candidate = SkillCandidate(
             sourceURL: source,
-            directoryName: "demo",
-            canonicalName: "demo",
-            displayName: "demo",
+            directoryName: name,
+            canonicalName: name,
+            displayName: name,
             description: "Demo",
             fingerprint: try SHA256SkillFingerprinter().fingerprint(directory: source),
             source: .init(kind: .github, displayName: "example/skills", locator: "https://github.com/example/skills", repository: "example/skills", revision: "old", skillPath: "skills/demo"),

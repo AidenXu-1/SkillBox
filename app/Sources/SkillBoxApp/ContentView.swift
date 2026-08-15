@@ -240,7 +240,9 @@ private struct OverviewView: View {
         model.snapshot.sourceStates.count { $0.status == .updateAvailable || $0.status == .releasePackageAvailable }
     }
     private var sourceAttentionCount: Int {
-        model.snapshot.sourceStates.count { $0.status == .authenticationRequired || $0.status == .unavailable }
+        model.snapshot.sourceStates.count {
+            $0.lastCheckIssue != nil || $0.status == .authenticationRequired || $0.status == .unavailable
+        }
     }
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 20) {
@@ -550,8 +552,11 @@ private struct SkillOrganizerSidebar: View {
             case .installed:
                 return model.snapshot.installations.contains { $0.skillID == skill.id }
             case .attention:
-                let sourceStatus = model.snapshot.sourceStates.first { $0.skillID == skill.id }?.status
-                return skill.riskReport.highestSeverity >= .caution || sourceStatus == .authenticationRequired || sourceStatus == .unavailable
+                let sourceState = model.snapshot.sourceStates.first { $0.skillID == skill.id }
+                return skill.riskReport.highestSeverity >= .caution ||
+                    sourceState?.lastCheckIssue != nil ||
+                    sourceState?.status == .authenticationRequired ||
+                    sourceState?.status == .unavailable
             }
         }
     }
@@ -858,7 +863,7 @@ private struct GitHubSourceCard: View {
             }
             Spacer(minLength: 12)
             Button(primaryTitle, action: primaryAction)
-                .buttonStyle(SkillBoxHoverButtonStyle(kind: state?.status == .updateAvailable || state?.status == .releasePackageAvailable ? .primary : .secondary))
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: isActionableUpdate ? .primary : .secondary))
                 .disabled(model.isBusy || state == nil)
             if let state {
                 Menu {
@@ -907,7 +912,16 @@ private struct GitHubSourceCard: View {
     }
 
     private var title: String {
-        switch state?.status {
+        if let issue = state?.lastCheckIssue {
+            switch issue {
+            case .authenticationRequired: return "私人仓库连接已失效"
+            case .repositoryPermissionRequired: return "需要允许访问这个私人仓库"
+            case .rateLimited: return "GitHub 查询次数暂时用完"
+            case .repositoryMissing: return "找不到原来的 GitHub 仓库"
+            case .temporarilyUnavailable: return "暂时无法连接 GitHub"
+            }
+        }
+        return switch state?.status {
         case .updateAvailable: "发现新版本"
         case .releasePackageAvailable: "有更干净的安装包"
         case .ignored: "这个版本已忽略"
@@ -921,7 +935,24 @@ private struct GitHubSourceCard: View {
     }
 
     private var subtitle: String {
-        switch state?.status {
+        if let issue = state?.lastCheckIssue {
+            switch issue {
+            case .authenticationRequired:
+                return "本地 Skill 不受影响。重新连接后，私人仓库才会继续检查。"
+            case .repositoryPermissionRequired:
+                return "本地 Skill 不受影响。请在 GitHub 中把这个仓库加入允许访问的列表。"
+            case .rateLimited:
+                if let retryAfter = state?.retryAfter {
+                    return "预计 \(retryAfter.formatted(date: .omitted, time: .shortened)) 后可继续。公开仓库无需连接私人仓库。"
+                }
+                return "请稍后再试。公开仓库无需连接私人仓库。"
+            case .repositoryMissing:
+                return "仓库可能已改名、删除或改为私人仓库。本地 Skill 仍然保留。"
+            case .temporarilyUnavailable:
+                return "可能是网络或 GitHub 临时异常。本地内容没有变化，请稍后重试。"
+            }
+        }
+        return switch state?.status {
         case .updateAvailable: "先查看文件变化，再决定是否更新和重新安装。"
         case .releasePackageAvailable: "这是同一个 GitHub Release，不是作者新发了版本。建议查看后替换为作者提供的纯净安装包。"
         case .ignored: "这次不再提醒；GitHub 出现下一个版本时仍会告诉你。"
@@ -940,7 +971,16 @@ private struct GitHubSourceCard: View {
     }
 
     private var primaryTitle: String {
-        switch state?.status {
+        if let issue = state?.lastCheckIssue {
+            switch issue {
+            case .authenticationRequired: return "前往设置"
+            case .repositoryPermissionRequired: return "允许访问"
+            case .rateLimited: return isWaitingForRateLimit ? "稍后可重试" : "重新检查"
+            case .repositoryMissing: return "查看原仓库"
+            case .temporarilyUnavailable: return "重新检查"
+            }
+        }
+        return switch state?.status {
         case .updateAvailable, .ignored: "查看这次更新"
         case .releasePackageAvailable: "查看安装包变化"
         case .checkingStopped: "重新开启"
@@ -950,7 +990,16 @@ private struct GitHubSourceCard: View {
     }
 
     private var icon: String {
-        switch state?.status {
+        if let issue = state?.lastCheckIssue {
+            switch issue {
+            case .authenticationRequired: return "person.crop.circle.badge.exclamationmark"
+            case .repositoryPermissionRequired: return "lock.trianglebadge.exclamationmark"
+            case .rateLimited: return "clock.badge.exclamationmark"
+            case .repositoryMissing: return "link.badge.plus"
+            case .temporarilyUnavailable: return "wifi.exclamationmark"
+            }
+        }
+        return switch state?.status {
         case .updateAvailable: "arrow.down.circle.fill"
         case .releasePackageAvailable: "archivebox.fill"
         case .ignored: "eye.slash.fill"
@@ -964,7 +1013,13 @@ private struct GitHubSourceCard: View {
     }
 
     private var color: Color {
-        switch state?.status {
+        if let issue = state?.lastCheckIssue {
+            switch issue {
+            case .authenticationRequired, .repositoryPermissionRequired: return .orange
+            case .rateLimited, .repositoryMissing, .temporarilyUnavailable: return .secondary
+            }
+        }
+        return switch state?.status {
         case .updateAvailable, .releasePackageAvailable: .blue
         case .ignored, .checkingStopped, .needsInitialCheck: .orange
         case .authenticationRequired, .unavailable: .red
@@ -974,6 +1029,20 @@ private struct GitHubSourceCard: View {
     }
 
     private func primaryAction() {
+        if let issue = state?.lastCheckIssue {
+            switch issue {
+            case .authenticationRequired:
+                openSettings()
+            case .repositoryPermissionRequired:
+                if model.isGitHubConnected { model.manageGitHubRepositories() }
+                else { openSettings() }
+            case .repositoryMissing:
+                model.openGitHubSource(skill)
+            case .rateLimited, .temporarilyUnavailable:
+                Task { await model.checkForUpdate(skill) }
+            }
+            return
+        }
         switch state?.status {
         case .updateAvailable, .releasePackageAvailable, .ignored:
             model.startAvailableUpdatePreview(skill)
@@ -987,6 +1056,17 @@ private struct GitHubSourceCard: View {
         default:
             Task { await model.checkForUpdate(skill) }
         }
+    }
+
+    private var isActionableUpdate: Bool {
+        state?.lastCheckIssue == nil && (state?.status == .updateAvailable || state?.status == .releasePackageAvailable)
+    }
+
+    private var isWaitingForRateLimit: Bool {
+        guard state?.lastCheckIssue == .rateLimited,
+              let retryAfter = state?.retryAfter
+        else { return false }
+        return retryAfter > Date()
     }
 }
 

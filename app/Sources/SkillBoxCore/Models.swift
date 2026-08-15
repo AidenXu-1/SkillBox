@@ -61,11 +61,20 @@ public enum GitHubSourceStatus: String, Codable, Sendable {
     case unavailable
 }
 
+public enum GitHubSourceIssue: String, Codable, Sendable {
+    case authenticationRequired
+    case repositoryPermissionRequired
+    case rateLimited
+    case repositoryMissing
+    case temporarilyUnavailable
+}
+
 public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID { skillID }
     public var skillID: UUID
     public var repositoryID: Int64?
     public var repositoryFullName: String
+    public var repositoryIsPrivate: Bool?
     public var skillPath: String?
     public var trackingMode: GitHubTrackingMode
     public var defaultBranch: String?
@@ -87,6 +96,8 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
     public var availableAssetDigest: String?
     public var ignoredVersionIdentifier: String?
     public var lastCheckedAt: Date?
+    public var lastCheckIssue: GitHubSourceIssue?
+    public var retryAfter: Date?
     public var checkingEnabled: Bool
     public var status: GitHubSourceStatus
 
@@ -94,6 +105,7 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
         skillID: UUID,
         repositoryID: Int64? = nil,
         repositoryFullName: String,
+        repositoryIsPrivate: Bool? = nil,
         skillPath: String? = nil,
         trackingMode: GitHubTrackingMode = .latestStableRelease,
         defaultBranch: String? = nil,
@@ -115,12 +127,15 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
         availableAssetDigest: String? = nil,
         ignoredVersionIdentifier: String? = nil,
         lastCheckedAt: Date? = nil,
+        lastCheckIssue: GitHubSourceIssue? = nil,
+        retryAfter: Date? = nil,
         checkingEnabled: Bool = true,
         status: GitHubSourceStatus = .needsInitialCheck
     ) {
         self.skillID = skillID
         self.repositoryID = repositoryID
         self.repositoryFullName = repositoryFullName
+        self.repositoryIsPrivate = repositoryIsPrivate
         self.skillPath = skillPath
         self.trackingMode = trackingMode
         self.defaultBranch = defaultBranch
@@ -142,6 +157,8 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
         self.availableAssetDigest = availableAssetDigest
         self.ignoredVersionIdentifier = ignoredVersionIdentifier
         self.lastCheckedAt = lastCheckedAt
+        self.lastCheckIssue = lastCheckIssue
+        self.retryAfter = retryAfter
         self.checkingEnabled = checkingEnabled
         self.status = status
     }

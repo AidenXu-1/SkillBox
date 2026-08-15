@@ -546,6 +546,20 @@ public actor LibraryStore {
     private static func normalizeLegacyGitHubUpdateStatuses(_ states: inout [GitHubSourceState]) -> Bool {
         var changed = false
         for index in states.indices {
+            if states[index].lastCheckIssue == nil,
+               states[index].status == .authenticationRequired || states[index].status == .unavailable
+            {
+                if states[index].status == .authenticationRequired,
+                   states[index].repositoryIsPrivate == true
+                {
+                    states[index].lastCheckIssue = .authenticationRequired
+                } else {
+                    states[index].lastCheckIssue = .temporarilyUnavailable
+                }
+                states[index].status = restoredLegacyVersionStatus(states[index])
+                changed = true
+            }
+
             guard states[index].trackingMode == .latestStableRelease,
                   states[index].status == .updateAvailable,
                   states[index].currentReleaseID == nil,
@@ -568,5 +582,21 @@ public actor LibraryStore {
             changed = true
         }
         return changed
+    }
+
+    private static func restoredLegacyVersionStatus(_ state: GitHubSourceState) -> GitHubSourceStatus {
+        guard state.checkingEnabled else { return .checkingStopped }
+        guard state.currentTreeSHA != nil else { return .needsInitialCheck }
+        if state.ignoredVersionIdentifier == state.availableVersionIdentifier,
+           state.availableVersionIdentifier != nil
+        {
+            return .ignored
+        }
+        if state.availableVersionIdentifier != nil,
+           state.availableVersionIdentifier != state.currentVersionIdentifier
+        {
+            return .updateAvailable
+        }
+        return .current
     }
 }
