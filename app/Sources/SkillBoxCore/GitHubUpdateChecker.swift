@@ -37,12 +37,18 @@ public actor GitHubUpdateChecker {
             state.availableAssetName = remote.selectedReleaseAsset?.name
             state.availableAssetDigest = remote.selectedReleaseAsset?.digest
             state.lastCheckedAt = now()
+            if legacySourceArchiveRecordIsCurrent(state: state, remote: remote) {
+                state.currentReleaseID = remote.releaseID
+                state.currentVersionIdentifier = remote.versionIdentifier
+            }
             if state.currentTreeSHA == nil {
                 state.status = .needsInitialCheck
             } else if isCurrent(state: state, remote: remote) {
                 state.status = .current
             } else if state.ignoredVersionIdentifier == remote.versionIdentifier {
                 state.status = .ignored
+            } else if sameReleaseHasNewInstallPackage(state: state, remote: remote) {
+                state.status = .releasePackageAvailable
             } else {
                 state.status = .updateAvailable
             }
@@ -85,6 +91,31 @@ public actor GitHubUpdateChecker {
 
         guard let remoteDigest = normalizedDigest(remoteAsset.digest) else { return true }
         return normalizedDigest(state.currentAssetDigest) == remoteDigest
+    }
+
+    private func legacySourceArchiveRecordIsCurrent(state: GitHubSourceState, remote: GitHubRemoteVersion) -> Bool {
+        guard remote.trackingMode == .latestStableRelease,
+              remote.usesSourceArchiveFallback,
+              let remoteReleaseID = remote.releaseID
+        else { return false }
+        return state.currentReleaseID == nil
+            && state.currentAssetID == nil
+            && state.currentVersionIdentifier == "release:\(remoteReleaseID)"
+            && state.currentCommitSHA == remote.commitSHA
+            && state.currentTreeSHA == remote.treeSHA
+    }
+
+    private func sameReleaseHasNewInstallPackage(state: GitHubSourceState, remote: GitHubRemoteVersion) -> Bool {
+        guard remote.trackingMode == .latestStableRelease,
+              !remote.usesSourceArchiveFallback,
+              let remoteReleaseID = remote.releaseID,
+              remote.selectedReleaseAsset != nil
+        else { return false }
+        return state.currentReleaseID == nil
+            && state.currentAssetID == nil
+            && state.currentVersionIdentifier == "release:\(remoteReleaseID)"
+            && state.currentCommitSHA == remote.commitSHA
+            && state.currentTreeSHA == remote.treeSHA
     }
 
     private func normalizedDigest(_ digest: String?) -> String? {

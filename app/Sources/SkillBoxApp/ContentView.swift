@@ -236,7 +236,9 @@ private struct OverviewView: View {
     let goTo: (SidebarItem) -> Void
     let reviewConflict: (ConflictGroup) -> Void
     let reviewAllConflicts: () -> Void
-    private var updateCount: Int { model.snapshot.sourceStates.count { $0.status == .updateAvailable } }
+    private var updateCount: Int {
+        model.snapshot.sourceStates.count { $0.status == .updateAvailable || $0.status == .releasePackageAvailable }
+    }
     private var sourceAttentionCount: Int {
         model.snapshot.sourceStates.count { $0.status == .authenticationRequired || $0.status == .unavailable }
     }
@@ -543,7 +545,8 @@ private struct SkillOrganizerSidebar: View {
             switch filter {
             case .all: return true
             case .updates:
-                return model.snapshot.sourceStates.first { $0.skillID == skill.id }?.status == .updateAvailable
+                let status = model.snapshot.sourceStates.first { $0.skillID == skill.id }?.status
+                return status == .updateAvailable || status == .releasePackageAvailable
             case .installed:
                 return model.snapshot.installations.contains { $0.skillID == skill.id }
             case .attention:
@@ -670,7 +673,8 @@ private struct SkillOrganizerRow: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 4)
-                if model.snapshot.sourceStates.first(where: { $0.skillID == skill.id })?.status == .updateAvailable {
+                let status = model.snapshot.sourceStates.first(where: { $0.skillID == skill.id })?.status
+                if status == .updateAvailable || status == .releasePackageAvailable {
                     Text("有更新")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.blue)
@@ -838,7 +842,8 @@ private struct GitHubSourceCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 7) {
                     Text(title).font(.headline)
-                    if let version = state?.availableVersionName, state?.status == .updateAvailable || state?.status == .ignored {
+                    if let version = state?.availableVersionName,
+                       state?.status == .updateAvailable || state?.status == .releasePackageAvailable || state?.status == .ignored {
                         Text(version)
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 7)
@@ -853,7 +858,7 @@ private struct GitHubSourceCard: View {
             }
             Spacer(minLength: 12)
             Button(primaryTitle, action: primaryAction)
-                .buttonStyle(SkillBoxHoverButtonStyle(kind: state?.status == .updateAvailable ? .primary : .secondary))
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: state?.status == .updateAvailable || state?.status == .releasePackageAvailable ? .primary : .secondary))
                 .disabled(model.isBusy || state == nil)
             if let state {
                 Menu {
@@ -870,7 +875,7 @@ private struct GitHubSourceCard: View {
                             Label("默认分支", systemImage: state.trackingMode == .defaultBranch ? "checkmark" : "arrow.triangle.branch")
                         }
                     }
-                    if state.status == .updateAvailable {
+                    if state.status == .updateAvailable || state.status == .releasePackageAvailable {
                         Button("忽略这个版本") {
                             Task { await model.ignoreAvailableUpdate(skill) }
                         }
@@ -904,6 +909,7 @@ private struct GitHubSourceCard: View {
     private var title: String {
         switch state?.status {
         case .updateAvailable: "发现新版本"
+        case .releasePackageAvailable: "有更干净的安装包"
         case .ignored: "这个版本已忽略"
         case .checkingStopped: "已停止检查更新"
         case .authenticationRequired: "需要重新连接 GitHub"
@@ -917,6 +923,7 @@ private struct GitHubSourceCard: View {
     private var subtitle: String {
         switch state?.status {
         case .updateAvailable: "先查看文件变化，再决定是否更新和重新安装。"
+        case .releasePackageAvailable: "这是同一个 GitHub Release，不是作者新发了版本。建议查看后替换为作者提供的纯净安装包。"
         case .ignored: "这次不再提醒；GitHub 出现下一个版本时仍会告诉你。"
         case .checkingStopped: "SkillBox 不会再访问这个仓库，可随时重新开启。"
         case .authenticationRequired: "本地内容仍然保留，重新授权后才能继续检查。"
@@ -935,6 +942,7 @@ private struct GitHubSourceCard: View {
     private var primaryTitle: String {
         switch state?.status {
         case .updateAvailable, .ignored: "查看这次更新"
+        case .releasePackageAvailable: "查看安装包变化"
         case .checkingStopped: "重新开启"
         case .authenticationRequired: "前往设置"
         default: "检查更新"
@@ -944,6 +952,7 @@ private struct GitHubSourceCard: View {
     private var icon: String {
         switch state?.status {
         case .updateAvailable: "arrow.down.circle.fill"
+        case .releasePackageAvailable: "archivebox.fill"
         case .ignored: "eye.slash.fill"
         case .checkingStopped: "pause.circle.fill"
         case .authenticationRequired: "person.crop.circle.badge.exclamationmark"
@@ -956,7 +965,7 @@ private struct GitHubSourceCard: View {
 
     private var color: Color {
         switch state?.status {
-        case .updateAvailable: .blue
+        case .updateAvailable, .releasePackageAvailable: .blue
         case .ignored, .checkingStopped, .needsInitialCheck: .orange
         case .authenticationRequired, .unavailable: .red
         case .current: .green
@@ -966,7 +975,7 @@ private struct GitHubSourceCard: View {
 
     private func primaryAction() {
         switch state?.status {
-        case .updateAvailable, .ignored:
+        case .updateAvailable, .releasePackageAvailable, .ignored:
             model.startAvailableUpdatePreview(skill)
         case .checkingStopped:
             Task {

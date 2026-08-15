@@ -528,6 +528,9 @@ public actor LibraryStore {
             ))
             didMigrate = true
         }
+        if normalizeLegacyGitHubUpdateStatuses(&sourceStates) {
+            didMigrate = true
+        }
         let snapshot = try LibrarySnapshot(
             skills: skills,
             targets: load([AgentTarget].self, name: "targets.json", fallback: []),
@@ -538,5 +541,32 @@ public actor LibraryStore {
             sourceStates: sourceStates
         )
         return (snapshot, didMigrate)
+    }
+
+    private static func normalizeLegacyGitHubUpdateStatuses(_ states: inout [GitHubSourceState]) -> Bool {
+        var changed = false
+        for index in states.indices {
+            guard states[index].trackingMode == .latestStableRelease,
+                  states[index].status == .updateAvailable,
+                  states[index].currentReleaseID == nil,
+                  states[index].currentAssetID == nil,
+                  let availableReleaseID = states[index].availableReleaseID,
+                  states[index].currentVersionIdentifier == "release:\(availableReleaseID)",
+                  states[index].currentCommitSHA == states[index].availableCommitSHA,
+                  states[index].currentTreeSHA == states[index].availableTreeSHA
+            else { continue }
+
+            if states[index].availableAssetID != nil {
+                states[index].status = .releasePackageAvailable
+            } else if states[index].availableVersionIdentifier?.contains(":source:") == true {
+                states[index].status = .current
+                states[index].currentReleaseID = availableReleaseID
+                states[index].currentVersionIdentifier = states[index].availableVersionIdentifier
+            } else {
+                continue
+            }
+            changed = true
+        }
+        return changed
     }
 }

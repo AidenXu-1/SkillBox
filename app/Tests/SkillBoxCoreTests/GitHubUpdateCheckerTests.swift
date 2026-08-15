@@ -134,6 +134,88 @@ struct GitHubUpdateCheckerTests {
         let result = try await GitHubUpdateChecker(checker: MockVersionChecker(version: remote), store: store).check(skillID: skill.id)
         #expect(result?.status == .current)
     }
+
+    @Test("Legacy source archive records stay current when the same Release source has not changed")
+    func legacySourceArchiveRecordStaysCurrent() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        var state = fixture.state(skillID: skill.id)
+        state.currentVersionIdentifier = "release:42"
+        state.currentVersionName = "v1.4.0"
+        state.currentCommitSHA = "commit-1"
+        state.currentTreeSHA = "tree-1"
+        state.currentReleaseID = nil
+        state.currentAssetID = nil
+        try await store.updateSourceState(state)
+
+        let remote = GitHubRemoteVersion(
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            isPrivate: false,
+            trackingMode: .latestStableRelease,
+            defaultBranch: "main",
+            versionIdentifier: "release:42:source:commit-1",
+            versionName: "v1.4.0",
+            revision: "v1.4.0",
+            commitSHA: "commit-1",
+            treeSHA: "tree-1",
+            archiveURL: URL(string: "https://api.github.com/archive.zip")!,
+            releaseID: 42,
+            usesSourceArchiveFallback: true
+        )
+
+        let result = try await GitHubUpdateChecker(checker: MockVersionChecker(version: remote), store: store).check(skillID: skill.id)
+        #expect(result?.status == .current)
+
+        let persisted = try #require(await store.currentSnapshot().sourceStates.first)
+        #expect(persisted.currentReleaseID == 42)
+        #expect(persisted.currentVersionIdentifier == "release:42:source:commit-1")
+    }
+
+    @Test("Same Release with a newly available install package is not called a new version")
+    func sameReleaseInstallPackageAvailabilityHasDedicatedStatus() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        var state = fixture.state(skillID: skill.id)
+        state.currentVersionIdentifier = "release:42"
+        state.currentVersionName = "v1.4.0"
+        state.currentCommitSHA = "commit-1"
+        state.currentTreeSHA = "tree-1"
+        state.currentReleaseID = nil
+        state.currentAssetID = nil
+        try await store.updateSourceState(state)
+
+        let asset = GitHubReleaseAsset(
+            id: 101,
+            name: "demo-pure.zip",
+            size: 1_024,
+            digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            browserDownloadURL: URL(string: "https://github.com/example/skills/releases/download/v1.4.0/demo-pure.zip")!
+        )
+        let remote = GitHubRemoteVersion(
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            isPrivate: false,
+            trackingMode: .latestStableRelease,
+            defaultBranch: "main",
+            versionIdentifier: "release:42:asset:101:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            versionName: "v1.4.0",
+            revision: "v1.4.0",
+            commitSHA: "commit-1",
+            treeSHA: "tree-1",
+            archiveURL: asset.browserDownloadURL,
+            releaseID: 42,
+            releaseAssets: [asset],
+            selectedReleaseAssetID: 101
+        )
+
+        let result = try await GitHubUpdateChecker(checker: MockVersionChecker(version: remote), store: store).check(skillID: skill.id)
+        #expect(result?.status == .releasePackageAvailable)
+    }
 }
 
 private struct AuthenticationRequiredChecker: GitHubRemoteVersionChecking {

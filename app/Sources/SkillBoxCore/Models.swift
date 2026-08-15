@@ -54,6 +54,7 @@ public enum GitHubSourceStatus: String, Codable, Sendable {
     case needsInitialCheck
     case current
     case updateAvailable
+    case releasePackageAvailable
     case ignored
     case checkingStopped
     case authenticationRequired

@@ -252,6 +252,7 @@ final class AppModel: ObservableObject {
             await reload()
             switch state.status {
             case .updateAvailable: statusMessage = "发现新版本 \(state.availableVersionName ?? "")"
+            case .releasePackageAvailable: statusMessage = "发现同一版本的纯净安装包"
             case .needsInitialCheck: statusMessage = "需要下载一次，才能确认当前内容是否最新"
             case .current: statusMessage = "这份 Skill 已经是最新内容"
             case .authenticationRequired: noticeMessage = "这个仓库需要重新连接 GitHub"
@@ -498,7 +499,7 @@ final class AppModel: ObservableObject {
         for state in states {
             do {
                 switch try await githubUpdateChecker.check(skillID: state.skillID)?.status {
-                case .updateAvailable: updateCount += 1
+                case .updateAvailable, .releasePackageAvailable: updateCount += 1
                 case .authenticationRequired, .unavailable: unavailableCount += 1
                 default: break
                 }

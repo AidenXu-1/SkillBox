@@ -76,6 +76,69 @@ struct LibraryStoreTests {
         #expect(migratedJSON["schemaVersion"] as? Int == 2)
     }
 
+    @Test("Legacy GitHub update false positives are normalized when the store opens")
+    func normalizesLegacyGitHubUpdateFalsePositiveOnLoad() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "central"))
+        try await store.updateSourceState(.init(
+            skillID: record.id,
+            repositoryFullName: "example/skills",
+            skillPath: "",
+            trackingMode: .latestStableRelease,
+            currentVersionIdentifier: "release:42",
+            currentVersionName: "v1.4.0",
+            currentCommitSHA: "commit-1",
+            currentTreeSHA: "tree-1",
+            availableVersionIdentifier: "release:42:source:commit-1",
+            availableVersionName: "v1.4.0",
+            availableCommitSHA: "commit-1",
+            availableTreeSHA: "tree-1",
+            availableReleaseID: 42,
+            checkingEnabled: true,
+            status: .updateAvailable
+        ))
+
+        let reloaded = try LibraryStore(root: fixture.storeRoot)
+        let state = try #require(await reloaded.currentSnapshot().sourceStates.first)
+        #expect(state.status == .current)
+        #expect(state.currentReleaseID == 42)
+        #expect(state.currentVersionIdentifier == "release:42:source:commit-1")
+    }
+
+    @Test("Legacy source imports with a clean Release package get a dedicated package status on load")
+    func normalizesLegacySourceImportWithCleanPackageOnLoad() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "central"))
+        try await store.updateSourceState(.init(
+            skillID: record.id,
+            repositoryFullName: "example/skills",
+            skillPath: "",
+            trackingMode: .latestStableRelease,
+            currentVersionIdentifier: "release:42",
+            currentVersionName: "v1.4.0",
+            currentCommitSHA: "commit-1",
+            currentTreeSHA: "tree-1",
+            availableVersionIdentifier: "release:42:asset:101:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            availableVersionName: "v1.4.0",
+            availableCommitSHA: "commit-1",
+            availableTreeSHA: "tree-1",
+            availableReleaseID: 42,
+            availableAssetID: 101,
+            availableAssetName: "demo-pure.zip",
+            availableAssetDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            checkingEnabled: true,
+            status: .updateAvailable
+        ))
+
+        let reloaded = try LibraryStore(root: fixture.storeRoot)
+        let state = try #require(await reloaded.currentSnapshot().sourceStates.first)
+        #expect(state.status == .releasePackageAvailable)
+    }
+
     @Test("Legacy UUID folders migrate to readable Skill names")
     func migratesLegacyStorageFolder() async throws {
         let fixture = try SyncFixture()
