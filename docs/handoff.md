@@ -7,7 +7,7 @@
 
 - **阶段**：GitHub Release 纯净 ZIP 导入、完整性校验和风险上下文已接入，真实外部验收前
 - **最近在做**：Release Asset 选择、无 ZIP 源码回退、SHA-256 校验、Asset 版本记录和 GitHub Actions 令牌风险分级
-- **下一步**：用一个真实公开 Release 完成 ZIP/多 ZIP/无 ZIP 验收；Computer Use 通道恢复后补鼠标、键盘、VoiceOver 和减少动态效果验收
+- **下一步**：先用真实公开 Release 跑通添加、检查更新和中央原件更新；再经用户明确确认，选择一个可恢复的 Agent 样本完成安装、更新、卸载和撤销闭环
 
 ## 怎么把环境跑起来
 
@@ -26,8 +26,8 @@ swift test
 - 真实 Agent 写入尚未授权，不得用自动化测试代替这个验收门槛。
 - GitHub v7 原型已得到用户确认，正式 SwiftUI 已接入。
 - 私人仓库需先注册 GitHub App，构建仅接收公开 Client ID 和安装地址；不得放入 Client Secret、私钥或个人 Token。
-- 尚未做真实私人仓库授权、真实鼠标/键盘/VoiceOver/减少动态效果验收、Developer ID 签名、公证和 DMG。
-- Computer Use 退出旧 SkillBox 进程后连续返回 `Sky Computer Use native pipe closed before response`；通道恢复前不要宣称新 SwiftUI 已通过真实前台验收。
+- 尚未做真实私人仓库授权、真实 Agent 安装/更新/卸载/撤销闭环、Developer ID 签名、公证和 DMG。
+- 只读鼠标与基础键盘主路径已完成真实前台验收；涉及 Agent 文件改动的操作均在确认前取消，不能替代后续真实生命周期验收。
 
 ## 容易踩的坑 / 注意事项
 
