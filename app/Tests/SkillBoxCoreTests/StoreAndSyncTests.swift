@@ -699,7 +699,152 @@ struct SyncTests {
         let undone = try await executor.undo(transactionID: transaction.id, store: store)
         #expect(undone.status == .undone)
         #expect(!FileManager.default.fileExists(atPath: installed.path))
-        #expect(await store.currentSnapshot().installations.isEmpty)
+        let restored = await store.currentSnapshot()
+        #expect(restored.installations.isEmpty)
+        #expect(restored.assignments.first?.isDesired == false)
+        let nextPlan = try planner.makePlan(snapshot: restored, libraryRoot: fixture.storeRoot)
+        #expect(nextPlan.executableActions.isEmpty)
+    }
+
+    @Test("Undoing an uninstall restores the desired installation relationship")
+    func undoUninstallRestoresDesiredAssignment() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "central"))
+        let targetRoot = fixture.root.appendingPathComponent("target")
+        try FileManager.default.createDirectory(at: targetRoot, withIntermediateDirectories: true)
+        let target = AgentTarget(
+            kind: .custom,
+            displayName: "Test",
+            path: targetRoot.path,
+            detectionStatus: .available,
+            writeStatus: .writable,
+            isCustom: true
+        )
+        try await store.replaceTargets([target])
+        try await store.replaceAssignments([.init(
+            skillID: record.id,
+            targetID: target.id,
+            installationDirectoryName: "demo"
+        )])
+
+        let planner = DefaultSyncPlanner()
+        let executor = TransactionalSyncExecutor()
+        _ = try await executor.execute(
+            plan: planner.makePlan(snapshot: await store.currentSnapshot(), libraryRoot: fixture.storeRoot),
+            store: store
+        )
+
+        var assignments = await store.currentSnapshot().assignments
+        assignments[0].isDesired = false
+        try await store.replaceAssignments(assignments)
+        let uninstallPlan = try planner.makePlan(snapshot: await store.currentSnapshot(), libraryRoot: fixture.storeRoot)
+        #expect(uninstallPlan.executableActions.map(\.kind) == [.remove])
+        let uninstall = try await executor.execute(plan: uninstallPlan, store: store)
+        _ = try await executor.undo(transactionID: uninstall.id, store: store)
+
+        let restored = await store.currentSnapshot()
+        #expect(restored.assignments.first?.isDesired == true)
+        let nextPlan = try planner.makePlan(snapshot: restored, libraryRoot: fixture.storeRoot)
+        #expect(nextPlan.executableActions.isEmpty)
+    }
+
+    @Test("Undoing a replacement restores the unmanaged copy and clears the install choice")
+    func undoReplacementRestoresUnmanagedState() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "central"))
+        let targetRoot = fixture.root.appendingPathComponent("target")
+        let destination = try fixture.writeSkill(
+            at: targetRoot.appendingPathComponent("demo"),
+            name: "demo",
+            body: "foreign"
+        )
+        let target = AgentTarget(
+            kind: .custom,
+            displayName: "Test",
+            path: targetRoot.path,
+            detectionStatus: .available,
+            writeStatus: .writable,
+            isCustom: true
+        )
+        let foreignFingerprint = try SHA256SkillFingerprinter().fingerprint(directory: destination)
+        try await store.replaceTargets([target])
+        try await store.replaceAssignments([.init(
+            skillID: record.id,
+            targetID: target.id,
+            installationDirectoryName: "demo",
+            allowReplacement: true,
+            authorizedDestinationFingerprint: foreignFingerprint
+        )])
+
+        let planner = DefaultSyncPlanner()
+        let executor = TransactionalSyncExecutor()
+        let replacementPlan = try planner.makePlan(snapshot: await store.currentSnapshot(), libraryRoot: fixture.storeRoot)
+        #expect(replacementPlan.executableActions.map(\.kind) == [.update])
+        let replacement = try await executor.execute(plan: replacementPlan, store: store)
+        _ = try await executor.undo(transactionID: replacement.id, store: store)
+
+        let restored = await store.currentSnapshot()
+        let assignment = try #require(restored.assignments.first)
+        #expect(assignment.isDesired == false)
+        #expect(assignment.allowReplacement == false)
+        #expect(assignment.authorizedDestinationFingerprint == nil)
+        #expect(restored.installations.isEmpty)
+        let restoredText = try String(contentsOf: destination.appendingPathComponent("SKILL.md"), encoding: .utf8)
+        #expect(restoredText.contains("foreign"))
+        let nextPlan = try planner.makePlan(snapshot: restored, libraryRoot: fixture.storeRoot)
+        #expect(nextPlan.executableActions.isEmpty)
+    }
+
+    @Test("Undoing a takeover restores the unmanaged state and clears the install choice")
+    func undoTakeoverRestoresUnmanagedState() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "same"))
+        let targetRoot = fixture.root.appendingPathComponent("target")
+        let destination = try fixture.writeSkill(
+            at: targetRoot.appendingPathComponent("demo"),
+            name: "demo",
+            body: "same"
+        )
+        let target = AgentTarget(
+            kind: .custom,
+            displayName: "Test",
+            path: targetRoot.path,
+            detectionStatus: .available,
+            writeStatus: .writable,
+            isCustom: true
+        )
+        let existingFingerprint = try SHA256SkillFingerprinter().fingerprint(directory: destination)
+        try await store.replaceTargets([target])
+        try await store.replaceAssignments([.init(
+            skillID: record.id,
+            targetID: target.id,
+            installationDirectoryName: "demo",
+            allowTakeover: true,
+            authorizedDestinationFingerprint: existingFingerprint
+        )])
+
+        let planner = DefaultSyncPlanner()
+        let executor = TransactionalSyncExecutor()
+        let takeoverPlan = try planner.makePlan(snapshot: await store.currentSnapshot(), libraryRoot: fixture.storeRoot)
+        #expect(takeoverPlan.executableActions.map(\.kind) == [.takeover])
+        let takeover = try await executor.execute(plan: takeoverPlan, store: store)
+        _ = try await executor.undo(transactionID: takeover.id, store: store)
+
+        let restored = await store.currentSnapshot()
+        let assignment = try #require(restored.assignments.first)
+        #expect(assignment.isDesired == false)
+        #expect(assignment.allowTakeover == false)
+        #expect(assignment.authorizedDestinationFingerprint == nil)
+        #expect(restored.installations.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: destination.appendingPathComponent("SKILL.md").path))
+        let nextPlan = try planner.makePlan(snapshot: restored, libraryRoot: fixture.storeRoot)
+        #expect(nextPlan.executableActions.isEmpty)
     }
 
     @Test("Unmanaged conflicts and external modifications block writes and undo")

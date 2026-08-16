@@ -244,9 +244,42 @@ public actor TransactionalSyncExecutor: SyncExecutor {
             installations.removeAll { $0.destinationPath == backup.destinationPath }
             if let previous = backup.previousInstallation { installations.append(previous) }
         }
+        var assignments = snapshot.assignments
+        for backup in transaction.backups {
+            guard let action = transaction.actions.first(where: { $0.destinationPath == backup.destinationPath }) else { continue }
+            let restoredDesiredState: Bool?
+            switch backup.actionKind {
+            case .remove:
+                restoredDesiredState = true
+            case .create, .takeover:
+                restoredDesiredState = false
+            case .update where backup.previousInstallation == nil:
+                restoredDesiredState = false
+            default:
+                restoredDesiredState = nil
+            }
+            guard let restoredDesiredState else { continue }
+            if let index = assignments.firstIndex(where: {
+                $0.skillID == action.skillID && $0.targetID == action.targetID
+            }) {
+                assignments[index].isDesired = restoredDesiredState
+                if !restoredDesiredState {
+                    assignments[index].allowTakeover = false
+                    assignments[index].allowReplacement = false
+                    assignments[index].authorizedDestinationFingerprint = nil
+                }
+            } else if restoredDesiredState {
+                assignments.append(.init(
+                    skillID: action.skillID,
+                    targetID: action.targetID,
+                    installationDirectoryName: URL(fileURLWithPath: action.destinationPath).lastPathComponent
+                ))
+            }
+        }
         transaction.status = .undone
         transaction.completedAt = Date()
         try await store.replaceInstallations(installations)
+        try await store.replaceAssignments(assignments)
         try await store.recordTransaction(transaction)
         return transaction
     }
