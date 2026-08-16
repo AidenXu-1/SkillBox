@@ -155,6 +155,61 @@ struct GitHubUpdateCheckerTests {
         #expect(checked?.rateLimitScope == .authenticated)
     }
 
+    @Test("Connecting GitHub preserves a legacy rate-limit pause from a private repository")
+    func connectingGitHubKeepsLegacyPrivatePause() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        let retryAt = Date(timeIntervalSince1970: 2_000)
+        var state = fixture.state(skillID: skill.id)
+        state.repositoryIsPrivate = true
+        state.lastCheckIssue = .rateLimited
+        state.retryAfter = retryAt
+        state.rateLimitScope = nil
+        try await store.updateSourceState(state)
+        let remote = MockVersionChecker(version: fixture.remote(identifier: "release:42", tree: "tree-1"))
+        let checker = GitHubUpdateChecker(
+            checker: remote,
+            store: store,
+            now: { Date(timeIntervalSince1970: 1_000) }
+        )
+
+        try await checker.resumeChecksAfterConnectingGitHub()
+        let checked = try await checker.check(skillID: skill.id)
+
+        #expect(await remote.calls == 0)
+        #expect(checked?.lastCheckIssue == .rateLimited)
+        #expect(checked?.retryAfter == retryAt)
+        #expect(checked?.rateLimitScope == nil)
+    }
+
+    @Test("A connected app migrates only a legacy rate-limit pause from a known public repository")
+    func startupMigratesLegacyPublicRateLimitPause() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        var state = fixture.state(skillID: skill.id)
+        state.repositoryIsPrivate = false
+        state.lastCheckIssue = .rateLimited
+        state.retryAfter = Date(timeIntervalSince1970: 2_000)
+        state.rateLimitScope = nil
+        try await store.updateSourceState(state)
+        let checker = GitHubUpdateChecker(
+            checker: MockVersionChecker(version: fixture.remote(identifier: "release:42", tree: "tree-1")),
+            store: store,
+            now: { Date(timeIntervalSince1970: 1_000) }
+        )
+
+        try await checker.migrateLegacyAnonymousRateLimitPauses()
+
+        let migrated = try #require(await store.currentSnapshot().sourceStates.first)
+        #expect(migrated.lastCheckIssue == nil)
+        #expect(migrated.retryAfter == nil)
+        #expect(migrated.rateLimitScope == nil)
+    }
+
     @Test("A batch checks one repository once and updates every Skill in it")
     func sameRepositoryIsCheckedOnce() async throws {
         let fixture = try UpdateFixture()

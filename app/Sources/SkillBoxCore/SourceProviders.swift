@@ -209,14 +209,14 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
             switch response {
             case let .notModified(eTag, _):
                 return GitHubRemoteCheckBatch(versions: [:], eTag: eTag ?? conditionalETag, isNotModified: true)
-            case let .modified(release, eTag, _):
+            case let .modified(release, eTag, usedAuthorization):
                 return try await releaseBatch(
                     release: release,
                     eTag: eTag,
                     repository: repository,
                     info: info,
                     states: states,
-                    useAuthorization: useAuthorization
+                    useAuthorization: usedAuthorization
                 )
             }
         case .defaultBranch:
@@ -228,7 +228,7 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
             switch response {
             case let .notModified(eTag, _):
                 return GitHubRemoteCheckBatch(versions: [:], eTag: eTag ?? conditionalETag, isNotModified: true)
-            case let .modified(commit, eTag, _):
+            case let .modified(commit, eTag, usedAuthorization):
                 var trees: [UUID: String] = [:]
                 var statesNeedingTree: [GitHubSourceState] = []
                 for state in states {
@@ -243,7 +243,7 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
                         repository: repository,
                         rootTreeSHA: commit.commit.tree.sha,
                         states: statesNeedingTree,
-                        useAuthorization: useAuthorization
+                        useAuthorization: usedAuthorization
                     )
                     trees.merge(changedTrees) { _, refreshed in refreshed }
                 }

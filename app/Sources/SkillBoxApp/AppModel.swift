@@ -123,7 +123,7 @@ final class AppModel: ObservableObject {
         await scanInstalledSkills()
         isGitHubConnected = await githubSession.isConnected()
         if isGitHubConnected {
-            do { try await githubUpdateChecker.resumeChecksAfterConnectingGitHub() }
+            do { try await githubUpdateChecker.migrateLegacyAnonymousRateLimitPauses() }
             catch { present(error) }
             await reload()
             await refreshGitHubRepositories()

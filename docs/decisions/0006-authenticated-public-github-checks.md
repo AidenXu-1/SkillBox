@@ -17,13 +17,14 @@ GitHub 允许已授权的 GitHub App 用户令牌读取公开资源，认证请�
 3. 仓库信息已证明当前令牌无法访问该公开仓库时，本次后续 Release、Commit 和 Tree 请求保持匿名，避免对每个端点重复失败。
 4. 未连接 GitHub 时，公开仓库仍然可匿名检查；私人仓库始终只能访问用户明确选择的授权范围。
 5. GitHub 返回限流恢复时间时，SkillBox 记录受限的是未登录还是已登录额度，不用另一种身份绕过当前请求。
-6. 用户刚完成 GitHub 连接，或新版本首次读取旧数据时，只清除未登录额度造成的暂停。已登录额度的暂停仍遵守 GitHub 的恢复时间。
+6. 用户刚完成 GitHub 连接时，只清除明确的未登录额度暂停，以及仓库已确认公开但旧记录没有额度类型的历史暂停。应用平常启动时不重复执行这个连接动作，只迁移后一类旧公开记录。私人仓库、公开性未知和已登录额度的暂停仍遵守 GitHub 的恢复时间。
 
 ## 后果
 
 - 已连接用户检查公开仓库时可使用 GitHub 认证额度，不再因匿名每小时 60 次额度过早暂停。
-- 已经显示的旧匿名暂停会在连接成功或打开新版本时立即解除，用户无需等到原恢复时间。
+- 已经显示的旧公开匿名暂停会在连接成功或打开新版本时立即解除；重开应用不会把新的匿名或已登录额度暂停当作旧数据反复清除。
 - 公开仓库仍然不依赖登录，断开连接、令牌失效或仓库未被 GitHub App 选中时都能自动匿名回退。
+- 某个公开仓库已经在 Release 或 Commit 请求中匿名回退后，本次后续 Commit 与 Tree 请求继续匿名，不再重复提交无权访问该仓库的登录凭据。
 - 不改变任何私人仓库的授权范围，不新增权限，也不将令牌写入本地 JSON 或日志。
 
 依据：[GitHub REST API 额度](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)、[GitHub App 用户令牌权限](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app)。

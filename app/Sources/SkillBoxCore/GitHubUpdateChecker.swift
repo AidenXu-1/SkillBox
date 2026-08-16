@@ -47,15 +47,32 @@ public actor GitHubUpdateChecker {
         var states = snapshot.sourceStates
         var changed = false
         for index in states.indices where states[index].lastCheckIssue == .rateLimited {
-            // Older SkillBox builds did not record which quota was exhausted.
-            // Their public checks were anonymous, so a missing scope is safe to
-            // treat as anonymous once after the user connects GitHub.
-            guard states[index].rateLimitScope == nil || states[index].rateLimitScope == .anonymous else {
+            let isKnownAnonymous = states[index].rateLimitScope == .anonymous
+            let isLegacyKnownPublic = states[index].rateLimitScope == nil && states[index].repositoryIsPrivate == false
+            guard isKnownAnonymous || isLegacyKnownPublic else {
                 continue
             }
             states[index].lastCheckIssue = nil
             states[index].retryAfter = nil
             states[index].rateLimitScope = nil
+            changed = true
+        }
+        if changed {
+            try await store.replaceSourceStates(states)
+        }
+    }
+
+    public func migrateLegacyAnonymousRateLimitPauses() async throws {
+        let snapshot = await store.currentSnapshot()
+        var states = snapshot.sourceStates
+        var changed = false
+        for index in states.indices where
+            states[index].lastCheckIssue == .rateLimited &&
+            states[index].rateLimitScope == nil &&
+            states[index].repositoryIsPrivate == false
+        {
+            states[index].lastCheckIssue = nil
+            states[index].retryAfter = nil
             changed = true
         }
         if changed {

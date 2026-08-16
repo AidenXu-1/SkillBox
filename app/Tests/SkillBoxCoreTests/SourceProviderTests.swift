@@ -87,6 +87,54 @@ struct SourceProviderTests {
         #expect(UnselectedPublicRepositoryMockURLProtocol.authenticatedRequestCount == 1)
     }
 
+    @Test("A known public Release fallback stays anonymous after repository access is rejected")
+    func knownPublicReleaseFallbackDoesNotRetryRejectedAuthorization() async throws {
+        let provider = GitHubSourceProvider(
+            session: UnselectedPublicRepositoryFixture.session(),
+            tokenProvider: FixedTokenProvider()
+        )
+        let state = GitHubSourceState(
+            skillID: UUID(),
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            repositoryIsPrivate: false,
+            trackingMode: .latestStableRelease,
+            defaultBranch: "main",
+            currentTreeSHA: "release:41",
+            status: .current
+        )
+
+        let batch = try await provider.checkRemoteVersions(states: [state])
+
+        #expect(batch.versions[state.skillID]?.commitSHA == "commit-release")
+        #expect(UnselectedPublicRepositoryMockURLProtocol.authenticatedRequestCount == 1)
+    }
+
+    @Test("A known public default-branch check keeps tree lookups anonymous after access is rejected")
+    func knownPublicBranchTreeDoesNotRetryRejectedAuthorization() async throws {
+        let provider = GitHubSourceProvider(
+            session: UnselectedPublicRepositoryFixture.session(),
+            tokenProvider: FixedTokenProvider()
+        )
+        let state = GitHubSourceState(
+            skillID: UUID(),
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            repositoryIsPrivate: false,
+            skillPath: "demo",
+            trackingMode: .defaultBranch,
+            defaultBranch: "main",
+            currentCommitSHA: "commit-old",
+            currentTreeSHA: "demo-old",
+            status: .current
+        )
+
+        let batch = try await provider.checkRemoteVersions(states: [state])
+
+        #expect(batch.versions[state.skillID]?.treeSHA == "demo-tree")
+        #expect(UnselectedPublicRepositoryMockURLProtocol.authenticatedRequestCount == 1)
+    }
+
     @Test("A newly issued login token becomes usable without restarting the app")
     func refreshedTokenRestoresPrivateRepositoryAccessImmediately() async throws {
         let tokenProvider = RotatingTokenProvider(token: "expired-token")
@@ -628,7 +676,13 @@ private final class UnselectedPublicRepositoryMockURLProtocol: URLProtocol, @unc
         case "/repos/example/skills":
             payload = #"{"id":7,"full_name":"example/skills","default_branch":"main","private":false}"#
         case "/repos/example/skills/releases/latest":
-            payload = #"{"id":42,"tag_name":"v1.4.0","name":"Version 1.4","published_at":"2026-08-15T00:00:00Z","zipball_url":"https://api.github.com/repos/example/skills/zipball/v1.4.0","assets":[{"id":101,"name":"demo-pure.zip","state":"uploaded","content_type":"application/zip","size":2048,"browser_download_url":"https://github.com/example/skills/releases/download/v1.4.0/demo-pure.zip"}]}"#
+            payload = #"{"id":42,"tag_name":"v1.4.0","name":"Version 1.4","published_at":"2026-08-15T00:00:00Z","zipball_url":"https://api.github.com/repos/example/skills/zipball/v1.4.0","assets":[]}"#
+        case "/repos/example/skills/commits/v1.4.0":
+            payload = #"{"sha":"commit-release","commit":{"tree":{"sha":"root-tree"}}}"#
+        case "/repos/example/skills/commits/main":
+            payload = #"{"sha":"commit-main","commit":{"tree":{"sha":"root-tree"}}}"#
+        case "/repos/example/skills/git/trees/root-tree":
+            payload = #"{"sha":"root-tree","tree":[{"path":"demo","type":"tree","sha":"demo-tree"}]}"#
         default:
             payload = "{}"
         }
