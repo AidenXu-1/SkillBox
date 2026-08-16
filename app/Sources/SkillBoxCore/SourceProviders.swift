@@ -102,7 +102,7 @@ public enum GitHubSourceError: LocalizedError {
     case authenticationRequired
     case repositoryUnavailableOrUnauthorized
     case repositoryPermissionRequired
-    case rateLimited(retryAt: Date)
+    case rateLimited(retryAt: Date, scope: GitHubRateLimitScope)
     case skillPathMissing(String)
     case releaseAssetSelectionRequired([GitHubReleaseAsset])
     case checksumMismatch(String)
@@ -123,7 +123,7 @@ public enum GitHubSourceError: LocalizedError {
         case .authenticationRequired: "这个仓库需要 GitHub 授权才能查看"
         case .repositoryUnavailableOrUnauthorized: "找不到这个仓库，或者 SkillBox 还没有访问权限"
         case .repositoryPermissionRequired: "SkillBox 还没有获准读取这个私人仓库"
-        case let .rateLimited(retryAt): "GitHub 暂时限制了查询，请在 \(retryAt.formatted(date: .omitted, time: .shortened)) 后重试"
+        case let .rateLimited(retryAt, _): "GitHub 暂时限制了查询，请在 \(retryAt.formatted(date: .omitted, time: .shortened)) 后重试"
         case .skillPathMissing: "GitHub 上找不到原来的 Skill 目录"
         case .releaseAssetSelectionRequired: "这个 Release 有多个可用安装包，请选择要导入的 ZIP"
         case let .checksumMismatch(name): "\(name) 的 SHA-256 校验未通过，已停止导入"
@@ -180,9 +180,13 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         }
 
         let repository = try RepositoryName(first.repositoryFullName)
-        let info = try await repositoryInfo(repository: repository, states: states)
+        let repositoryContext = try await repositoryInfo(repository: repository, states: states)
+        let info = repositoryContext.info
         let conditionalETag = sharedETag(in: states)
-        let useAuthorization = info.isPrivate
+        // A connected account raises GitHub's limit for public metadata too.
+        // The request layer still retries anonymously when a public repository
+        // is outside the GitHub App selection or the saved login is no longer valid.
+        let useAuthorization = repositoryContext.useAuthorization
 
         switch first.trackingMode {
         case .latestStableRelease:
@@ -203,9 +207,9 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
                 throw GitHubSourceError.noStableRelease
             }
             switch response {
-            case let .notModified(eTag):
+            case let .notModified(eTag, _):
                 return GitHubRemoteCheckBatch(versions: [:], eTag: eTag ?? conditionalETag, isNotModified: true)
-            case let .modified(release, eTag):
+            case let .modified(release, eTag, _):
                 return try await releaseBatch(
                     release: release,
                     eTag: eTag,
@@ -222,9 +226,9 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
                 useAuthorization: useAuthorization
             )
             switch response {
-            case let .notModified(eTag):
+            case let .notModified(eTag, _):
                 return GitHubRemoteCheckBatch(versions: [:], eTag: eTag ?? conditionalETag, isNotModified: true)
-            case let .modified(commit, eTag):
+            case let .modified(commit, eTag, _):
                 var trees: [UUID: String] = [:]
                 var statesNeedingTree: [GitHubSourceState] = []
                 for state in states {
@@ -459,18 +463,21 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
     private func repositoryInfo(
         repository: RepositoryName,
         states: [GitHubSourceState]
-    ) async throws -> RepositoryResponse {
+    ) async throws -> RepositoryCheckContext {
         if let known = states.first(where: {
             $0.repositoryID != nil && $0.repositoryIsPrivate != nil && $0.defaultBranch?.isEmpty == false
         }), let repositoryID = known.repositoryID,
            let isPrivate = known.repositoryIsPrivate,
            let defaultBranch = known.defaultBranch
         {
-            return RepositoryResponse(
-                id: repositoryID,
-                fullName: known.repositoryFullName,
-                defaultBranch: defaultBranch,
-                isPrivate: isPrivate
+            return RepositoryCheckContext(
+                info: RepositoryResponse(
+                    id: repositoryID,
+                    fullName: known.repositoryFullName,
+                    defaultBranch: defaultBranch,
+                    isPrivate: isPrivate
+                ),
+                useAuthorization: true
             )
         }
 
@@ -480,9 +487,21 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
     private func fetchRepositoryInfo(
         repository: RepositoryName,
         knownPrivate: Bool?
-    ) async throws -> RepositoryResponse {
+    ) async throws -> RepositoryCheckContext {
         do {
-            return try await requestAPI(path: "/repos/\(repository.owner)/\(repository.name)")
+            let response: GitHubAPIResponse<RepositoryResponse> = try await requestAPIResponse(
+                path: "/repos/\(repository.owner)/\(repository.name)",
+                ifNoneMatch: nil
+            )
+            switch response {
+            case let .modified(info, _, usedAuthorization):
+                return RepositoryCheckContext(
+                    info: info,
+                    useAuthorization: info.isPrivate || usedAuthorization
+                )
+            case .notModified:
+                throw GitHubSourceError.requestFailed(304)
+            }
         } catch GitHubSourceError.requestFailed(404) {
             if knownPrivate == true {
                 if await preferredAccessToken() != nil {
@@ -604,7 +623,10 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         let (bytes, response) = try await session.bytes(for: request)
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             if let retryAt = rateLimitRetryDate(from: http) {
-                throw GitHubSourceError.rateLimited(retryAt: retryAt)
+                let scope: GitHubRateLimitScope = request.value(forHTTPHeaderField: "Authorization") == nil
+                    ? .anonymous
+                    : .authenticated
+                throw GitHubSourceError.rateLimited(retryAt: retryAt, scope: scope)
             }
             if request.value(forHTTPHeaderField: "Authorization") != nil,
                http.statusCode == 401 || http.statusCode == 403
@@ -733,7 +755,7 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
             useAuthorization: useAuthorization
         )
         switch result {
-        case let .modified(value, _): return value
+        case let .modified(value, _, _): return value
         case .notModified: throw GitHubSourceError.requestFailed(304)
         }
     }
@@ -752,6 +774,7 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         if useAuthorization, let token = await preferredAccessToken() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
+        var usedAuthorization = request.value(forHTTPHeaderField: "Authorization") != nil
         var (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse,
            request.value(forHTTPHeaderField: "Authorization") != nil,
@@ -762,14 +785,19 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
                 await rejectAuthorization(in: request)
             }
             request.setValue(nil, forHTTPHeaderField: "Authorization")
+            usedAuthorization = false
             (data, response) = try await session.data(for: request)
         }
         if let http = response as? HTTPURLResponse, http.statusCode == 304 {
-            return .notModified(eTag: http.value(forHTTPHeaderField: "ETag") ?? ifNoneMatch)
+            return .notModified(
+                eTag: http.value(forHTTPHeaderField: "ETag") ?? ifNoneMatch,
+                usedAuthorization: usedAuthorization
+            )
         }
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             if let retryAt = rateLimitRetryDate(from: http) {
-                throw GitHubSourceError.rateLimited(retryAt: retryAt)
+                let scope: GitHubRateLimitScope = usedAuthorization ? .authenticated : .anonymous
+                throw GitHubSourceError.rateLimited(retryAt: retryAt, scope: scope)
             }
             if http.statusCode == 401 || http.statusCode == 403 {
                 throw GitHubSourceError.authenticationRequired
@@ -780,7 +808,7 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         decoder.dateDecodingStrategy = .iso8601
         let value = try decoder.decode(Response.self, from: data)
         let eTag = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag")
-        return .modified(value, eTag: eTag)
+        return .modified(value, eTag: eTag, usedAuthorization: usedAuthorization)
     }
 
     private func preferredAccessToken() async -> String? {
@@ -895,8 +923,13 @@ private struct RepositoryName: Sendable {
 }
 
 private enum GitHubAPIResponse<Value> {
-    case modified(Value, eTag: String?)
-    case notModified(eTag: String?)
+    case modified(Value, eTag: String?, usedAuthorization: Bool)
+    case notModified(eTag: String?, usedAuthorization: Bool)
+}
+
+private struct RepositoryCheckContext {
+    let info: RepositoryResponse
+    let useAuthorization: Bool
 }
 
 private struct RepositoryResponse: Decodable {

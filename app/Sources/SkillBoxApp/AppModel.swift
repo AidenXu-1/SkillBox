@@ -122,7 +122,12 @@ final class AppModel: ObservableObject {
         await reload()
         await scanInstalledSkills()
         isGitHubConnected = await githubSession.isConnected()
-        if isGitHubConnected { await refreshGitHubRepositories() }
+        if isGitHubConnected {
+            do { try await githubUpdateChecker.resumeChecksAfterConnectingGitHub() }
+            catch { present(error) }
+            await reload()
+            await refreshGitHubRepositories()
+        }
         await checkAllGitHubUpdatesIfStale()
     }
 
@@ -488,6 +493,7 @@ final class AppModel: ObservableObject {
         state.ignoredVersionIdentifier = nil
         state.lastCheckIssue = nil
         state.retryAfter = nil
+        state.rateLimitScope = nil
         state.status = .needsInitialCheck
         do {
             try await store.updateSourceState(state)
@@ -1186,6 +1192,8 @@ final class AppModel: ObservableObject {
                     try await githubSession.save(tokens)
                     isGitHubConnected = true
                     githubAuthorization = nil
+                    try await githubUpdateChecker.resumeChecksAfterConnectingGitHub()
+                    await reload()
                     await refreshGitHubRepositories()
                     if githubAuthorizedRepositories.isEmpty {
                         isWaitingForGitHubRepositorySelection = true

@@ -101,6 +101,60 @@ struct GitHubUpdateCheckerTests {
         #expect(states.allSatisfy { $0.lastCheckIssue == .rateLimited && $0.retryAfter == retryAt })
     }
 
+    @Test("Connecting GitHub immediately releases an anonymous rate-limit pause")
+    func connectingGitHubResumesAnonymousChecks() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        var state = fixture.state(skillID: skill.id)
+        state.lastCheckIssue = .rateLimited
+        state.retryAfter = Date(timeIntervalSince1970: 2_000)
+        state.rateLimitScope = .anonymous
+        try await store.updateSourceState(state)
+        let remote = MockVersionChecker(version: fixture.remote(identifier: "release:42", tree: "tree-1"))
+        let checker = GitHubUpdateChecker(
+            checker: remote,
+            store: store,
+            now: { Date(timeIntervalSince1970: 1_000) }
+        )
+
+        try await checker.resumeChecksAfterConnectingGitHub()
+        let checked = try await checker.check(skillID: skill.id)
+
+        #expect(await remote.calls == 1)
+        #expect(checked?.lastCheckIssue == nil)
+        #expect(checked?.rateLimitScope == nil)
+    }
+
+    @Test("Connecting GitHub still respects an authenticated rate-limit pause")
+    func connectingGitHubKeepsAuthenticatedPause() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        let retryAt = Date(timeIntervalSince1970: 2_000)
+        var state = fixture.state(skillID: skill.id)
+        state.lastCheckIssue = .rateLimited
+        state.retryAfter = retryAt
+        state.rateLimitScope = .authenticated
+        try await store.updateSourceState(state)
+        let remote = MockVersionChecker(version: fixture.remote(identifier: "release:42", tree: "tree-1"))
+        let checker = GitHubUpdateChecker(
+            checker: remote,
+            store: store,
+            now: { Date(timeIntervalSince1970: 1_000) }
+        )
+
+        try await checker.resumeChecksAfterConnectingGitHub()
+        let checked = try await checker.check(skillID: skill.id)
+
+        #expect(await remote.calls == 0)
+        #expect(checked?.lastCheckIssue == .rateLimited)
+        #expect(checked?.retryAfter == retryAt)
+        #expect(checked?.rateLimitScope == .authenticated)
+    }
+
     @Test("A batch checks one repository once and updates every Skill in it")
     func sameRepositoryIsCheckedOnce() async throws {
         let fixture = try UpdateFixture()
@@ -469,7 +523,7 @@ private struct RateLimitedChecker: GitHubRemoteVersionChecking {
     let retryAt: Date
 
     func checkRemoteVersion(repositoryFullName: String, skillPath: String?, trackingMode: GitHubTrackingMode) async throws -> GitHubRemoteVersion {
-        throw GitHubSourceError.rateLimited(retryAt: retryAt)
+        throw GitHubSourceError.rateLimited(retryAt: retryAt, scope: .anonymous)
     }
 }
 
@@ -483,7 +537,7 @@ private actor CountingRateLimitedChecker: GitHubRemoteVersionChecking {
 
     func checkRemoteVersion(repositoryFullName: String, skillPath: String?, trackingMode: GitHubTrackingMode) async throws -> GitHubRemoteVersion {
         calls += 1
-        throw GitHubSourceError.rateLimited(retryAt: retryAt)
+        throw GitHubSourceError.rateLimited(retryAt: retryAt, scope: .anonymous)
     }
 }
 

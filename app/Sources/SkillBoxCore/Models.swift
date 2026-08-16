@@ -69,6 +69,11 @@ public enum GitHubSourceIssue: String, Codable, Sendable {
     case temporarilyUnavailable
 }
 
+public enum GitHubRateLimitScope: String, Codable, Sendable {
+    case anonymous
+    case authenticated
+}
+
 public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID { skillID }
     public var skillID: UUID
@@ -99,6 +104,7 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
     public var lastCheckedAt: Date?
     public var lastCheckIssue: GitHubSourceIssue?
     public var retryAfter: Date?
+    public var rateLimitScope: GitHubRateLimitScope?
     public var checkingEnabled: Bool
     public var status: GitHubSourceStatus
 
@@ -131,6 +137,7 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
         lastCheckedAt: Date? = nil,
         lastCheckIssue: GitHubSourceIssue? = nil,
         retryAfter: Date? = nil,
+        rateLimitScope: GitHubRateLimitScope? = nil,
         checkingEnabled: Bool = true,
         status: GitHubSourceStatus = .needsInitialCheck
     ) {
@@ -162,6 +169,7 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
         self.lastCheckedAt = lastCheckedAt
         self.lastCheckIssue = lastCheckIssue
         self.retryAfter = retryAfter
+        self.rateLimitScope = rateLimitScope
         self.checkingEnabled = checkingEnabled
         self.status = status
     }

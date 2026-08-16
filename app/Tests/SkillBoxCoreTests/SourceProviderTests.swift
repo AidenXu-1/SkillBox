@@ -16,10 +16,38 @@ struct SourceProviderTests {
                 trackingMode: .latestStableRelease
             )
             Issue.record("Expected GitHub rate limiting")
-        } catch GitHubSourceError.rateLimited(let retryAt) {
+        } catch GitHubSourceError.rateLimited(let retryAt, let scope) {
             #expect(retryAt == Date(timeIntervalSince1970: 1_786_809_641))
+            #expect(scope == .anonymous)
         } catch {
             Issue.record("Expected rate limiting, got \(error)")
+        }
+    }
+
+    @Test("A connected public-repository check records the authenticated quota")
+    func authenticatedRateLimitIsDistinguishedFromAnonymousQuota() async throws {
+        let provider = GitHubSourceProvider(
+            session: RateLimitFixture.session(),
+            tokenProvider: FixedTokenProvider()
+        )
+        let state = GitHubSourceState(
+            skillID: UUID(),
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            repositoryIsPrivate: false,
+            trackingMode: .latestStableRelease,
+            defaultBranch: "main",
+            currentTreeSHA: "release:41",
+            status: .current
+        )
+
+        do {
+            _ = try await provider.checkRemoteVersions(states: [state])
+            Issue.record("Expected GitHub rate limiting")
+        } catch GitHubSourceError.rateLimited(_, let scope) {
+            #expect(scope == .authenticated)
+        } catch {
+            Issue.record("Expected authenticated rate limiting, got \(error)")
         }
     }
 
@@ -167,8 +195,8 @@ struct SourceProviderTests {
         #expect(RemoteVersionMockURLProtocol.requestPaths == ["/repos/example/skills/releases/latest"])
     }
 
-    @Test("A known public repository does not spend a private-repository token")
-    func knownPublicRepositoryChecksAnonymously() async throws {
+    @Test("A connected GitHub account raises the limit for known public repositories")
+    func knownPublicRepositoryUsesConnectedAccount() async throws {
         let provider = GitHubSourceProvider(
             session: RemoteVersionFixture.session(),
             tokenProvider: FixedTokenProvider()
@@ -186,7 +214,7 @@ struct SourceProviderTests {
 
         _ = try await provider.checkRemoteVersions(states: [state])
 
-        #expect(RemoteVersionMockURLProtocol.authorizationHeaders == [nil])
+        #expect(RemoteVersionMockURLProtocol.authorizationHeaders == ["Bearer test-token"])
     }
 
     @Test("An unchanged conditional Release response stops all follow-up requests")

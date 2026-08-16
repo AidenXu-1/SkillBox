@@ -42,6 +42,27 @@ public actor GitHubUpdateChecker {
         return try await checkAll(skillIDs: [skillID]).first ?? state
     }
 
+    public func resumeChecksAfterConnectingGitHub() async throws {
+        let snapshot = await store.currentSnapshot()
+        var states = snapshot.sourceStates
+        var changed = false
+        for index in states.indices where states[index].lastCheckIssue == .rateLimited {
+            // Older SkillBox builds did not record which quota was exhausted.
+            // Their public checks were anonymous, so a missing scope is safe to
+            // treat as anonymous once after the user connects GitHub.
+            guard states[index].rateLimitScope == nil || states[index].rateLimitScope == .anonymous else {
+                continue
+            }
+            states[index].lastCheckIssue = nil
+            states[index].retryAfter = nil
+            states[index].rateLimitScope = nil
+            changed = true
+        }
+        if changed {
+            try await store.replaceSourceStates(states)
+        }
+    }
+
     @discardableResult
     public func checkAll(
         skillIDs: Set<UUID>? = nil,
@@ -90,11 +111,12 @@ public actor GitHubUpdateChecker {
                     }
                     replace(updated, in: &allStates)
                 }
-            } catch GitHubSourceError.rateLimited(let retryAt) {
+            } catch GitHubSourceError.rateLimited(let retryAt, let scope) {
                 for index in allStates.indices where allStates[index].checkingEnabled {
                     allStates[index].status = restoredVersionStatus(allStates[index])
                     allStates[index].lastCheckIssue = .rateLimited
                     allStates[index].retryAfter = retryAt
+                    allStates[index].rateLimitScope = scope
                 }
                 try await store.replaceSourceStates(allStates)
                 completed += 1
@@ -137,6 +159,7 @@ public actor GitHubUpdateChecker {
         state.lastCheckedAt = now()
         state.lastCheckIssue = nil
         state.retryAfter = nil
+        state.rateLimitScope = nil
         if legacySourceArchiveRecordIsCurrent(state: state, remote: remote) {
             state.currentReleaseID = remote.releaseID
             state.currentVersionIdentifier = remote.versionIdentifier
@@ -162,6 +185,7 @@ public actor GitHubUpdateChecker {
         state.lastCheckedAt = now()
         state.lastCheckIssue = nil
         state.retryAfter = nil
+        state.rateLimitScope = nil
         return state
     }
 
@@ -169,6 +193,7 @@ public actor GitHubUpdateChecker {
         var state = original
         state.status = restoredVersionStatus(state)
         state.retryAfter = nil
+        state.rateLimitScope = nil
         switch error {
         case GitHubSourceError.authenticationRequired:
             state.lastCheckIssue = state.repositoryIsPrivate == true ? .authenticationRequired : .temporarilyUnavailable
@@ -278,6 +303,7 @@ public actor GitHubUpdateChecker {
         state.status = enabled ? .needsInitialCheck : .checkingStopped
         state.lastCheckIssue = nil
         state.retryAfter = nil
+        state.rateLimitScope = nil
         try await store.updateSourceState(state)
     }
 }
