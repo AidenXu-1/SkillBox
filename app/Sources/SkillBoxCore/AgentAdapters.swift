@@ -120,6 +120,10 @@ public enum PathSafety {
     }
 
     public static func validateCustomTarget(_ url: URL, homeDirectory: URL, libraryRoot: URL) throws {
+        _ = try validatedCustomTarget(url, homeDirectory: homeDirectory, libraryRoot: libraryRoot)
+    }
+
+    public static func validatedCustomTarget(_ url: URL, homeDirectory: URL, libraryRoot: URL) throws -> URL {
         let target = url.standardizedFileURL.resolvingSymlinksInPath()
         let home = homeDirectory.standardizedFileURL.resolvingSymlinksInPath()
         let library = libraryRoot.standardizedFileURL.resolvingSymlinksInPath()
@@ -127,12 +131,16 @@ public enum PathSafety {
         if unsafe.contains(where: { $0.path == target.path }) || target.pathComponents.count < 3 {
             throw PathSafetyError.unsafeTarget(target.path)
         }
-        if target.path == library.path || target.path.hasPrefix(library.path + "/") {
+        if target.path == library.path ||
+            target.path.hasPrefix(library.path + "/") ||
+            library.path.hasPrefix(target.path + "/")
+        {
             throw PathSafetyError.targetInsideLibrary(target.path)
         }
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw PathSafetyError.targetMissing(target.path)
         }
+        return target
     }
 }

@@ -210,6 +210,51 @@ struct SourceProviderTests {
         ])
     }
 
+    @Test("Oversized GitHub metadata is rejected before decoding")
+    func oversizedGitHubMetadataIsRejected() async throws {
+        let session = RemoteVersionFixture.session()
+        RemoteVersionMockURLProtocol.repositoryPaddingBytes = 2_200_000
+        defer { RemoteVersionMockURLProtocol.repositoryPaddingBytes = 0 }
+        let provider = GitHubSourceProvider(session: session)
+
+        do {
+            _ = try await provider.checkRemoteVersion(
+                repositoryFullName: "example/skills",
+                skillPath: nil,
+                trackingMode: .latestStableRelease
+            )
+            Issue.record("Expected oversized GitHub metadata to be rejected")
+        } catch GitHubSourceError.downloadTooLarge {
+            // Expected: the response is stopped at the shared byte boundary.
+        } catch {
+            Issue.record("Expected downloadTooLarge, got \(error)")
+        }
+    }
+
+    @Test("A truncated GitHub tree cannot be treated as complete")
+    func truncatedTreeIsRejected() async throws {
+        let session = RemoteVersionFixture.session()
+        RemoteVersionMockURLProtocol.treeTruncated = true
+        defer { RemoteVersionMockURLProtocol.treeTruncated = false }
+        let provider = GitHubSourceProvider(session: session)
+        let state = GitHubSourceState(
+            skillID: UUID(),
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            repositoryIsPrivate: false,
+            skillPath: "skills/demo",
+            trackingMode: .defaultBranch,
+            defaultBranch: "main",
+            currentCommitSHA: "commit-old",
+            currentTreeSHA: "demo-old",
+            status: .current
+        )
+
+        await #expect(throws: GitHubSourceError.self) {
+            try await provider.checkRemoteVersions(states: [state])
+        }
+    }
+
     @Test("Skills from one Release repository share one metadata request")
     func releaseChecksAreGroupedByRepository() async throws {
         let provider = GitHubSourceProvider(session: RemoteVersionFixture.session())
@@ -360,6 +405,75 @@ struct SourceProviderTests {
         #expect(version.versionIdentifier == "commit:commit-main")
         #expect(version.treeSHA == "demo-tree")
         #expect(version.archiveURL.absoluteString.hasSuffix("/zipball/commit-main"))
+    }
+
+    @Test("Root repository checks compare only the confirmed installable paths")
+    func rootRecipeUsesSelectedTreeIdentity() async throws {
+        let provider = GitHubSourceProvider(session: RemoteVersionFixture.session())
+        let recipe = GitHubPackageRecipe(
+            origin: .userSelection,
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            trackingMode: .defaultBranch,
+            includePaths: ["SKILL.md", "scripts"],
+            reviewedTopLevelPaths: ["README.md", "SKILL.md", "scripts", "skills"],
+            confirmedVersionIdentifier: "commit:old"
+        )
+        let state = GitHubSourceState(
+            skillID: UUID(),
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            repositoryIsPrivate: false,
+            trackingMode: .defaultBranch,
+            defaultBranch: "main",
+            currentVersionIdentifier: "commit:old",
+            currentCommitSHA: "commit-old",
+            currentTreeSHA: "package:old",
+            packageRecipe: recipe,
+            status: .current
+        )
+
+        let batch = try await provider.checkRemoteVersions(states: [state])
+        let version = try #require(batch.versions[state.skillID])
+        let identityInput = [
+            "SKILL.md\u{0}blob\u{0}skill-blob",
+            "scripts\u{0}tree\u{0}scripts-tree",
+        ].sorted().joined(separator: "\n")
+        let digest = SHA256.hash(data: Data(identityInput.utf8)).map { String(format: "%02x", $0) }.joined()
+
+        #expect(version.treeSHA == "package:\(digest)")
+        #expect(version.packageReviewPaths.isEmpty)
+    }
+
+    @Test("A new possible runtime path requests review while repository metadata stays quiet")
+    func rootRecipeDetectsOnlyPossibleRuntimePaths() async throws {
+        let provider = GitHubSourceProvider(session: RemoteVersionFixture.session())
+        let state = GitHubSourceState(
+            skillID: UUID(),
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            repositoryIsPrivate: false,
+            trackingMode: .defaultBranch,
+            defaultBranch: "main",
+            currentCommitSHA: "commit-old",
+            currentTreeSHA: "package:old",
+            packageRecipe: .init(
+                origin: .userSelection,
+                repositoryID: 7,
+                repositoryFullName: "example/skills",
+                trackingMode: .defaultBranch,
+                includePaths: ["SKILL.md", "scripts"],
+                reviewedTopLevelPaths: ["README.md", "SKILL.md", "scripts"],
+                confirmedVersionIdentifier: "commit:old"
+            ),
+            status: .current
+        )
+
+        let batch = try await provider.checkRemoteVersions(states: [state])
+        let version = try #require(batch.versions[state.skillID])
+
+        #expect(version.packageReviewPaths == ["skills"])
+        #expect(!version.packageReviewPaths.contains("README.md"))
     }
 
     @Test("Confirmed updates download a complete immutable snapshot")
@@ -573,6 +687,34 @@ struct SourceProviderTests {
         let provider = GitHubSourceProvider(session: fixture.session())
         await #expect(throws: GitHubSourceError.self) {
             try await provider.preview(locator: "example/skills")
+        }
+    }
+
+    @Test("Archive subprocess output is bounded instead of filling a pipe indefinitely")
+    func archiveSubprocessOutputIsBounded() async throws {
+        let runner = BoundedProcessRunner(timeout: 2, maximumOutputBytes: 4_096)
+
+        do {
+            _ = try await runner.run("/usr/bin/yes", arguments: ["archive-entry"])
+            Issue.record("无限输出的子进程不应成功")
+        } catch BoundedProcessError.outputLimitExceeded {
+            // Expected: the process is terminated as soon as the cap is crossed.
+        } catch {
+            Issue.record("预期输出上限错误，实际为 \(error)")
+        }
+    }
+
+    @Test("Archive subprocesses are terminated when they exceed the time budget")
+    func archiveSubprocessHasTimeout() async throws {
+        let runner = BoundedProcessRunner(timeout: 0.1, maximumOutputBytes: 4_096)
+
+        do {
+            _ = try await runner.run("/bin/sleep", arguments: ["5"])
+            Issue.record("超时的子进程不应成功")
+        } catch BoundedProcessError.timedOut {
+            // Expected.
+        } catch {
+            Issue.record("预期超时错误，实际为 \(error)")
         }
     }
 }
@@ -845,6 +987,8 @@ private final class RemoteVersionMockURLProtocol: URLProtocol, @unchecked Sendab
     nonisolated(unsafe) static var requestPaths: [String] = []
     nonisolated(unsafe) static var lastIfNoneMatch: String?
     nonisolated(unsafe) static var authorizationHeaders: [String?] = []
+    nonisolated(unsafe) static var repositoryPaddingBytes = 0
+    nonisolated(unsafe) static var treeTruncated = false
     nonisolated(unsafe) static var releaseAssets = [
         #"{"id":101,"name":"demo-pure.zip","state":"uploaded","content_type":"application/zip","size":2048,"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","browser_download_url":"https://github.com/example/skills/releases/download/v1.4.0/demo-pure.zip"}"#,
     ]
@@ -873,6 +1017,7 @@ private final class RemoteVersionMockURLProtocol: URLProtocol, @unchecked Sendab
         switch path {
         case "/repos/example/skills":
             payload = #"{"id":7,"full_name":"example/skills","default_branch":"main","private":false}"#
+                + String(repeating: " ", count: Self.repositoryPaddingBytes)
         case "/repos/example/skills/releases/latest":
             payload = #"{"id":42,"tag_name":"v1.4.0","name":"Version 1.4","published_at":"2026-08-15T00:00:00Z","zipball_url":"https://api.github.com/repos/example/skills/zipball/v1.4.0","assets":["# + Self.releaseAssets.joined(separator: ",") + "]}"
         case "/repos/example/skills/commits/v1.4.0":
@@ -880,7 +1025,8 @@ private final class RemoteVersionMockURLProtocol: URLProtocol, @unchecked Sendab
         case "/repos/example/skills/commits/main":
             payload = #"{"sha":"commit-main","commit":{"tree":{"sha":"root-tree-new"}}}"#
         case "/repos/example/skills/git/trees/root-tree", "/repos/example/skills/git/trees/root-tree-new":
-            payload = #"{"tree":[{"path":"README.md","type":"blob","sha":"readme-new"},{"path":"skills","type":"tree","sha":"skills-tree"}]}"#
+            payload = #"{"tree":[{"path":"README.md","type":"blob","sha":"readme-new"},{"path":"SKILL.md","type":"blob","sha":"skill-blob"},{"path":"scripts","type":"tree","sha":"scripts-tree"},{"path":"skills","type":"tree","sha":"skills-tree"}],"truncated":"#
+                + (Self.treeTruncated ? "true" : "false") + "}"
         case "/repos/example/skills/git/trees/skills-tree":
             payload = #"{"tree":[{"path":"demo","type":"tree","sha":"demo-tree"},{"path":"other","type":"tree","sha":"other-tree"}]}"#
         default:
@@ -903,6 +1049,8 @@ private enum RemoteVersionFixture {
         RemoteVersionMockURLProtocol.requestPaths = []
         RemoteVersionMockURLProtocol.lastIfNoneMatch = nil
         RemoteVersionMockURLProtocol.authorizationHeaders = []
+        RemoteVersionMockURLProtocol.repositoryPaddingBytes = 0
+        RemoteVersionMockURLProtocol.treeTruncated = false
         if let releaseAssets { RemoteVersionMockURLProtocol.releaseAssets = releaseAssets }
         else {
             RemoteVersionMockURLProtocol.releaseAssets = [

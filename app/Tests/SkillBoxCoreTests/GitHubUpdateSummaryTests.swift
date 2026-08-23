@@ -62,4 +62,10 @@ struct GitHubUpdateSummaryTests {
         let summary = GitHubUpdateSummary(statuses: [.current, .ignored, .checkingStopped])
         #expect(summary.statusMessage == "所有 GitHub Skills 都是最新内容")
     }
+
+    @Test("新的可安装内容不会被误报成新版本")
+    func packageReviewIsItsOwnAction() {
+        let summary = GitHubUpdateSummary(statuses: [.packageReviewRequired])
+        #expect(summary.statusMessage == "检查完成：1 个 Skill 需要确认新的可安装内容")
+    }
 }

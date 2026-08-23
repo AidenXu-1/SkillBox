@@ -21,7 +21,7 @@ let package = Package(
         ),
         .testTarget(
             name: "SkillBoxCoreTests",
-            dependencies: ["SkillBoxCore"]
+            dependencies: ["SkillBoxCore", "SkillBoxApp"]
         ),
     ]
 )

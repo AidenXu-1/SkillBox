@@ -1,0 +1,11 @@
+SkillBox 安装说明（GitHub 下载版）
+
+1. 打开 DMG，把 SkillBox 拖到“应用程序”。
+2. 第一次打开 SkillBox。
+3. 如果 macOS 提示无法验证开发者：
+   打开“系统设置”→“隐私与安全”，找到 SkillBox，点击“仍要打开”。
+4. 按系统提示输入一次这台 Mac 的登录密码。
+
+这份版本没有使用 Apple Developer ID，也没有经过 Apple 公证。
+安装后的相机、麦克风、文件夹等隐私权限仍由 macOS 单独管理；SkillBox 需要时会按系统流程请求。
+应用更新后，macOS 可能会再次要求“仍要打开”。

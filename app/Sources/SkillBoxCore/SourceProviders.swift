@@ -1,5 +1,84 @@
 import CryptoKit
+import Darwin
 import Foundation
+
+public enum BoundedProcessError: Error, Sendable {
+    case timedOut
+    case outputLimitExceeded
+    case failed(Int32, String)
+}
+
+public struct BoundedProcessRunner: Sendable {
+    public var timeout: TimeInterval
+    public var maximumOutputBytes: Int
+
+    public init(timeout: TimeInterval = 30, maximumOutputBytes: Int = 2 * 1_024 * 1_024) {
+        self.timeout = max(0.1, timeout)
+        self.maximumOutputBytes = max(1, maximumOutputBytes)
+    }
+
+    public func run(_ executable: String, arguments: [String]) async throws -> String {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SkillBoxProcess-\(UUID().uuidString).log")
+        guard FileManager.default.createFile(atPath: outputURL.path, contents: nil),
+              let output = try? FileHandle(forWritingTo: outputURL)
+        else { throw BoundedProcessError.failed(-1, "无法创建临时输出文件") }
+        defer {
+            try? output.close()
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+
+        let deadline = Date().addingTimeInterval(timeout)
+        do {
+            while process.isRunning {
+                try Task.checkCancellation()
+                if Date() >= deadline { throw BoundedProcessError.timedOut }
+                if outputSize(at: outputURL) > maximumOutputBytes {
+                    throw BoundedProcessError.outputLimitExceeded
+                }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        } catch {
+            terminate(process)
+            throw error
+        }
+
+        try output.synchronize()
+        let data = (try? Data(contentsOf: outputURL, options: .mappedIfSafe)) ?? Data()
+        guard data.count <= maximumOutputBytes else { throw BoundedProcessError.outputLimitExceeded }
+        let text = String(data: data, encoding: .utf8) ?? ""
+        guard process.terminationStatus == 0 else {
+            throw BoundedProcessError.failed(process.terminationStatus, String(text.prefix(500)))
+        }
+        return text
+    }
+
+    private func outputSize(at url: URL) -> Int {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes?[.size] as? NSNumber)?.intValue ?? 0
+    }
+
+    private func terminate(_ process: Process) {
+        guard process.isRunning else { return }
+        process.terminate()
+        let gracefulDeadline = Date().addingTimeInterval(0.2)
+        while process.isRunning, Date() < gracefulDeadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        if process.isRunning {
+            Darwin.kill(process.processIdentifier, SIGKILL)
+        }
+        process.waitUntilExit()
+    }
+}
 
 public protocol SourceProvider: Sendable {
     func preview(locator: String) async throws -> [SkillCandidate]
@@ -93,6 +172,7 @@ public enum GitHubSourceError: LocalizedError {
     case unsupportedHost
     case requestFailed(Int)
     case downloadTooLarge
+    case incompleteTree
     case archiveTooLarge
     case tooManyFiles
     case unsafeArchivePath(String)
@@ -114,6 +194,7 @@ public enum GitHubSourceError: LocalizedError {
         case .unsupportedHost: "目前只支持 github.com 仓库"
         case .requestFailed: "暂时无法从 GitHub 获取内容，请稍后重试"
         case .downloadTooLarge: "GitHub 下载的文件太大，目前最多约 10 MB"
+        case .incompleteTree: "GitHub 返回的目录不完整，SkillBox 已停止本次检查，请稍后重试"
         case .archiveTooLarge: "这个仓库展开后太大，目前最多约 25 MB"
         case .tooManyFiles: "这个仓库文件太多，目前最多 1000 个"
         case .unsafeArchivePath: "这个仓库包含不安全的文件位置，已停止添加"
@@ -133,6 +214,7 @@ public enum GitHubSourceError: LocalizedError {
 }
 
 public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking, Sendable {
+    private static let maximumAPIResponseBytes = 2 * 1_024 * 1_024
     private let session: URLSession
     private let limits: GitHubDownloadLimits
     private let scanner: any SkillScanner
@@ -229,11 +311,11 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
             case let .notModified(eTag, _):
                 return GitHubRemoteCheckBatch(versions: [:], eTag: eTag ?? conditionalETag, isNotModified: true)
             case let .modified(commit, eTag, usedAuthorization):
-                var trees: [UUID: String] = [:]
+                var trees: [UUID: PackageTreeResolution] = [:]
                 var statesNeedingTree: [GitHubSourceState] = []
                 for state in states {
                     if state.currentCommitSHA == commit.sha, let currentTreeSHA = state.currentTreeSHA {
-                        trees[state.skillID] = currentTreeSHA
+                        trees[state.skillID] = .init(treeSHA: currentTreeSHA)
                     } else {
                         statesNeedingTree.append(state)
                     }
@@ -258,8 +340,9 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
                         versionName: info.defaultBranch,
                         revision: info.defaultBranch,
                         commitSHA: commit.sha,
-                        treeSHA: trees[state.skillID] ?? commit.commit.tree.sha,
-                        archiveURL: URL(string: "https://api.github.com/repos/\(repository.owner)/\(repository.name)/zipball/\(commit.sha.urlPathSegment)")!
+                        treeSHA: trees[state.skillID]?.treeSHA ?? commit.commit.tree.sha,
+                        archiveURL: URL(string: "https://api.github.com/repos/\(repository.owner)/\(repository.name)/zipball/\(commit.sha.urlPathSegment)")!,
+                        packageReviewPaths: trees[state.skillID]?.reviewPaths ?? []
                     )
                     return (state.skillID, version)
                 })
@@ -270,13 +353,12 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
 
     public func preview(locator: String) async throws -> [SkillCandidate] {
         let reference = try GitHubReference.parse(locator)
-        let revision = try await reference.revision(using: session)
+        let revision = try await reference.revision(
+            using: session,
+            maximumResponseBytes: Self.maximumAPIResponseBytes
+        )
         let archiveURL = URL(string: "https://codeload.github.com/\(reference.owner)/\(reference.repository)/zip/\(revision)")!
-        let (data, response) = try await session.data(from: archiveURL)
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            throw GitHubSourceError.requestFailed(http.statusCode)
-        }
-        guard data.count <= limits.maximumDownloadBytes else { throw GitHubSourceError.downloadTooLarge }
+        let data = try await downloadData(request: URLRequest(url: archiveURL))
 
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("SkillBoxGitHub-\(UUID().uuidString)")
         let archive = temporary.appendingPathComponent("source.zip")
@@ -288,19 +370,19 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         try FileManager.default.createDirectory(at: extracted, withIntermediateDirectories: true)
         try data.write(to: archive, options: .atomic)
 
-        let entries = try listArchive(archive)
+        let entries = try await listArchive(archive)
         guard entries.count <= limits.maximumFileCount else { throw GitHubSourceError.tooManyFiles }
         for entry in entries {
             let components = entry.split(separator: "/", omittingEmptySubsequences: false)
             if entry.hasPrefix("/") || components.contains("..") { throw GitHubSourceError.unsafeArchivePath(entry) }
         }
-        let metadata = try run("/usr/bin/unzip", arguments: ["-Z", "-l", archive.path])
+        let metadata = try await run("/usr/bin/unzip", arguments: ["-Z", "-l", archive.path])
         if metadata.split(separator: "\n").contains(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("l") }) {
             throw GitHubSourceError.unsafeArchivePath("压缩包包含软链接")
         }
-        let expandedBytes = try archiveExpandedSize(archive)
+        let expandedBytes = try await archiveExpandedSize(archive)
         guard expandedBytes <= limits.maximumExpandedBytes else { throw GitHubSourceError.archiveTooLarge }
-        try run("/usr/bin/ditto", arguments: ["-x", "-k", archive.path, extracted.path])
+        try await run("/usr/bin/ditto", arguments: ["-x", "-k", archive.path, extracted.path])
         try validateExpandedTree(extracted)
 
         let repositoryRoot = try archiveContentRoot(in: extracted)
@@ -384,7 +466,8 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
     public func downloadSnapshot(
         version: GitHubRemoteVersion,
         skillPath: String?,
-        locator: String
+        locator: String,
+        packageRecipe: GitHubPackageRecipe? = nil
     ) async throws -> GitHubSnapshot {
         if version.requiresReleaseAssetSelection {
             throw GitHubSourceError.releaseAssetSelectionRequired(version.releaseAssets)
@@ -404,7 +487,7 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
             resolvedVersion.releaseAssets[index].digest = "sha256:\(verifiedDigest)"
             resolvedVersion = try resolvedVersion.selectingReleaseAsset(id: selectedAssetID)
         }
-        let candidates = try await extractCandidates(
+        let rawCandidates = try await extractCandidates(
             data: data,
             repositoryFullName: resolvedVersion.repositoryFullName,
             locator: locator,
@@ -412,7 +495,45 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
             selectedSkillPath: skillPath,
             archiveIsReleaseAsset: resolvedVersion.selectedReleaseAsset != nil
         )
-        return GitHubSnapshot(version: resolvedVersion, candidates: candidates)
+        let packageResolver = GitHubSkillPackageResolver()
+        var candidates: [SkillCandidate] = []
+        var recipes: [String: GitHubPackageRecipe] = [:]
+        var reviews: [GitHubPackageReview] = []
+        for candidate in rawCandidates {
+            let resolution = try await packageResolver.resolve(
+                candidate: candidate,
+                version: resolvedVersion,
+                archiveIsReleaseAsset: resolvedVersion.selectedReleaseAsset != nil,
+                existingRecipe: packageRecipe
+            )
+            switch resolution {
+            case let .ready(package):
+                candidates.append(package.candidate)
+                recipes[package.candidate.id] = package.recipe
+            case let .needsConfirmation(review):
+                reviews.append(review)
+            }
+        }
+        return GitHubSnapshot(
+            version: resolvedVersion,
+            candidates: candidates,
+            packageRecipes: recipes,
+            packageReviews: reviews
+        )
+    }
+
+    public func confirmPackageReview(
+        _ review: GitHubPackageReview,
+        includePaths: [String]
+    ) async throws -> GitHubResolvedPackage {
+        let resolution = try await GitHubSkillPackageResolver().confirm(
+            review: review,
+            includePaths: includePaths
+        )
+        guard case let .ready(package) = resolution else {
+            throw GitHubPackageError.packageCouldNotBeBuilt
+        }
+        return package
     }
 
     private func downloadRequest(url: URL, useAuthorization: Bool) async throws -> URLRequest {
@@ -572,11 +693,12 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
                 versionName: release.tagName,
                 revision: release.tagName,
                 commitSHA: commit.sha,
-                treeSHA: trees[state.skillID] ?? commit.commit.tree.sha,
+                treeSHA: trees[state.skillID]?.treeSHA ?? commit.commit.tree.sha,
                 publishedAt: release.publishedAt,
                 archiveURL: release.zipballURL,
                 releaseID: release.id,
-                usesSourceArchiveFallback: true
+                usesSourceArchiveFallback: true,
+                packageReviewPaths: trees[state.skillID]?.reviewPaths ?? []
             )
             return (state.skillID, version)
         })
@@ -659,6 +781,7 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         selectedSkillPath: String?,
         archiveIsReleaseAsset: Bool = false
     ) async throws -> [SkillCandidate] {
+        try Task.checkCancellation()
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("SkillBoxGitHub-\(UUID().uuidString)")
         let archive = temporary.appendingPathComponent("source.zip")
         let extracted = temporary.appendingPathComponent("extracted")
@@ -666,24 +789,27 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         defer { if !retainTemporaryDirectory { try? FileManager.default.removeItem(at: temporary) } }
         try FileManager.default.createDirectory(at: extracted, withIntermediateDirectories: true)
         try data.write(to: archive, options: .atomic)
-        let entries = try listArchive(archive)
+        try Task.checkCancellation()
+        let entries = try await listArchive(archive)
         guard entries.count <= limits.maximumFileCount else { throw GitHubSourceError.tooManyFiles }
         for entry in entries {
             let components = entry.split(separator: "/", omittingEmptySubsequences: false)
             if entry.hasPrefix("/") || components.contains("..") { throw GitHubSourceError.unsafeArchivePath(entry) }
         }
-        let metadata = try run("/usr/bin/unzip", arguments: ["-Z", "-l", archive.path])
+        let metadata = try await run("/usr/bin/unzip", arguments: ["-Z", "-l", archive.path])
         if metadata.split(separator: "\n").contains(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("l") }) {
             throw GitHubSourceError.unsafeArchivePath("压缩包包含软链接")
         }
-        guard try archiveExpandedSize(archive) <= limits.maximumExpandedBytes else { throw GitHubSourceError.archiveTooLarge }
-        try run("/usr/bin/ditto", arguments: ["-x", "-k", archive.path, extracted.path])
+        guard try await archiveExpandedSize(archive) <= limits.maximumExpandedBytes else { throw GitHubSourceError.archiveTooLarge }
+        try await run("/usr/bin/ditto", arguments: ["-x", "-k", archive.path, extracted.path])
+        try Task.checkCancellation()
         try validateExpandedTree(extracted)
         let repositoryRoot = try archiveContentRoot(in: extracted)
         let selectedRoot = archiveIsReleaseAsset
             ? repositoryRoot
             : selectedSkillPath.map { repositoryRoot.appendingPathComponent($0) } ?? repositoryRoot
         let result = await scanner.scan(roots: [selectedRoot], sourceName: { _ in "GitHub" })
+        try Task.checkCancellation()
         guard !result.candidates.isEmpty else { throw GitHubSourceError.noSkillsFound }
         let candidates = result.candidates.map { candidate in
             var updated = candidate
@@ -705,8 +831,8 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         return candidates
     }
 
-    private func listArchive(_ archive: URL) throws -> [String] {
-        let output = try run("/usr/bin/unzip", arguments: ["-Z1", archive.path])
+    private func listArchive(_ archive: URL) async throws -> [String] {
+        let output = try await run("/usr/bin/unzip", arguments: ["-Z1", archive.path])
         return output.split(separator: "\n").map(String.init)
     }
 
@@ -715,12 +841,55 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         rootTreeSHA: String,
         states: [GitHubSourceState],
         useAuthorization: Bool
-    ) async throws -> [UUID: String] {
+    ) async throws -> [UUID: PackageTreeResolution] {
         var responses: [String: TreeResponse] = [:]
-        var result: [UUID: String] = [:]
+        var result: [UUID: PackageTreeResolution] = [:]
         for state in states {
+            if let recipe = state.packageRecipe,
+               recipe.skillPath?.isEmpty ?? true,
+               !recipe.includePaths.isEmpty
+            {
+                let rootTree = try await treeResponse(
+                    sha: rootTreeSHA,
+                    repository: repository,
+                    useAuthorization: useAuthorization,
+                    cache: &responses
+                )
+                let topLevelPaths = Set(rootTree.tree.map(\.path))
+                let newPaths = topLevelPaths.filter {
+                    !recipe.reviewedTopLevelPaths.contains($0) &&
+                        !GitHubSkillPackageResolver.isRepositoryOnlyPath($0)
+                }.sorted()
+                var identities: [String] = []
+                var missing: [String] = []
+                for path in recipe.includePaths {
+                    if let entry = try await treeEntry(
+                        at: path,
+                        rootTreeSHA: rootTreeSHA,
+                        repository: repository,
+                        useAuthorization: useAuthorization,
+                        cache: &responses
+                    ) {
+                        identities.append("\(path)\u{0}\(entry.type)\u{0}\(entry.sha)")
+                    } else {
+                        missing.append(path)
+                    }
+                }
+                let reviewPaths = Array(Set(newPaths + missing)).sorted()
+                if missing.isEmpty {
+                    let bytes = identities.sorted().joined(separator: "\n").data(using: .utf8) ?? Data()
+                    let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+                    result[state.skillID] = .init(treeSHA: "package:\(digest)", reviewPaths: reviewPaths)
+                } else {
+                    result[state.skillID] = .init(
+                        treeSHA: state.currentTreeSHA ?? "package-review:\(rootTreeSHA)",
+                        reviewPaths: reviewPaths
+                    )
+                }
+                continue
+            }
             guard let skillPath = state.skillPath, !skillPath.isEmpty else {
-                result[state.skillID] = rootTreeSHA
+                result[state.skillID] = .init(treeSHA: rootTreeSHA)
                 continue
             }
             var currentSHA = rootTreeSHA
@@ -729,20 +898,62 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
                 if let cached = responses[currentSHA] {
                     tree = cached
                 } else {
-                    tree = try await requestAPI(
-                        path: "/repos/\(repository.owner)/\(repository.name)/git/trees/\(currentSHA.urlPathSegment)",
-                        useAuthorization: useAuthorization
+                    tree = try await treeResponse(
+                        sha: currentSHA,
+                        repository: repository,
+                        useAuthorization: useAuthorization,
+                        cache: &responses
                     )
-                    responses[currentSHA] = tree
                 }
                 guard let entry = tree.tree.first(where: { $0.path == component && $0.type == "tree" }) else {
                     throw GitHubSourceError.skillPathMissing(skillPath)
                 }
                 currentSHA = entry.sha
             }
-            result[state.skillID] = currentSHA
+            result[state.skillID] = .init(treeSHA: currentSHA)
         }
         return result
+    }
+
+    private func treeResponse(
+        sha: String,
+        repository: RepositoryName,
+        useAuthorization: Bool,
+        cache: inout [String: TreeResponse]
+    ) async throws -> TreeResponse {
+        if let cached = cache[sha] { return cached }
+        let tree: TreeResponse = try await requestAPI(
+            path: "/repos/\(repository.owner)/\(repository.name)/git/trees/\(sha.urlPathSegment)",
+            useAuthorization: useAuthorization
+        )
+        guard tree.truncated != true else { throw GitHubSourceError.incompleteTree }
+        cache[sha] = tree
+        return tree
+    }
+
+    private func treeEntry(
+        at relativePath: String,
+        rootTreeSHA: String,
+        repository: RepositoryName,
+        useAuthorization: Bool,
+        cache: inout [String: TreeResponse]
+    ) async throws -> TreeResponse.Entry? {
+        let components = relativePath.split(separator: "/").map(String.init)
+        guard !components.isEmpty else { return nil }
+        var treeSHA = rootTreeSHA
+        for (index, component) in components.enumerated() {
+            let tree = try await treeResponse(
+                sha: treeSHA,
+                repository: repository,
+                useAuthorization: useAuthorization,
+                cache: &cache
+            )
+            guard let entry = tree.tree.first(where: { $0.path == component }) else { return nil }
+            if index == components.count - 1 { return entry }
+            guard entry.type == "tree" else { return nil }
+            treeSHA = entry.sha
+        }
+        return nil
     }
 
     private func requestAPI<Response: Decodable>(
@@ -775,7 +986,7 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         var usedAuthorization = request.value(forHTTPHeaderField: "Authorization") != nil
-        var (data, response) = try await session.data(for: request)
+        var (data, response) = try await boundedAPIData(for: request)
         if let http = response as? HTTPURLResponse,
            request.value(forHTTPHeaderField: "Authorization") != nil,
            rateLimitRetryDate(from: http) == nil,
@@ -786,7 +997,7 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
             }
             request.setValue(nil, forHTTPHeaderField: "Authorization")
             usedAuthorization = false
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await boundedAPIData(for: request)
         }
         if let http = response as? HTTPURLResponse, http.statusCode == 304 {
             return .notModified(
@@ -809,6 +1020,18 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         let value = try decoder.decode(Response.self, from: data)
         let eTag = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag")
         return .modified(value, eTag: eTag, usedAuthorization: usedAuthorization)
+    }
+
+    private func boundedAPIData(for request: URLRequest) async throws -> (Data, URLResponse) {
+        do {
+            return try await BoundedNetworkResponseLoader.data(
+                for: request,
+                session: session,
+                maximumBytes: Self.maximumAPIResponseBytes
+            )
+        } catch is BoundedNetworkResponseError {
+            throw GitHubSourceError.downloadTooLarge
+        }
     }
 
     private func preferredAccessToken() async -> String? {
@@ -844,13 +1067,18 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         return nil
     }
 
-    private func archiveExpandedSize(_ archive: URL) throws -> Int {
-        let output = try run("/usr/bin/unzip", arguments: ["-l", archive.path])
-        return output.split(separator: "\n").reduce(into: 0) { total, line in
+    private func archiveExpandedSize(_ archive: URL) async throws -> Int {
+        let output = try await run("/usr/bin/unzip", arguments: ["-l", archive.path])
+        var total = 0
+        for line in output.split(separator: "\n") {
             let columns = line.split(whereSeparator: \Character.isWhitespace)
-            guard columns.count >= 4, let size = Int(columns[0]) else { return }
+            guard columns.count >= 4, let size = Int(columns[0]), size >= 0 else { continue }
+            guard size <= limits.maximumExpandedBytes - total else {
+                throw GitHubSourceError.archiveTooLarge
+            }
             total += size
         }
+        return total
     }
 
     private func validateExpandedTree(_ root: URL) throws {
@@ -883,18 +1111,18 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
     }
 
     @discardableResult
-    private func run(_ executable: String, arguments: [String]) throws -> String {
-        let process = Process()
-        let output = Pipe()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        process.standardOutput = output
-        process.standardError = output
-        try process.run()
-        process.waitUntilExit()
-        let text = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        guard process.terminationStatus == 0 else { throw GitHubSourceError.extractionFailed(String(text.prefix(500))) }
-        return text
+    private func run(_ executable: String, arguments: [String]) async throws -> String {
+        do {
+            return try await BoundedProcessRunner().run(executable, arguments: arguments)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch BoundedProcessError.timedOut {
+            throw GitHubSourceError.extractionFailed("处理压缩包超时")
+        } catch BoundedProcessError.outputLimitExceeded {
+            throw GitHubSourceError.extractionFailed("压缩包目录信息过多")
+        } catch let BoundedProcessError.failed(_, message) {
+            throw GitHubSourceError.extractionFailed(message)
+        }
     }
 }
 
@@ -930,6 +1158,16 @@ private enum GitHubAPIResponse<Value> {
 private struct RepositoryCheckContext {
     let info: RepositoryResponse
     let useAuthorization: Bool
+}
+
+private struct PackageTreeResolution {
+    var treeSHA: String
+    var reviewPaths: [String]
+
+    init(treeSHA: String, reviewPaths: [String] = []) {
+        self.treeSHA = treeSHA
+        self.reviewPaths = reviewPaths
+    }
 }
 
 private struct RepositoryResponse: Decodable {
@@ -1000,6 +1238,7 @@ private struct TreeResponse: Decodable {
         var sha: String
     }
     var tree: [Entry]
+    var truncated: Bool?
 }
 
 private extension String {
@@ -1026,12 +1265,22 @@ private struct GitHubReference: Sendable {
         return .init(owner: parts[0], repository: repository)
     }
 
-    func revision(using session: URLSession) async throws -> String {
+    func revision(using session: URLSession, maximumResponseBytes: Int) async throws -> String {
         if let explicitRevision { return explicitRevision }
         let url = URL(string: "https://api.github.com/repos/\(owner)/\(repository)")!
         var request = URLRequest(url: url)
         request.setValue("SkillBox/1", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await session.data(for: request)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await BoundedNetworkResponseLoader.data(
+                for: request,
+                session: session,
+                maximumBytes: maximumResponseBytes
+            )
+        } catch is BoundedNetworkResponseError {
+            throw GitHubSourceError.downloadTooLarge
+        }
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) { throw GitHubSourceError.requestFailed(http.statusCode) }
         struct Repository: Decodable { var default_branch: String }
         return try JSONDecoder().decode(Repository.self, from: data).default_branch

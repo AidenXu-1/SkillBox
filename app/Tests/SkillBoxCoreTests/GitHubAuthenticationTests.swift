@@ -1,9 +1,43 @@
 import Foundation
+import LocalAuthentication
+import Security
 import Testing
 @testable import SkillBoxCore
 
 @Suite("GitHub device authorization", .serialized)
 struct GitHubAuthenticationTests {
+    @Test("Interactive credentials are available only while the Mac is unlocked")
+    func keychainAccessibilityRequiresUnlockedMac() {
+        #expect(
+            KeychainCredentialAccessibility.interactive as String
+                == kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String
+        )
+    }
+
+    @Test("Automatic credential reads never ask for the Mac login password")
+    func automaticCredentialReadsAreNonInteractive() {
+        let query = KeychainCredentialAccessPolicy.automaticReadQuery(
+            service: "com.zhaoji.skillbox.test",
+            account: "test-account"
+        )
+
+        let context = query[kSecUseAuthenticationContext as String] as? LAContext
+        #expect(context?.interactionNotAllowed == true)
+        #expect(
+            query[kSecUseAuthenticationUI as String].map(String.init(describing:))
+                == "u_AuthUIF"
+        )
+        #expect(query[kSecReturnData as String] as? Bool == true)
+    }
+
+    @Test("An explicit save can rebind a credential after the app identity changes")
+    func explicitSaveCanRebindAfterAuthorizationIsNeeded() {
+        #expect(KeychainCredentialAccessPolicy.saveRecovery(for: errSecInteractionNotAllowed) == .replaceAfterAuthorization)
+        #expect(KeychainCredentialAccessPolicy.saveRecovery(for: errSecAuthFailed) == .replaceAfterAuthorization)
+        #expect(KeychainCredentialAccessPolicy.saveRecovery(for: errSecItemNotFound) == .add)
+        #expect(KeychainCredentialAccessPolicy.saveRecovery(for: errSecUserCanceled) == .fail)
+    }
+
     @Test("Desktop login uses device flow without sending a client secret")
     func deviceFlow() async throws {
         let session = DeviceFlowFixture.session()
@@ -66,6 +100,41 @@ struct GitHubAuthenticationTests {
 
         #expect(try await store.load() == nil)
     }
+
+    @Test("Bounded network reads stop oversized responses before callers decode them")
+    func boundedNetworkReadRejectsOversizedResponse() async {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OversizedResponseURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let request = URLRequest(url: URL(string: "https://example.com/oversized")!)
+
+        await #expect(throws: BoundedNetworkResponseError.self) {
+            try await BoundedNetworkResponseLoader.data(
+                for: request,
+                session: session,
+                maximumBytes: 64
+            )
+        }
+    }
+}
+
+private final class OversizedResponseURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Length": "256"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(repeating: 0x41, count: 256))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
 
 private actor MemoryGitHubCredentialStore: GitHubCredentialStore {

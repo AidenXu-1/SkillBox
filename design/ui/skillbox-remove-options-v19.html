@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SkillBox v19 · 移除 Skill 双路径</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif;
+      background: #edf0f4;
+      color: #1d1d1f;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 1180px; min-height: 820px; display: grid; place-items: center; }
+    button { font: inherit; }
+    .window {
+      position: relative;
+      width: 1440px;
+      height: 900px;
+      overflow: hidden;
+      border: 1px solid rgba(0,0,0,.16);
+      border-radius: 22px;
+      background: #fbfbfc;
+      box-shadow: 0 28px 80px rgba(30,38,55,.24);
+    }
+    .titlebar { height: 58px; display: flex; align-items: center; gap: 9px; padding: 0 20px; background: rgba(247,248,250,.92); }
+    .dot { width: 13px; height: 13px; border-radius: 50%; }
+    .red { background:#ff5f57; } .yellow { background:#febc2e; } .green { background:#28c840; }
+    .app-title { margin-left: 24px; font-size: 16px; font-weight: 650; }
+    .layout { height: calc(100% - 58px); display: grid; grid-template-columns: 230px 380px 1fr; }
+    .sidebar { padding: 22px 14px; border-right: 1px solid #dedfe2; background:#f3f4f6; }
+    .nav { padding: 10px 13px; margin-bottom: 4px; border-radius: 9px; font-size: 15px; }
+    .nav.active { background:#dfe8f8; font-weight: 650; }
+    .list { border-right: 1px solid #dedfe2; background:#fff; padding: 24px 18px; }
+    h1 { font-size: 24px; margin: 0 0 18px; }
+    .skill-row { padding: 14px; border-radius: 11px; margin-bottom: 8px; color:#4a4a4f; }
+    .skill-row.active { background:#e9f1ff; color:#1d1d1f; }
+    .skill-row b { display:block; font-size:15px; margin-bottom:4px; }
+    .skill-row span { font-size:12px; color:#7c7d82; }
+    .detail { padding: 34px 40px; background:#fff; }
+    .detail h2 { margin:0 0 7px; font-size:28px; }
+    .detail p { margin:0; color:#77787d; }
+    .card { margin-top:28px; padding:18px; border:1px solid #e0e1e5; border-radius:14px; }
+    .card-title { font-size:16px; font-weight:650; }
+    .install-line { display:flex; justify-content:space-between; padding-top:14px; font-size:14px; }
+    .danger-link { margin-top:28px; color:#d12e2e; font-size:14px; }
+    .scrim { position:absolute; inset:0; background:rgba(18,22,30,.34); backdrop-filter: blur(3px); }
+    .dialog {
+      position:absolute;
+      left:50%; top:50%; transform:translate(-50%,-50%);
+      width:610px;
+      padding:25px;
+      border:1px solid rgba(255,255,255,.7);
+      border-radius:18px;
+      background:rgba(252,252,253,.96);
+      box-shadow:0 26px 70px rgba(0,0,0,.3);
+    }
+    .dialog h3 { margin:0; text-align:center; font-size:21px; }
+    .lead { margin:9px auto 20px; max-width:500px; text-align:center; color:#66686d; font-size:14px; line-height:1.55; }
+    .choices { display:grid; gap:10px; }
+    .choice {
+      width:100%;
+      display:grid;
+      grid-template-columns:22px 1fr auto;
+      gap:12px;
+      align-items:start;
+      padding:15px 16px;
+      text-align:left;
+      border:1px solid #d8d9dd;
+      border-radius:12px;
+      background:#fff;
+      cursor:pointer;
+    }
+    .choice:hover { border-color:#9abcf2; background:#f7faff; }
+    .choice.selected { border:2px solid #3b82e6; padding:14px 15px; background:#f3f8ff; }
+    .radio { width:18px; height:18px; border:1.5px solid #a1a2a7; border-radius:50%; margin-top:1px; display:grid; place-items:center; }
+    .selected .radio { border-color:#2878dd; }
+    .selected .radio::after { content:""; width:10px; height:10px; border-radius:50%; background:#2878dd; }
+    .choice-title { display:block; font-size:15px; font-weight:650; }
+    .choice-desc { display:block; margin-top:4px; color:#66686d; font-size:13px; line-height:1.45; }
+    .safe { align-self:center; padding:3px 7px; border-radius:999px; background:#e9f6eb; color:#26723a; font-size:11px; font-weight:650; }
+    .note { margin:14px 2px 4px; color:#73747a; font-size:12px; line-height:1.45; }
+    .actions { display:flex; justify-content:flex-end; gap:9px; margin-top:22px; }
+    .action { min-width:88px; height:34px; padding:0 15px; border-radius:8px; border:1px solid #c8c9cd; background:#fff; cursor:pointer; }
+    .action.primary { min-width:142px; border-color:#c43737; background:#d74343; color:#fff; font-weight:650; }
+  </style>
+</head>
+<body>
+  <main class="window">
+    <header class="titlebar">
+      <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+      <span class="app-title">SkillBox</span>
+    </header>
+    <section class="layout">
+      <aside class="sidebar">
+        <div class="nav">总览</div><div class="nav active">我的 Skills</div><div class="nav">发现 Skills</div><div class="nav">安装到应用</div><div class="nav">最近操作</div><div class="nav">设置</div>
+      </aside>
+      <section class="list">
+        <h1>我的 Skills</h1>
+        <div class="skill-row active"><b>vibe-project-foundation</b><span>已安装到 2 个应用</span></div>
+        <div class="skill-row"><b>agent-team</b><span>尚未通过 SkillBox 安装</span></div>
+        <div class="skill-row"><b>zhaoji-writing</b><span>尚未通过 SkillBox 安装</span></div>
+      </section>
+      <section class="detail">
+        <h2>vibe-project-foundation</h2><p>为长期 AI 项目建立规范、文档和安全边界。</p>
+        <div class="card"><div class="card-title">安装到应用</div><div class="install-line"><span>Codex</span><b>已安装</b></div><div class="install-line"><span>Claude Code</span><b>已安装</b></div></div>
+        <div class="danger-link">删除这份 Skill</div>
+      </section>
+    </section>
+    <div class="scrim"></div>
+    <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+      <h3 id="dialog-title">从 SkillBox 移除这份 Skill？</h3>
+      <p class="lead">选择如何处理由 SkillBox 安装到 Codex 和 Claude Code 的副本。其他同名 Skill 不会受影响。</p>
+      <div class="choices">
+        <button class="choice selected" data-action="keep">
+          <span class="radio"></span>
+          <span><span class="choice-title">只清理 SkillBox 主 Skill</span><span class="choice-desc">保留 Codex 和 Claude Code 中现有副本；以后不再由 SkillBox 管理或更新。</span></span>
+          <span class="safe">不改应用文件</span>
+        </button>
+        <button class="choice" data-action="remove">
+          <span class="radio"></span>
+          <span><span class="choice-title">全部卸载并清理</span><span class="choice-desc">先从 Codex 和 Claude Code 卸载这份 Skill，再清理 SkillBox 主 Skill。下一步仍会展示卸载清单。</span></span>
+          <span></span>
+        </button>
+      </div>
+      <p class="note">SkillBox 主 Skill 会移入“已删除”，可以立即撤销。保留的应用副本不会被修改。</p>
+      <div class="actions"><button class="action">取消</button><button class="action primary" id="confirm">只清理主 Skill</button></div>
+    </section>
+  </main>
+  <script>
+    const choices = [...document.querySelectorAll('.choice')];
+    const confirm = document.querySelector('#confirm');
+    choices.forEach(choice => choice.addEventListener('click', () => {
+      choices.forEach(item => item.classList.toggle('selected', item === choice));
+      confirm.textContent = choice.dataset.action === 'keep' ? '只清理主 Skill' : '查看卸载清单';
+    }));
+  </script>
+</body>
+</html>

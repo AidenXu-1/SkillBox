@@ -12,5 +12,7 @@
 | 编号 | 决策 | 状态 | 日期 |
 |------|------|------|------|
 | [0001](0001-record-architecture-decisions.md) | 采用 ADR 记录架构决策 | 已采纳 | 2026-08-14 |
+| [0009](0009-local-development-source-and-release-snapshot.md) | 外部本地开发源与纯净发布快照 | 已采纳 | 2026-08-21 |
+| [0010](0010-github-adhoc-distribution.md) | GitHub 无证书 DMG 发行 | 已采纳 | 2026-08-22 |
 
 > 状态:提议中 / 已采纳 / 已弃用 / 被取代

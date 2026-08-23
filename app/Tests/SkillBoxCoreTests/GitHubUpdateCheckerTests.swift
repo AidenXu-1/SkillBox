@@ -554,6 +554,125 @@ struct GitHubUpdateCheckerTests {
         let result = try await GitHubUpdateChecker(checker: MockVersionChecker(version: remote), store: store).check(skillID: skill.id)
         #expect(result?.status == .releasePackageAvailable)
     }
+
+    @Test("A package-boundary change asks for review instead of pretending to be an update")
+    func packageBoundaryChangeRequiresReview() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        var state = fixture.state(skillID: skill.id)
+        state.packageRecipe = .init(
+            origin: .userSelection,
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            trackingMode: .latestStableRelease,
+            includePaths: ["SKILL.md", "scripts"],
+            reviewedTopLevelPaths: ["README.md", "SKILL.md", "scripts"],
+            confirmedVersionIdentifier: "release:41"
+        )
+        try await store.updateSourceState(state)
+        let remote = GitHubRemoteVersion(
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            isPrivate: false,
+            trackingMode: .latestStableRelease,
+            defaultBranch: "main",
+            versionIdentifier: "release:42:source:commit-2",
+            versionName: "v1.4.0",
+            revision: "v1.4.0",
+            commitSHA: "commit-2",
+            treeSHA: "package:same",
+            archiveURL: URL(string: "https://api.github.com/archive.zip")!,
+            releaseID: 42,
+            usesSourceArchiveFallback: true,
+            packageReviewPaths: ["templates"]
+        )
+
+        let result = try await GitHubUpdateChecker(
+            checker: MockVersionChecker(version: remote),
+            store: store
+        ).check(skillID: skill.id)
+
+        #expect(result?.status == .packageReviewRequired)
+        #expect(result?.availablePackageReviewPaths == ["templates"])
+    }
+
+    @Test("A newly confirmed package records its remote boundary without inventing an update")
+    func confirmedPackageAdoptsRemoteBaseline() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        var state = fixture.state(skillID: skill.id)
+        state.currentVersionIdentifier = "release:42:source:commit-2"
+        state.currentCommitSHA = "commit-2"
+        state.currentTreeSHA = nil
+        state.packageRecipe = .init(
+            origin: .userSelection,
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            trackingMode: .latestStableRelease,
+            includePaths: ["SKILL.md", "scripts"],
+            reviewedTopLevelPaths: ["README.md", "SKILL.md", "scripts"],
+            confirmedVersionIdentifier: "release:42:source:commit-2"
+        )
+        state.status = .needsInitialCheck
+        try await store.updateSourceState(state)
+        let remote = GitHubRemoteVersion(
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            isPrivate: false,
+            trackingMode: .latestStableRelease,
+            defaultBranch: "main",
+            versionIdentifier: "release:42:source:commit-2",
+            versionName: "v1.4.0",
+            revision: "v1.4.0",
+            commitSHA: "commit-2",
+            treeSHA: "package:confirmed",
+            archiveURL: URL(string: "https://api.github.com/archive.zip")!,
+            releaseID: 42,
+            usesSourceArchiveFallback: true
+        )
+
+        let result = try await GitHubUpdateChecker(
+            checker: MockVersionChecker(version: remote),
+            store: store
+        ).check(skillID: skill.id)
+
+        #expect(result?.status == .current)
+        #expect(result?.currentTreeSHA == "package:confirmed")
+        #expect(result?.availableVersionIdentifier == result?.currentVersionIdentifier)
+    }
+
+    @Test("切换跟踪方式后会进入更新预览，不会永久卡在首次核对")
+    func changedTrackingModeCanAdvanceToUpdate() async throws {
+        let fixture = try UpdateFixture()
+        defer { fixture.remove() }
+        let store = try fixture.store()
+        let skill = try await fixture.importSkill(into: store)
+        var state = fixture.state(skillID: skill.id)
+        state.currentTreeSHA = nil
+        state.packageRecipe = .init(
+            origin: .userSelection,
+            repositoryID: 7,
+            repositoryFullName: "example/skills",
+            trackingMode: .latestStableRelease,
+            includePaths: ["SKILL.md"],
+            reviewedTopLevelPaths: ["SKILL.md"],
+            confirmedVersionIdentifier: "commit:old"
+        )
+        state.status = .needsInitialCheck
+        try await store.updateSourceState(state)
+        let remote = fixture.remote(identifier: "release:42", tree: "package:new")
+
+        let result = try await GitHubUpdateChecker(
+            checker: MockVersionChecker(version: remote),
+            store: store
+        ).check(skillID: skill.id)
+
+        #expect(result?.status == .updateAvailable)
+    }
 }
 
 private struct AuthenticationRequiredChecker: GitHubRemoteVersionChecking {

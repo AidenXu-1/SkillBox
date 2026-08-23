@@ -19,7 +19,7 @@ SkillBox 要频繁扫描隐藏目录、监测本地文件、提供 Finder 与系
 
 使用 Swift 6 与 SwiftUI，最低 macOS 15，首发 arm64。中央数据使用普通文件和版本化 JSON，不使用账号、遥测、云端或数据库。
 
-公开版通过 Developer ID、Hardened Runtime、公证 DMG 和 GitHub Releases 发行。为实现标准目录自动扫描，不启用 App Store Sandbox；代码必须把可访问路径限制在 Spec 声明范围。
+公开版使用原生 DMG 和 GitHub Releases 发行，并保持 Hardened Runtime。具体签名与 Gatekeeper 策略已由 [ADR-0010](0010-github-adhoc-distribution.md) 更新。为实现标准目录自动扫描，不启用 App Store Sandbox；代码必须把可访问路径限制在 Spec 声明范围。
 
 ## 后果
 

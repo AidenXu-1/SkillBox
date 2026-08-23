@@ -1,5 +1,83 @@
 import Foundation
+import LocalAuthentication
 import Security
+
+enum KeychainCredentialAccessibility {
+    static var interactive: CFString { kSecAttrAccessibleWhenUnlockedThisDeviceOnly }
+}
+
+enum KeychainCredentialSaveRecovery: Equatable {
+    case add
+    case replaceAfterAuthorization
+    case fail
+}
+
+enum KeychainCredentialAccessPolicy {
+    static func baseQuery(service: String, account: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+    }
+
+    static func automaticReadQuery(service: String, account: String) -> [String: Any] {
+        var query = baseQuery(service: service, account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        query[kSecUseAuthenticationContext as String] = nonInteractiveContext()
+        // The legacy macOS file-based keychain can still present its ACL dialog
+        // even when the LocalAuthentication context disallows interaction.
+        // Fail instead of prompting as a second, Security-framework-level guard.
+        query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
+        return query
+    }
+
+    static func saveRecovery(for status: OSStatus) -> KeychainCredentialSaveRecovery {
+        switch status {
+        case errSecItemNotFound:
+            .add
+        case errSecInteractionNotAllowed, errSecAuthFailed:
+            .replaceAfterAuthorization
+        default:
+            .fail
+        }
+    }
+
+    static func save(_ data: Data, service: String, account: String) -> OSStatus {
+        let baseQuery = baseQuery(service: service, account: account)
+        var silentQuery = baseQuery
+        silentQuery[kSecUseAuthenticationContext as String] = nonInteractiveContext()
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: KeychainCredentialAccessibility.interactive,
+        ]
+        let updateStatus = SecItemUpdate(silentQuery as CFDictionary, attributes as CFDictionary)
+        switch saveRecovery(for: updateStatus) {
+        case .add:
+            return add(data, to: baseQuery)
+        case .replaceAfterAuthorization:
+            let deleteStatus = SecItemDelete(baseQuery as CFDictionary)
+            guard deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound else { return deleteStatus }
+            return add(data, to: baseQuery)
+        case .fail:
+            return updateStatus
+        }
+    }
+
+    private static func add(_ data: Data, to baseQuery: [String: Any]) -> OSStatus {
+        var insert = baseQuery
+        insert[kSecValueData as String] = data
+        insert[kSecAttrAccessible as String] = KeychainCredentialAccessibility.interactive
+        return SecItemAdd(insert as CFDictionary, nil)
+    }
+
+    private static func nonInteractiveContext() -> LAContext {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        return context
+    }
+}
 
 public struct GitHubDeviceAuthorization: Hashable, Sendable {
     public var deviceCode: String
@@ -73,13 +151,7 @@ public actor KeychainGitHubCredentialStore: GitHubCredentialStore {
     }
 
     public func load() throws -> GitHubOAuthTokens? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
+        let query = KeychainCredentialAccessPolicy.automaticReadQuery(service: service, account: account)
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
@@ -89,24 +161,8 @@ public actor KeychainGitHubCredentialStore: GitHubCredentialStore {
 
     public func save(_ tokens: GitHubOAuthTokens) throws {
         let data = try JSONEncoder().encode(tokens)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        let attributes: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-        ]
-        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if updateStatus == errSecItemNotFound {
-            var insert = query
-            attributes.forEach { insert[$0.key] = $0.value }
-            let addStatus = SecItemAdd(insert as CFDictionary, nil)
-            guard addStatus == errSecSuccess else { throw GitHubAuthenticationError.keychain(addStatus) }
-        } else if updateStatus != errSecSuccess {
-            throw GitHubAuthenticationError.keychain(updateStatus)
-        }
+        let status = KeychainCredentialAccessPolicy.save(data, service: service, account: account)
+        guard status == errSecSuccess else { throw GitHubAuthenticationError.keychain(status) }
     }
 
     public func delete() throws {
@@ -189,7 +245,16 @@ public struct GitHubDeviceFlowClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = form.sorted { $0.key < $1.key }.map { "\($0.key.formEncoded)=\($0.value.formEncoded)" }.joined(separator: "&").data(using: .utf8)
-        let (data, response) = try await session.data(for: request)
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await BoundedNetworkResponseLoader.data(
+                for: request,
+                session: session,
+                maximumBytes: 256 * 1_024
+            )
+        } catch is BoundedNetworkResponseError {
+            throw GitHubAuthenticationError.invalidResponse
+        }
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             throw GitHubAuthenticationError.requestFailed(http.statusCode)
         }

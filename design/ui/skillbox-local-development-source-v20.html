@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SkillBox v20 · 本地开发源</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif;
+      color: #1d1d1f;
+      background: #e9edf3;
+      --blue: #1677e8;
+      --blue-soft: #eaf3ff;
+      --line: #dedfe4;
+      --muted: #72747b;
+      --green: #248a3d;
+      --orange: #c66a05;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 1180px; min-height: 820px; display: grid; place-items: center; }
+    button { font: inherit; }
+    .window {
+      position: relative;
+      width: 1440px;
+      height: 900px;
+      overflow: hidden;
+      border: 1px solid rgba(0,0,0,.15);
+      border-radius: 22px;
+      background: #fbfbfc;
+      box-shadow: 0 28px 80px rgba(30,38,55,.24);
+    }
+    .titlebar { height: 58px; display: flex; align-items: center; gap: 9px; padding: 0 20px; background: rgba(247,248,250,.94); border-bottom: 1px solid rgba(0,0,0,.04); }
+    .dot { width: 13px; height: 13px; border-radius: 50%; }
+    .red { background:#ff5f57; } .yellow { background:#febc2e; } .green { background:#28c840; }
+    .app-title { margin-left: 22px; font-size: 16px; font-weight: 650; }
+    .prototype-switch { margin-left:auto; display:flex; gap:2px; padding:3px; border-radius:9px; background:#e7e8ec; }
+    .prototype-switch button { height:28px; padding:0 12px; border:0; border-radius:7px; background:transparent; color:#62636a; font-size:12px; cursor:pointer; }
+    .prototype-switch button.active { color:#1d1d1f; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.14); }
+    .layout { height: calc(100% - 58px); display: grid; grid-template-columns: 220px 365px 1fr; }
+    .sidebar { padding: 22px 14px; border-right: 1px solid var(--line); background:#f3f4f6; }
+    .nav { display:flex; gap:10px; align-items:center; padding:10px 13px; margin-bottom:4px; border-radius:9px; font-size:15px; }
+    .nav.active { background:#dfe8f8; font-weight:650; }
+    .nav-icon { width:18px; color:#303136; text-align:center; }
+    .sidebar-note { position:absolute; left:24px; bottom:22px; font-size:12px; color:#81838a; }
+    .list { border-right: 1px solid var(--line); background:#fff; padding:24px 18px; }
+    .list-head { display:flex; align-items:center; justify-content:space-between; }
+    h1 { font-size:24px; margin:0; }
+    .add { width:30px; height:30px; border:1px solid #d1d2d6; border-radius:8px; background:#fff; font-size:21px; line-height:1; }
+    .search { margin:16px 0 12px; height:34px; padding:7px 10px; border-radius:8px; background:#f0f1f3; color:#929399; font-size:13px; }
+    .skill-row { display:grid; grid-template-columns:34px 1fr auto; gap:11px; align-items:center; padding:11px 10px; border-radius:11px; margin-bottom:5px; }
+    .skill-row.active { background:#e9f2ff; }
+    .skill-icon { width:32px; height:32px; display:grid; place-items:center; border-radius:9px; color:#176bca; background:#dcecff; font-size:16px; }
+    .skill-row b { display:block; font-size:14px; margin-bottom:3px; }
+    .skill-row small { display:block; color:#7c7d82; font-size:11.5px; }
+    .badge { padding:3px 7px; border-radius:99px; color:#a85505; background:#fff2dd; font-size:10.5px; font-weight:650; }
+    .detail { overflow:auto; padding:30px 40px 50px; background:#fff; }
+    .detail-head { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; }
+    .detail h2 { margin:0 0 6px; font-size:27px; }
+    .detail-head p { margin:0; color:var(--muted); font-size:14px; }
+    .primary-small { height:34px; padding:0 14px; border:0; border-radius:8px; color:white; background:var(--blue); font-weight:650; cursor:pointer; }
+    .section-card { margin-top:24px; padding:18px; border:1px solid var(--line); border-radius:14px; background:#fff; }
+    .section-title { display:flex; align-items:center; justify-content:space-between; font-size:15.5px; font-weight:650; }
+    .section-title small { color:#8a8c91; font-size:12px; font-weight:500; }
+    .source-top { display:grid; grid-template-columns:38px 1fr auto; gap:12px; align-items:start; }
+    .source-icon { width:38px; height:38px; display:grid; place-items:center; border-radius:10px; color:#186fc9; background:#e7f2ff; font-size:19px; }
+    .source-name { font-size:15px; font-weight:650; }
+    .source-path { margin-top:4px; max-width:500px; color:#6d6f75; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .status-pill { padding:4px 8px; border-radius:99px; color:#a75603; background:#fff0db; font-size:11px; font-weight:650; }
+    .source-message { margin-top:15px; padding:12px 13px; border-radius:10px; color:#5a420a; background:#fff8e7; font-size:13px; line-height:1.45; }
+    .source-actions { display:flex; align-items:center; gap:8px; margin-top:15px; }
+    .secondary { height:32px; padding:0 12px; border:1px solid #cfd0d5; border-radius:8px; background:#fff; cursor:pointer; }
+    .more { width:32px; padding:0; }
+    .source-meta { margin-left:auto; color:#8b8d92; font-size:11.5px; }
+    .content-rule { margin-top:15px; padding-top:14px; border-top:1px solid #ececef; }
+    .content-rule-head { display:flex; justify-content:space-between; font-size:12px; color:#71737a; }
+    .content-rule-head a { color:#176dce; }
+    .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+    .chip { padding:4px 8px; border-radius:7px; color:#4e5561; background:#f1f3f6; font:11.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .installation { display:flex; justify-content:space-between; padding:13px 0 0; font-size:13px; }
+    .installation + .installation { border-top:1px solid #f0f0f2; margin-top:12px; }
+    .managed { color:var(--green); font-weight:600; }
+
+    .scrim { position:absolute; inset:58px 0 0; background:rgba(18,22,30,.34); backdrop-filter:blur(3px); }
+    .dialog { position:absolute; left:50%; top:51%; transform:translate(-50%,-50%); width:650px; padding:25px; border:1px solid rgba(255,255,255,.72); border-radius:18px; background:rgba(252,252,253,.98); box-shadow:0 26px 70px rgba(0,0,0,.28); }
+    .dialog h3 { margin:0; text-align:center; font-size:21px; }
+    .lead { margin:9px auto 19px; max-width:545px; text-align:center; color:#66686d; font-size:13.5px; line-height:1.55; }
+    .choice { width:100%; display:grid; grid-template-columns:22px 1fr auto; gap:12px; align-items:start; padding:14px 15px; text-align:left; border:1px solid #d8d9dd; border-radius:12px; background:#fff; cursor:pointer; }
+    .choice + .choice { margin-top:9px; }
+    .choice.selected { border:2px solid #3b82e6; padding:13px 14px; background:#f3f8ff; }
+    .radio { width:18px; height:18px; border:1.5px solid #a1a2a7; border-radius:50%; margin-top:1px; display:grid; place-items:center; }
+    .selected .radio { border-color:#2878dd; }
+    .selected .radio::after { content:""; width:10px; height:10px; border-radius:50%; background:#2878dd; }
+    .choice-title { display:block; font-size:14.5px; font-weight:650; }
+    .choice-desc { display:block; margin-top:4px; color:#66686d; font-size:12.5px; line-height:1.45; }
+    .recommend { align-self:center; padding:3px 7px; border-radius:999px; background:#e8f5eb; color:#25723a; font-size:10.5px; font-weight:650; }
+    .package-preview { margin-top:14px; display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+    .package-column { padding:12px; border-radius:10px; background:#f3f4f6; }
+    .package-column b { display:block; margin-bottom:7px; font-size:12px; }
+    .package-column span { display:block; margin-top:4px; color:#696b72; font:11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .dialog-note { margin:12px 2px 0; color:#777980; font-size:11.5px; line-height:1.45; }
+    .actions { display:flex; justify-content:flex-end; gap:9px; margin-top:20px; }
+    .action { min-width:82px; height:34px; padding:0 14px; border-radius:8px; border:1px solid #c8c9cd; background:#fff; cursor:pointer; }
+    .action.primary { min-width:124px; border-color:#176bc6; background:var(--blue); color:#fff; font-weight:650; }
+
+    .update { grid-column:2 / 4; overflow:auto; padding:28px 42px 44px; background:#fff; }
+    .back { color:#176fcf; font-size:13px; margin-bottom:18px; }
+    .update h2 { margin:0; font-size:27px; }
+    .update-sub { margin:6px 0 0; color:var(--muted); font-size:13.5px; }
+    .update-grid { display:grid; grid-template-columns:1.35fr .9fr; gap:18px; margin-top:22px; }
+    .diff-card, .summary-card { border:1px solid var(--line); border-radius:14px; background:#fff; overflow:hidden; }
+    .card-head { padding:15px 17px; border-bottom:1px solid #ececef; font-size:14px; font-weight:650; }
+    .diff-group { padding:14px 17px; }
+    .diff-group + .diff-group { border-top:1px solid #eeeef1; }
+    .diff-group-title { display:flex; justify-content:space-between; margin-bottom:9px; font-size:12px; font-weight:650; }
+    .count-blue { color:#176fd0; } .count-gray { color:#85878d; }
+    .file { display:flex; align-items:center; gap:9px; padding:6px 0; color:#505159; font:12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .mark { width:18px; height:18px; display:grid; place-items:center; border-radius:5px; color:#fff; background:#2c7ed6; font:12px -apple-system; }
+    .ignored .mark { color:#71737a; background:#eceef1; }
+    .ignored { color:#85878d; }
+    .summary-body { padding:15px 17px; }
+    .summary-line { display:flex; justify-content:space-between; gap:14px; padding:8px 0; font-size:12.5px; }
+    .summary-line span { color:#777980; }
+    .safe-box { margin-top:12px; padding:11px; border-radius:9px; color:#386143; background:#eef8f0; font-size:12px; line-height:1.45; }
+    .update-actions { display:flex; justify-content:flex-end; gap:9px; margin-top:22px; }
+    .update-actions button { height:35px; padding:0 14px; border-radius:8px; border:1px solid #cacbd0; background:#fff; }
+    .update-actions .primary-update { color:#fff; border-color:#176bc6; background:var(--blue); font-weight:650; }
+    [hidden] { display:none !important; }
+  </style>
+</head>
+<body>
+  <main class="window">
+    <header class="titlebar">
+      <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+      <span class="app-title">SkillBox</span>
+      <nav class="prototype-switch" aria-label="原型页面">
+        <button data-screen="link">首次关联</button><button data-screen="detail">来源状态</button><button data-screen="update">更新预览</button>
+      </nav>
+    </header>
+    <section class="layout">
+      <aside class="sidebar">
+        <div class="nav"><span class="nav-icon">⌂</span>总览</div>
+        <div class="nav active"><span class="nav-icon">▤</span>我的 Skills</div>
+        <div class="nav"><span class="nav-icon">⌕</span>发现 Skills</div>
+        <div class="nav"><span class="nav-icon">⊞</span>安装到应用</div>
+        <div class="nav"><span class="nav-icon">◴</span>最近操作</div>
+        <div class="nav"><span class="nav-icon">⚙</span>设置</div>
+        <div class="sidebar-note">已找到 9 个应用位置</div>
+      </aside>
+      <section class="list" id="list-pane">
+        <div class="list-head"><h1>我的 Skills</h1><button class="add">＋</button></div>
+        <div class="search">搜索 Skills</div>
+        <div class="skill-row active"><span class="skill-icon">✦</span><span><b>zhaoji-writing</b><small>来自本地开发项目</small></span><span class="badge">有更新</span></div>
+        <div class="skill-row"><span class="skill-icon">⌘</span><span><b>agent-team</b><small>来自 GitHub</small></span></div>
+        <div class="skill-row"><span class="skill-icon">◇</span><span><b>human-writing</b><small>本地副本</small></span></div>
+      </section>
+      <section class="detail" id="detail-screen">
+        <div class="detail-head">
+          <div><h2>zhaoji-writing</h2><p>把内容方向、表达习惯与发布格式变成稳定的写作能力。</p></div>
+          <button class="primary-small">安装到应用</button>
+        </div>
+        <section class="section-card">
+          <div class="source-top">
+            <span class="source-icon">⌂</span>
+            <div><div class="source-name">本地开发源</div><div class="source-path">~/Projects/my-writing-skill</div></div>
+            <span class="status-pill">有可使用内容更新</span>
+          </div>
+          <div class="source-message">检测到 3 项会影响使用的变化。项目里的测试记录和设计草稿也有变化，但不会进入 SkillBox。</div>
+          <div class="source-actions">
+            <button class="primary-small" data-screen="update">查看更新</button>
+            <button class="secondary more">•••</button>
+            <span class="source-meta">今天 10:42 核对</span>
+          </div>
+          <div class="content-rule">
+            <div class="content-rule-head"><span>进入 SkillBox 的可使用内容</span><a>编辑范围</a></div>
+            <div class="chips"><span class="chip">SKILL.md</span><span class="chip">scripts/</span><span class="chip">references/</span><span class="chip">templates/</span></div>
+          </div>
+        </section>
+        <section class="section-card">
+          <div class="section-title"><span>安装到应用</span><small>2 个位置由 SkillBox 管理</small></div>
+          <div class="installation"><span>Codex</span><span class="managed">已安装</span></div>
+          <div class="installation"><span>Claude Code</span><span class="managed">已安装</span></div>
+        </section>
+        <section class="section-card">
+          <div class="section-title"><span>这个 Skill 能帮什么</span><small>作者资料</small></div>
+          <p style="margin:12px 0 0;color:#64666c;font-size:13px;line-height:1.6">按照你的内容习惯组织选题、写作与发布稿，并保持不同渠道的表达一致。</p>
+        </section>
+      </section>
+
+      <section class="update" id="update-screen" hidden>
+        <div class="back" data-screen="detail">‹ 返回 zhaoji-writing</div>
+        <h2>查看本地更新</h2>
+        <p class="update-sub">来源项目保持原样。确认后，SkillBox 才会替换保存的纯净版本。</p>
+        <div class="update-grid">
+          <section class="diff-card">
+            <div class="card-head">从开发源读取到的变化</div>
+            <div class="diff-group">
+              <div class="diff-group-title"><span>会更新的可使用内容</span><span class="count-blue">3 项</span></div>
+              <div class="file"><span class="mark">M</span>SKILL.md</div>
+              <div class="file"><span class="mark">M</span>references/writing-style.md</div>
+              <div class="file"><span class="mark">＋</span>templates/long-video.md</div>
+            </div>
+            <div class="diff-group">
+              <div class="diff-group-title"><span>只留在开发项目中</span><span class="count-gray">2 项变化已忽略</span></div>
+              <div class="file ignored"><span class="mark">–</span>tests/fixtures/draft.md</div>
+              <div class="file ignored"><span class="mark">–</span>design/flow-notes.png</div>
+            </div>
+          </section>
+          <aside class="summary-card">
+            <div class="card-head">这次更新会处理</div>
+            <div class="summary-body">
+              <div class="summary-line"><span>SkillBox 主 Skill</span><b>将更新</b></div>
+              <div class="summary-line"><span>Codex</span><b>可以更新</b></div>
+              <div class="summary-line"><span>Claude Code</span><b>可以更新</b></div>
+              <div class="summary-line"><span>开发项目</span><b>保持原样</b></div>
+              <div class="safe-box">更新时不会运行项目里的任何文件。旧版本会先保存，可从“最近操作”恢复。</div>
+            </div>
+          </aside>
+        </div>
+        <div class="update-actions"><button>取消</button><button>只更新我的 Skills</button><button class="primary-update">更新并安装到原有应用</button></div>
+      </section>
+    </section>
+
+    <div class="scrim" id="link-scrim" hidden></div>
+    <section class="dialog" id="link-screen" hidden role="dialog" aria-modal="true" aria-labelledby="link-title">
+      <h3 id="link-title">把这个项目作为开发源？</h3>
+      <p class="lead">项目继续留在原来的位置。SkillBox 只读取确认过的可使用内容，保存一份纯净版本用于安装。</p>
+      <button class="choice selected" data-choice="track">
+        <span class="radio"></span>
+        <span><span class="choice-title">持续跟踪这个开发源</span><span class="choice-desc">以后迭代项目后，可直接在 SkillBox 查看并确认更新。</span></span>
+        <span class="recommend">推荐</span>
+      </button>
+      <button class="choice" data-choice="once">
+        <span class="radio"></span>
+        <span><span class="choice-title">只导入这一次</span><span class="choice-desc">复制当前可使用内容，以后不再检查这个项目的变化。</span></span>
+        <span></span>
+      </button>
+      <div class="package-preview">
+        <div class="package-column"><b>将进入 SkillBox · 4 项</b><span>SKILL.md</span><span>scripts/</span><span>references/</span><span>templates/</span></div>
+        <div class="package-column"><b>只留在开发项目 · 5 项</b><span>tests/</span><span>design/</span><span>notes/</span><span>.git/</span></div>
+      </div>
+      <p class="dialog-note">SkillBox 不会移动、改名或修改这个文件夹，也不会运行其中的脚本。可使用内容范围之后仍能调整。</p>
+      <div class="actions"><button class="action">取消</button><button class="action primary" id="link-confirm">持续跟踪并添加</button></div>
+    </section>
+  </main>
+  <script>
+    const validScreens = new Set(['link', 'detail', 'update']);
+    const queryScreen = new URLSearchParams(location.search).get('screen');
+    let currentScreen = validScreens.has(queryScreen) ? queryScreen : 'detail';
+    const detail = document.querySelector('#detail-screen');
+    const update = document.querySelector('#update-screen');
+    const list = document.querySelector('#list-pane');
+    const scrim = document.querySelector('#link-scrim');
+    const link = document.querySelector('#link-screen');
+    const switches = [...document.querySelectorAll('[data-screen]')];
+    function show(screen) {
+      currentScreen = screen;
+      const isUpdate = screen === 'update';
+      detail.hidden = isUpdate;
+      list.hidden = isUpdate;
+      update.hidden = !isUpdate;
+      scrim.hidden = screen !== 'link';
+      link.hidden = screen !== 'link';
+      document.querySelectorAll('.prototype-switch [data-screen]').forEach(button => button.classList.toggle('active', button.dataset.screen === screen));
+      history.replaceState(null, '', '?screen=' + screen);
+    }
+    switches.forEach(button => button.addEventListener('click', () => show(button.dataset.screen)));
+    const choices = [...document.querySelectorAll('.choice')];
+    choices.forEach(choice => choice.addEventListener('click', () => {
+      choices.forEach(item => item.classList.toggle('selected', item === choice));
+      document.querySelector('#link-confirm').textContent = choice.dataset.choice === 'track' ? '持续跟踪并添加' : '只导入这一次';
+    }));
+    show(currentScreen);
+  </script>
+</body>
+</html>

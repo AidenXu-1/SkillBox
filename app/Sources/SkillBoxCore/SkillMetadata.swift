@@ -60,7 +60,12 @@ public enum SkillMetadataParser {
                 .first(where: { !$0.isEmpty && !$0.hasPrefix("#") }) ?? "未提供描述"
         }
 
-        return SkillMetadata(name: canonicalize(name), description: String(description.prefix(1024)))
+        let canonicalName = canonicalize(name)
+        let canonicalFallback = canonicalize(fallbackName)
+        return SkillMetadata(
+            name: canonicalName.isEmpty ? (canonicalFallback.isEmpty ? "skill" : canonicalFallback) : canonicalName,
+            description: String(description.prefix(1024))
+        )
     }
 
     public static func canonicalize(_ name: String) -> String {

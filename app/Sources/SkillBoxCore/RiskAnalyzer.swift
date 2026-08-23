@@ -16,6 +16,7 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
         var findings: [RiskFinding] = []
         var scannedFiles = 0
         let skillFile = skillDirectory.appendingPathComponent("SKILL.md")
+        let skillInstructions = readableUTF8Text(at: skillFile, maximumBytes: maximumFileSize) ?? ""
 
         if !fileManager.fileExists(atPath: skillFile.path) {
             findings.append(.init(
@@ -77,7 +78,7 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
                 ))
             }
 
-            guard size <= 512 * 1024, let data = try? Data(contentsOf: url) else { continue }
+            guard size <= maximumFileSize, let data = try? Data(contentsOf: url) else { continue }
             if data.contains(0) {
                 findings.append(.init(
                     severity: .high,
@@ -90,7 +91,17 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
             }
             guard let text = String(data: data, encoding: .utf8) else { continue }
             let isDocumentation = ["md", "markdown", "txt", "rst"].contains(url.pathExtension.lowercased())
-            inspectText(text, relativePath: relative, isDocumentation: isDocumentation, findings: &findings)
+            inspectText(
+                text,
+                relativePath: relative,
+                isDocumentation: isDocumentation,
+                isAgentInstruction: isAgentInstruction(
+                    relativePath: relative,
+                    isDocumentation: isDocumentation,
+                    skillInstructions: skillInstructions
+                ),
+                findings: &findings
+            )
         }
 
         return RiskReport(scannedFileCount: scannedFiles, findings: findings)
@@ -100,10 +111,11 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
         _ text: String,
         relativePath: String,
         isDocumentation: Bool,
+        isAgentInstruction: Bool,
         findings: inout [RiskFinding]
     ) {
         let patterns: [(RiskCategory, String, RiskSeverity, String)] = [
-            (.network, #"\b(curl|wget)\b|https?://"#, .caution, "可能访问网络或下载文件"),
+            (.network, #"\b(curl|wget|nc|ncat|netcat|socat|scp|sftp|rsync|ftp)\b|https?://"#, .caution, "可能访问网络或下载文件"),
             (.privilege, #"\bsudo\b|chmod\s+[0-7]*7"#, .high, "可能请求更高的系统权限"),
             (.dynamicExecution, #"\beval\s*\(|exec\s*\(|child_process|Process\s*\("#, .high, "可能启动其他程序或命令"),
         ]
@@ -112,22 +124,117 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
             guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
             let range = NSRange(text.startIndex..., in: text)
             guard regex.firstMatch(in: text, range: range) != nil else { continue }
+            let severity = effectiveSeverity(
+                scriptSeverity,
+                relativePath: relativePath,
+                isDocumentation: isDocumentation,
+                isAgentInstruction: isAgentInstruction
+            )
             findings.append(.init(
-                severity: isDocumentation ? .info : scriptSeverity,
+                severity: severity,
                 category: category,
                 relativePath: relativePath,
-                title: isDocumentation ? "说明文字中提到了相关命令" : title,
-                evidence: isDocumentation ? "只在说明文字里发现，添加时不会运行" : "建议在添加前查看这个文件"
+                title: severity == .info ? "说明文字中提到了相关命令" : title,
+                evidence: riskEvidence(severity: severity, isDocumentation: isDocumentation)
             ))
         }
-        inspectCredentialAccess(text, relativePath: relativePath, isDocumentation: isDocumentation, findings: &findings)
-        inspectDeletion(text, relativePath: relativePath, isDocumentation: isDocumentation, findings: &findings)
+        inspectCredentialAccess(text, relativePath: relativePath, isDocumentation: isDocumentation, isAgentInstruction: isAgentInstruction, findings: &findings)
+        inspectSensitiveDataFlow(text, relativePath: relativePath, isDocumentation: isDocumentation, isAgentInstruction: isAgentInstruction, findings: &findings)
+        inspectEncodedExecution(text, relativePath: relativePath, isDocumentation: isDocumentation, isAgentInstruction: isAgentInstruction, findings: &findings)
+        inspectSystemModification(text, relativePath: relativePath, isDocumentation: isDocumentation, isAgentInstruction: isAgentInstruction, findings: &findings)
+        inspectDeletion(text, relativePath: relativePath, isDocumentation: isDocumentation, isAgentInstruction: isAgentInstruction, findings: &findings)
+    }
+
+    private func inspectSystemModification(
+        _ text: String,
+        relativePath: String,
+        isDocumentation: Bool,
+        isAgentInstruction: Bool,
+        findings: inout [RiskFinding]
+    ) {
+        let locationPattern = #"(?:/System/|/Library/(?:LaunchDaemons|PrivilegedHelperTools)|(?:\$HOME|\$\{HOME\}|~)/Library/LaunchAgents|launchctl\s+(?:load|bootstrap))"#
+        let mutationPattern = #"(?:\bcp\b|\bmv\b|\binstall\b|mkdir\s+-p|write\s*\(|createDirectory|launchctl\s+(?:load|bootstrap))"#
+        guard let location = try? NSRegularExpression(pattern: locationPattern, options: [.caseInsensitive]),
+              let mutation = try? NSRegularExpression(pattern: mutationPattern, options: [.caseInsensitive]),
+              location.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil,
+              mutation.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+        else { return }
+        let severity = effectiveSeverity(.high, relativePath: relativePath, isDocumentation: isDocumentation, isAgentInstruction: isAgentInstruction)
+        findings.append(.init(
+            severity: severity,
+            category: .privilege,
+            relativePath: relativePath,
+            title: severity == .info ? "说明文字提到系统管理位置" : "可能修改开机启动或系统管理位置",
+            evidence: severity == .info
+                ? "只在普通说明文字里发现"
+                : riskEvidence(severity: severity, isDocumentation: isDocumentation)
+        ))
+    }
+
+    private func inspectEncodedExecution(
+        _ text: String,
+        relativePath: String,
+        isDocumentation: Bool,
+        isAgentInstruction: Bool,
+        findings: inout [RiskFinding]
+    ) {
+        let decoderPattern = #"(?:base64\.b64decode|\batob\s*\(|Data\s*\(\s*base64Encoded:|\bbase64\b[^\r\n]*(?:-d|--decode))"#
+        let executionPattern = #"(?:subprocess\.(?:run|Popen|call)|shell\s*=\s*True|child_process|Process\s*\()"#
+        guard let decoder = try? NSRegularExpression(pattern: decoderPattern, options: [.caseInsensitive]),
+              let execution = try? NSRegularExpression(pattern: executionPattern, options: [.caseInsensitive]),
+              decoder.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil,
+              execution.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+        else { return }
+        let severity = effectiveSeverity(.high, relativePath: relativePath, isDocumentation: isDocumentation, isAgentInstruction: isAgentInstruction)
+        findings.append(.init(
+            severity: severity,
+            category: .dynamicExecution,
+            relativePath: relativePath,
+            title: severity == .info ? "说明文字提到解码后执行" : "可能解码并运行隐藏指令",
+            evidence: severity == .info
+                ? "只在普通说明文字里发现"
+                : riskEvidence(severity: severity, isDocumentation: isDocumentation)
+        ))
+    }
+
+    private func inspectSensitiveDataFlow(
+        _ text: String,
+        relativePath: String,
+        isDocumentation: Bool,
+        isAgentInstruction: Bool,
+        findings: inout [RiskFinding]
+    ) {
+        let sourcePattern = #"(?:Library/Application Support/(?:Google/Chrome|Chromium|Firefox)|Library/Safari|Login Data|Cookies(?:\.binarycookies)?|Web Data|Local State|\.ssh|\.aws|keychain|security\s+find-)"#
+        let sinkPattern = #"(?:requests\.(?:post|put)|axios\.(?:post|put)|fetch\s*\(\s*[\"']https?://|URLSession\.(?:shared\.)?(?:uploadTask|dataTask)|\bcurl\b[^\r\n]*(?:-d|--data|--upload-file|-F)|\b(?:nc|ncat|netcat|socat|scp|sftp|rsync|ftp)\b)"#
+        guard let sourceRegex = try? NSRegularExpression(pattern: sourcePattern, options: [.caseInsensitive]),
+              let sinkRegex = try? NSRegularExpression(pattern: sinkPattern, options: [.caseInsensitive]),
+              sourceRegex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil,
+              sinkRegex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+        else { return }
+
+        let sourceLine = text.split(whereSeparator: \Character.isNewline)
+            .map(String.init)
+            .first {
+                sourceRegex.firstMatch(in: $0, range: NSRange($0.startIndex..., in: $0)) != nil
+            }?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "发现浏览器或账号数据读取"
+        let severity = effectiveSeverity(.high, relativePath: relativePath, isDocumentation: isDocumentation, isAgentInstruction: isAgentInstruction)
+        findings.append(.init(
+            severity: severity,
+            category: .credentialAccess,
+            relativePath: relativePath,
+            title: severity == .info ? "说明文字提到敏感数据传输" : "可能读取并发送浏览器或账号数据",
+            evidence: severity == .info
+                ? "只在普通说明文字里发现"
+                : (isDocumentation ? "Skill 的主说明要求 Agent 读取并向外发送敏感数据" : String(sourceLine.prefix(240)))
+        ))
     }
 
     private func inspectCredentialAccess(
         _ text: String,
         relativePath: String,
         isDocumentation: Bool,
+        isAgentInstruction: Bool,
         findings: inout [RiskFinding]
     ) {
         let pattern = #"\.ssh|\.aws|keychain|security\s+find-|GH_TOKEN|GITHUB_TOKEN|API_KEY|github\.token"#
@@ -146,12 +253,13 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
             return
         }
 
+        let severity = effectiveSeverity(.high, relativePath: relativePath, isDocumentation: isDocumentation, isAgentInstruction: isAgentInstruction)
         findings.append(.init(
-            severity: isDocumentation ? .info : .high,
+            severity: severity,
             category: .credentialAccess,
             relativePath: relativePath,
-            title: isDocumentation ? "说明文字中提到了相关命令" : "可能读取账号信息或密钥",
-            evidence: isDocumentation ? "只在说明文字里发现，添加时不会运行" : "建议在添加前查看这个文件"
+            title: severity == .info ? "说明文字中提到了相关命令" : "可能读取账号信息或密钥",
+            evidence: riskEvidence(severity: severity, isDocumentation: isDocumentation)
         ))
     }
 
@@ -187,6 +295,7 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
         _ text: String,
         relativePath: String,
         isDocumentation: Bool,
+        isAgentInstruction: Bool,
         findings: inout [RiskFinding]
     ) {
         let deletionPattern = #"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\b|FileManager\.default\.removeItem"#
@@ -195,7 +304,19 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
             deletionRegex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil
         }) else { return }
         let command = matchedLine.trimmingCharacters(in: .whitespacesAndNewlines)
-        if isDocumentation {
+        let broadPathPattern = #"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\s+(?:--\s+)?[\"']?(?:/|~|\$HOME|\$\{HOME\})"#
+        let removesBroadPath = (try? NSRegularExpression(pattern: broadPathPattern, options: [.caseInsensitive]))?.firstMatch(
+            in: command,
+            range: NSRange(command.startIndex..., in: command)
+        ) != nil
+        let usesFileManager = command.localizedCaseInsensitiveContains("FileManager.default.removeItem")
+        let severity = effectiveSeverity(
+            removesBroadPath || usesFileManager ? .high : .caution,
+            relativePath: relativePath,
+            isDocumentation: isDocumentation,
+            isAgentInstruction: isAgentInstruction
+        )
+        if severity == .info {
             findings.append(.init(
                 severity: .info,
                 category: .deletion,
@@ -205,14 +326,6 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
             ))
             return
         }
-
-        let broadPathPattern = #"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\s+(?:--\s+)?[\"']?(?:/|~|\$HOME|\$\{HOME\})"#
-        let removesBroadPath = (try? NSRegularExpression(pattern: broadPathPattern, options: [.caseInsensitive]))?.firstMatch(
-            in: command,
-            range: NSRange(command.startIndex..., in: command)
-        ) != nil
-        let usesFileManager = command.localizedCaseInsensitiveContains("FileManager.default.removeItem")
-        let severity: RiskSeverity = removesBroadPath || usesFileManager ? .high : .caution
         findings.append(.init(
             severity: severity,
             category: .deletion,
@@ -220,6 +333,53 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
             title: severity == .high ? "可能删除宽泛位置的内容" : "包含清理文件的命令",
             evidence: command
         ))
+    }
+
+    private func effectiveSeverity(
+        _ executableSeverity: RiskSeverity,
+        relativePath: String,
+        isDocumentation: Bool,
+        isAgentInstruction: Bool
+    ) -> RiskSeverity {
+        guard isDocumentation else { return executableSeverity }
+        return isAgentInstruction && executableSeverity >= .high ? executableSeverity : .info
+    }
+
+    private func riskEvidence(severity: RiskSeverity, isDocumentation: Bool) -> String {
+        if severity == .info { return "只在普通说明文字里发现" }
+        if isDocumentation { return "Skill 指令要求 Agent 执行此行为" }
+        return "建议在添加前查看这个文件"
+    }
+
+    private func readableUTF8Text(at url: URL, maximumBytes: Int) -> String? {
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true,
+              let size = values.fileSize,
+              size <= maximumBytes,
+              let data = try? Data(contentsOf: url)
+        else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func isAgentInstruction(
+        relativePath: String,
+        isDocumentation: Bool,
+        skillInstructions: String
+    ) -> Bool {
+        guard isDocumentation else { return false }
+        if relativePath.caseInsensitiveCompare("SKILL.md") == .orderedSame { return true }
+
+        let normalizedInstructions = skillInstructions.lowercased().replacingOccurrences(of: "\\", with: "/")
+        let normalizedPath = relativePath.lowercased().replacingOccurrences(of: "\\", with: "/")
+        if normalizedInstructions.contains(normalizedPath) { return true }
+
+        let components = normalizedPath.split(separator: "/")
+        guard components.count > 1 else { return false }
+        for index in 1..<components.count {
+            let directory = components.prefix(index).joined(separator: "/") + "/"
+            if normalizedInstructions.contains(directory) { return true }
+        }
+        return false
     }
 
     private func relativePath(of url: URL, root: URL) -> String {

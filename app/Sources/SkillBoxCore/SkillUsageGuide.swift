@@ -1,24 +1,255 @@
+import CryptoKit
 import Foundation
 
-public struct SkillUsageGuide: Hashable, Sendable {
+public enum SkillUsageGuideOrigin: String, Codable, Hashable, Sendable {
+    case authorMaterial
+    case aiAssisted
+}
+
+public struct SkillUsageGuide: Codable, Hashable, Sendable {
     public var purpose: String
     public var useWhen: String?
     public var avoidWhen: String?
     public var starterPrompt: String?
     public var experienceSteps: [String]
+    public var origin: SkillUsageGuideOrigin?
+    public var sourceDocuments: [String]?
 
     public init(
         purpose: String,
         useWhen: String? = nil,
         avoidWhen: String? = nil,
         starterPrompt: String? = nil,
-        experienceSteps: [String] = []
+        experienceSteps: [String] = [],
+        origin: SkillUsageGuideOrigin? = .authorMaterial,
+        sourceDocuments: [String]? = nil
     ) {
         self.purpose = purpose
         self.useWhen = useWhen
         self.avoidWhen = avoidWhen
         self.starterPrompt = starterPrompt
         self.experienceSteps = experienceSteps
+        self.origin = origin
+        self.sourceDocuments = sourceDocuments
+    }
+}
+
+public struct SkillUsageGuideDocument: Codable, Hashable, Sendable {
+    public var relativePath: String
+    public var content: String
+
+    public init(relativePath: String, content: String) {
+        self.relativePath = relativePath
+        self.content = content
+    }
+}
+
+public struct SkillUsageGuideMaterial: Codable, Hashable, Sendable {
+    public var name: String
+    public var description: String
+    public var documents: [SkillUsageGuideDocument]
+
+    public init(name: String, description: String, documents: [SkillUsageGuideDocument]) {
+        self.name = name
+        self.description = description
+        self.documents = documents
+    }
+}
+
+public enum AIContentSanitizer {
+    public static func sanitize(_ material: SkillUsageGuideMaterial) -> SkillUsageGuideMaterial {
+        .init(
+            name: redact(material.name),
+            description: redact(material.description),
+            documents: material.documents.map {
+                .init(relativePath: redact($0.relativePath), content: redact($0.content))
+            }
+        )
+    }
+
+    public static func redact(_ text: String) -> String {
+        var value = text
+        let rules: [(String, String)] = [
+            (#"-----BEGIN [^-\r\n]+-----[\s\S]*?-----END [^-\r\n]+-----"#, "[已隐藏敏感内容]"),
+            (#"(?i)((?:proxy-)?authorization)(\s*[:=]\s*)(?:(?:bearer|basic)\s+)?[^\s\"',}\]]+"#, "$1$2[已隐藏敏感内容]"),
+            (#"(?im)^([ \t]*[\"']?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth[_-]?token|github[_-]?token|client[_-]?secret|password|secret|token|credential)[\"']?[ \t]*:)[ \t]*[>|][-+]?[^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)+"#, "$1 [已隐藏敏感内容]"),
+            (#"(?im)(^|[\{,\s])([\"']?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth[_-]?token|github[_-]?token|client[_-]?secret|password|secret|token|credential)[\"']?\s*[:=]\s*)(?:\"[^\r\n\"]*\"|'[^\r\n']*'|[^\r\n,}&]+)"#, "$1$2[已隐藏敏感内容]"),
+            (#"(?i)([?&](?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|secret|token|credential)=)[^&#\s\"']+"#, "$1[已隐藏敏感内容]"),
+            (#"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}"#, "Bearer [已隐藏敏感内容]"),
+            (#"\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"#, "[已隐藏敏感内容]"),
+            (#"(?i)\b(?:sk-[A-Za-z0-9_-]{8,}|github_pat_[A-Za-z0-9_]{8,}|gh[pousr]_[A-Za-z0-9]{8,}|AIza[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{12,})\b"#, "[已隐藏敏感内容]"),
+            (#"(?i)https?://[^\s/@:]+:[^\s/@]+@"#, "https://[已隐藏敏感内容]@"),
+            (#"(?i)\bfile://(?:localhost)?/[^\s\"'<>]+"#, "[本机路径]"),
+            (#"(?<![A-Za-z0-9_:])/(?:Users|home|Volumes|private|var|tmp|Library|Applications|System|opt|usr|etc)/[^\s\"'<>]+"#, "[本机路径]"),
+            (#"(?i)\b[A-Z]:\\[^\s\"'<>]+"#, "[本机路径]"),
+        ]
+        for (pattern, replacement) in rules {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(value.startIndex..<value.endIndex, in: value)
+            value = regex.stringByReplacingMatches(in: value, range: range, withTemplate: replacement)
+        }
+        return value
+    }
+}
+
+public enum AIContentSharingPolicy {
+    public static func canSend(
+        sourceKind: SkillSourceKind,
+        repositoryIsPrivate: Bool?,
+        allowPrivateSkillContent: Bool
+    ) -> Bool {
+        if allowPrivateSkillContent { return true }
+        return sourceKind == .github && repositoryIsPrivate == false
+    }
+}
+
+public enum SkillUsageGuideSourceIdentity {
+    public static let maximumSkillDocumentCharacters = 60_000
+
+    public static func digest(markdown: String) -> String {
+        let bounded = String(markdown.prefix(maximumSkillDocumentCharacters))
+        return SHA256.hash(data: Data(bounded.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    public static func digest(skillDirectory: URL) -> String? {
+        let file = skillDirectory.appendingPathComponent("SKILL.md")
+        guard let markdown = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        return digest(markdown: markdown)
+    }
+}
+
+public struct SkillUsageGuideMaterialReader: Sendable {
+    private let maximumDocumentCharacters = 60_000
+    private let maximumTotalCharacters = 180_000
+    private let maximumDocumentCount = 12
+
+    public init() {}
+
+    public func read(from skillDirectory: URL, name: String, description: String) -> SkillUsageGuideMaterial {
+        let fileManager = FileManager.default
+        let preferred = ["SKILL.md", "README.md", "agents/openai.yaml"]
+        var paths = preferred.filter { fileManager.fileExists(atPath: skillDirectory.appendingPathComponent($0).path) }
+        if let enumerator = fileManager.enumerator(
+            at: skillDirectory,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) {
+            let allowedExtensions = Set(["md", "markdown", "txt", "yaml", "yml"])
+            for case let url as URL in enumerator {
+                let relativePath = url.path.replacingOccurrences(of: skillDirectory.path + "/", with: "")
+                guard !paths.contains(relativePath), allowedExtensions.contains(url.pathExtension.lowercased()) else { continue }
+                if relativePath.hasPrefix("references/") || relativePath.hasPrefix("agents/") {
+                    paths.append(relativePath)
+                }
+            }
+        }
+
+        var remaining = maximumTotalCharacters
+        var documents: [SkillUsageGuideDocument] = []
+        for relativePath in paths.prefix(maximumDocumentCount) where remaining > 0 {
+            let url = skillDirectory.appendingPathComponent(relativePath)
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                  values.isRegularFile == true,
+                  (values.fileSize ?? 0) <= 512 * 1_024,
+                  let text = try? String(contentsOf: url, encoding: .utf8)
+            else { continue }
+            let limit = min(maximumDocumentCharacters, remaining)
+            let content = String(text.prefix(limit))
+            guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            documents.append(.init(relativePath: relativePath, content: content))
+            remaining -= content.count
+        }
+        return AIContentSanitizer.sanitize(
+            .init(name: name, description: description, documents: documents)
+        )
+    }
+}
+
+public struct SkillUsageGuideRecord: Codable, Hashable, Sendable {
+    public static let currentPromptVersion = "usage-guide-v3"
+
+    public var schemaVersion: Int
+    public var skillID: UUID
+    public var fingerprint: String
+    public var promptVersion: String
+    public var providerID: String?
+    public var model: String?
+    public var createdAt: Date
+    public var guide: SkillUsageGuide
+
+    public init(
+        schemaVersion: Int = 1,
+        skillID: UUID,
+        fingerprint: String,
+        promptVersion: String = Self.currentPromptVersion,
+        providerID: String? = nil,
+        model: String? = nil,
+        createdAt: Date = Date(),
+        guide: SkillUsageGuide
+    ) {
+        self.schemaVersion = schemaVersion
+        self.skillID = skillID
+        self.fingerprint = fingerprint
+        self.promptVersion = promptVersion
+        self.providerID = providerID
+        self.model = model
+        self.createdAt = createdAt
+        self.guide = guide
+    }
+}
+
+public actor SkillUsageGuideStore {
+    private let root: URL
+    private let fileManager: FileManager
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
+
+    public init(root: URL, fileManager: FileManager = .default) throws {
+        self.root = root.appendingPathComponent("AIReviews", isDirectory: true)
+        self.fileManager = fileManager
+        try fileManager.createDirectory(at: self.root, withIntermediateDirectories: true)
+        encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+    }
+
+    public func load(skillID: UUID, fingerprint: String) -> SkillUsageGuideRecord? {
+        guard let data = try? Data(contentsOf: fileURL(skillID: skillID, fingerprint: fingerprint)),
+              let record = try? decoder.decode(SkillUsageGuideRecord.self, from: data),
+              record.schemaVersion == 1,
+              record.skillID == skillID,
+              record.fingerprint == fingerprint,
+              record.promptVersion == SkillUsageGuideRecord.currentPromptVersion
+        else { return nil }
+        return record
+    }
+
+    public func save(
+        _ guide: SkillUsageGuide,
+        skillID: UUID,
+        fingerprint: String,
+        providerID: String? = nil,
+        model: String? = nil
+    ) throws {
+        let url = fileURL(skillID: skillID, fingerprint: fingerprint)
+        try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let record = SkillUsageGuideRecord(
+            skillID: skillID,
+            fingerprint: fingerprint,
+            providerID: providerID,
+            model: model,
+            guide: guide
+        )
+        try encoder.encode(record).write(to: url, options: .atomic)
+    }
+
+    private func fileURL(skillID: UUID, fingerprint: String) -> URL {
+        root
+            .appendingPathComponent(skillID.uuidString, isDirectory: true)
+            .appendingPathComponent(fingerprint, isDirectory: true)
+            .appendingPathComponent("usage-guide.json")
     }
 }
 
@@ -66,7 +297,13 @@ public struct SkillUsageGuideExtractor: Sendable {
             useWhen: useWhen,
             avoidWhen: avoidWhen,
             starterPrompt: starterPrompt,
-            experienceSteps: experienceSteps
+            experienceSteps: experienceSteps,
+            origin: .authorMaterial,
+            sourceDocuments: [
+                FileManager.default.fileExists(atPath: skillDirectory.appendingPathComponent("SKILL.md").path) ? "SKILL.md" : nil,
+                FileManager.default.fileExists(atPath: skillDirectory.appendingPathComponent("README.md").path) ? "README.md" : nil,
+                FileManager.default.fileExists(atPath: skillDirectory.appendingPathComponent("agents/openai.yaml").path) ? "agents/openai.yaml" : nil,
+            ].compactMap { $0 }
         )
     }
 

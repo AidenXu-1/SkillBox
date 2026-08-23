@@ -172,6 +172,7 @@ public actor GitHubUpdateChecker {
         state.availableAssetID = remote.selectedReleaseAsset?.id
         state.availableAssetName = remote.selectedReleaseAsset?.name
         state.availableAssetDigest = remote.selectedReleaseAsset?.digest
+        state.availablePackageReviewPaths = remote.packageReviewPaths.isEmpty ? nil : remote.packageReviewPaths
         state.versionETag = eTag ?? state.versionETag
         state.lastCheckedAt = now()
         state.lastCheckIssue = nil
@@ -181,8 +182,24 @@ public actor GitHubUpdateChecker {
             state.currentReleaseID = remote.releaseID
             state.currentVersionIdentifier = remote.versionIdentifier
         }
-        if state.currentTreeSHA == nil {
-            state.status = .needsInitialCheck
+        if canAdoptConfirmedPackageBaseline(state: state, remote: remote) {
+            state.currentVersionIdentifier = remote.versionIdentifier
+            state.currentVersionName = remote.versionName
+            state.currentCommitSHA = remote.commitSHA
+            state.currentTreeSHA = remote.treeSHA
+            state.currentReleaseID = remote.releaseID
+            state.currentAssetID = remote.selectedReleaseAsset?.id
+            state.currentAssetName = remote.selectedReleaseAsset?.name
+            state.currentAssetDigest = remote.selectedReleaseAsset?.digest
+            state.packageRecipe?.confirmedVersionIdentifier = remote.versionIdentifier
+            state.status = .current
+        } else if !remote.packageReviewPaths.isEmpty {
+            state.status = .packageReviewRequired
+        } else if state.currentTreeSHA == nil {
+            state.status = state.packageRecipe?.confirmedVersionIdentifier != nil &&
+                state.packageRecipe?.confirmedVersionIdentifier != remote.versionIdentifier
+                ? .updateAvailable
+                : .needsInitialCheck
         } else if isCurrent(state: state, remote: remote) {
             state.status = .current
         } else if state.ignoredVersionIdentifier == remote.versionIdentifier {
@@ -195,6 +212,15 @@ public actor GitHubUpdateChecker {
         return state
     }
 
+    private func canAdoptConfirmedPackageBaseline(
+        state: GitHubSourceState,
+        remote: GitHubRemoteVersion
+    ) -> Bool {
+        state.currentTreeSHA == nil &&
+            state.packageRecipe?.confirmedVersionIdentifier == remote.versionIdentifier &&
+            remote.packageReviewPaths.isEmpty
+    }
+
     private func notModifiedState(_ original: GitHubSourceState, eTag: String?) -> GitHubSourceState {
         var state = original
         state.status = restoredVersionStatus(state)
@@ -203,6 +229,7 @@ public actor GitHubUpdateChecker {
         state.lastCheckIssue = nil
         state.retryAfter = nil
         state.rateLimitScope = nil
+        state.availablePackageReviewPaths = nil
         return state
     }
 
@@ -235,6 +262,7 @@ public actor GitHubUpdateChecker {
     private func restoredVersionStatus(_ state: GitHubSourceState) -> GitHubSourceStatus {
         guard state.status == .authenticationRequired || state.status == .unavailable else { return state.status }
         guard state.checkingEnabled else { return .checkingStopped }
+        if state.availablePackageReviewPaths?.isEmpty == false { return .packageReviewRequired }
         guard state.currentTreeSHA != nil else { return .needsInitialCheck }
         if state.ignoredVersionIdentifier == state.availableVersionIdentifier,
            state.availableVersionIdentifier != nil
@@ -261,7 +289,7 @@ public actor GitHubUpdateChecker {
         guard state.currentReleaseID == remoteReleaseID else { return false }
 
         if remote.usesSourceArchiveFallback {
-            return state.currentAssetID == nil && state.currentCommitSHA == remote.commitSHA
+            return state.currentAssetID == nil && state.currentTreeSHA == remote.treeSHA
         }
 
         guard let currentAssetID = state.currentAssetID,

@@ -35,13 +35,13 @@ SkillBox/
 
 ## 当前阶段
 
-🟡 **功能真实验收前** —— [Spec v1](docs/spec.md) 已冻结，核心闭环、功能型 SwiftUI 界面和 19 项自动化测试已完成。下一步是获得明确授权后做一次可恢复的真实同步，然后进入 UI 优化。
+🟡 **GitHub 上传候选已生成** —— [Spec v1.9](docs/spec.md) 已采用 GitHub DMG 分发策略。262 项测试、隐私扫描、SHA-256、来源清单、图标回读、DMG 完整性与隔离属性模拟通过；Developer ID 与 Apple 公证不再是上线强制条件。正式对外宣称上线前仍需完成一次干净账户“仍要打开”安装与核心鼠标流程。
 
 ## 快速验证
 
 ```bash
 cd app
-swift test
+./Scripts/test-all.sh
 ./Scripts/package-app.sh release
 ```
 

@@ -5,15 +5,15 @@
 
 ## 当前状态快照
 
-- **阶段**：GitHub Release 纯净 ZIP 导入、完整性校验和风险上下文已接入，真实外部验收前
-- **最近在做**：Release Asset 选择、无 ZIP 源码回退、SHA-256 校验、Asset 版本记录和 GitHub Actions 令牌风险分级
-- **下一步**：先用真实公开 Release 跑通添加、检查更新和中央原件更新；再经用户明确确认，选择一个可恢复的 Agent 样本完成安装、更新、卸载和撤销闭环
+- **阶段**：无证书 GitHub 上传候选已生成
+- **最近在做**：高风险指令识别、AI 全链路脱敏、发布包隐私门、来源清单和无证书 DMG
+- **下一步**：在干净账户按“隐私与安全 → 仍要打开”完成安装与核心鼠标流程；上传 GitHub Release 后下载回读 SHA-256
 
 ## 怎么把环境跑起来
 
 ```bash
 cd app
-swift test
+./Scripts/test-all.sh
 ./Scripts/package-app.sh release
 ```
 
@@ -26,7 +26,8 @@ swift test
 - 真实 Agent 写入尚未授权，不得用自动化测试代替这个验收门槛。
 - GitHub v7 原型已得到用户确认，正式 SwiftUI 已接入。
 - 私人仓库需先注册 GitHub App，构建仅接收公开 Client ID 和安装地址；不得放入 Client Secret、私钥或个人 Token。
-- 尚未做真实私人仓库授权、真实 Agent 安装/更新/卸载/撤销闭环、Developer ID 签名、公证和 DMG。
+- 当前产品决策明确采用 ad-hoc Hardened Runtime DMG，不做 Developer ID 签名与 Apple 公证；Gatekeeper 阻止并要求用户走“仍要打开”属于预期安装路径。262 项测试、DMG、包内隐私、图标、清单与 SHA-256 已通过，干净账户安装和线上 Release 下载校验仍待完成。
+- 尚未做当前候选的真实私人仓库授权、真实 Agent 安装/更新/卸载/撤销闭环和完整鼠标前台回归。
 - 只读鼠标与基础键盘主路径已完成真实前台验收；涉及 Agent 文件改动的操作均在确认前取消，不能替代后续真实生命周期验收。
 
 ## 容易踩的坑 / 注意事项
@@ -48,6 +49,8 @@ swift test
 - 核心代码：`app/Sources/SkillBoxCore/`
 - 界面代码：`app/Sources/SkillBoxApp/`
 - 自动化测试：`app/Tests/SkillBoxCoreTests/`
+- 稳定全量门禁：`app/Scripts/test-all.sh`
+- 正式发行门禁：`app/Scripts/release-distribution.sh`
 - 设计参考:`design/`
 - GitHub 原型：`design/ui/skillbox-github-v7.html`
 - GitHub 设计说明：`design/ui/skillbox-github-v7.md`
@@ -55,4 +58,4 @@ swift test
 - GitHub 来源决策：`docs/decisions/0004-github-source-tracking-and-auth.md`
 
 ---
-最近更新:2026-08-15
+最近更新:2026-08-22

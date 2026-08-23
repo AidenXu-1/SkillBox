@@ -1,7 +1,7 @@
 import Foundation
 
 public enum SkillBoxSchema {
-    public static let currentVersion = 2
+    public static let currentVersion = 4
 }
 
 public struct PersistedEnvelope<Value: Codable & Sendable>: Codable, Sendable {
@@ -52,6 +52,7 @@ public enum GitHubTrackingMode: String, Codable, CaseIterable, Sendable {
 
 public enum GitHubSourceStatus: String, Codable, Sendable {
     case needsInitialCheck
+    case packageReviewRequired
     case current
     case updateAvailable
     case releasePackageAvailable
@@ -72,6 +73,55 @@ public enum GitHubSourceIssue: String, Codable, Sendable {
 public enum GitHubRateLimitScope: String, Codable, Sendable {
     case anonymous
     case authenticated
+}
+
+public enum GitHubPackageRecipeOrigin: String, Codable, CaseIterable, Sendable {
+    case releaseAsset
+    case skillDirectory
+    case manifest
+    case automaticSelection
+    case userSelection
+}
+
+public struct GitHubPackageRecipe: Codable, Hashable, Sendable {
+    public static let currentSelectionPolicyVersion = 2
+
+    public var origin: GitHubPackageRecipeOrigin
+    public var repositoryID: Int64
+    public var repositoryFullName: String
+    public var trackingMode: GitHubTrackingMode
+    public var skillPath: String?
+    public var includePaths: [String]
+    public var reviewedTopLevelPaths: [String]
+    public var confirmedVersionIdentifier: String
+    public var selectionPolicyVersion: Int?
+
+    public init(
+        origin: GitHubPackageRecipeOrigin,
+        repositoryID: Int64,
+        repositoryFullName: String,
+        trackingMode: GitHubTrackingMode,
+        skillPath: String? = nil,
+        includePaths: [String] = [],
+        reviewedTopLevelPaths: [String] = [],
+        confirmedVersionIdentifier: String,
+        selectionPolicyVersion: Int? = GitHubPackageRecipe.currentSelectionPolicyVersion
+    ) {
+        self.origin = origin
+        self.repositoryID = repositoryID
+        self.repositoryFullName = repositoryFullName
+        self.trackingMode = trackingMode
+        self.skillPath = skillPath
+        self.includePaths = includePaths
+        self.reviewedTopLevelPaths = reviewedTopLevelPaths
+        self.confirmedVersionIdentifier = confirmedVersionIdentifier
+        self.selectionPolicyVersion = selectionPolicyVersion
+    }
+
+    public var requiresIntegrityReview: Bool {
+        guard origin == .automaticSelection || origin == .userSelection else { return false }
+        return (selectionPolicyVersion ?? 0) < Self.currentSelectionPolicyVersion
+    }
 }
 
 public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
@@ -105,6 +155,8 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
     public var lastCheckIssue: GitHubSourceIssue?
     public var retryAfter: Date?
     public var rateLimitScope: GitHubRateLimitScope?
+    public var packageRecipe: GitHubPackageRecipe?
+    public var availablePackageReviewPaths: [String]?
     public var checkingEnabled: Bool
     public var status: GitHubSourceStatus
 
@@ -138,6 +190,8 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
         lastCheckIssue: GitHubSourceIssue? = nil,
         retryAfter: Date? = nil,
         rateLimitScope: GitHubRateLimitScope? = nil,
+        packageRecipe: GitHubPackageRecipe? = nil,
+        availablePackageReviewPaths: [String]? = nil,
         checkingEnabled: Bool = true,
         status: GitHubSourceStatus = .needsInitialCheck
     ) {
@@ -170,8 +224,16 @@ public struct GitHubSourceState: Codable, Hashable, Identifiable, Sendable {
         self.lastCheckIssue = lastCheckIssue
         self.retryAfter = retryAfter
         self.rateLimitScope = rateLimitScope
+        self.packageRecipe = packageRecipe
+        self.availablePackageReviewPaths = availablePackageReviewPaths
         self.checkingEnabled = checkingEnabled
         self.status = status
+    }
+
+    public var requiresPackageReview: Bool {
+        if let packageRecipe { return packageRecipe.requiresIntegrityReview }
+        return currentAssetID == nil &&
+            (skillPath?.trimmingCharacters(in: CharacterSet(charactersIn: "/")).isEmpty ?? true)
     }
 }
 
@@ -237,6 +299,7 @@ public struct GitHubRemoteVersion: Codable, Hashable, Sendable {
     public var releaseAssets: [GitHubReleaseAsset]
     public var selectedReleaseAssetID: Int64?
     public var usesSourceArchiveFallback: Bool
+    public var packageReviewPaths: [String]
 
     public init(
         repositoryID: Int64,
@@ -254,7 +317,8 @@ public struct GitHubRemoteVersion: Codable, Hashable, Sendable {
         releaseID: Int64? = nil,
         releaseAssets: [GitHubReleaseAsset] = [],
         selectedReleaseAssetID: Int64? = nil,
-        usesSourceArchiveFallback: Bool = false
+        usesSourceArchiveFallback: Bool = false,
+        packageReviewPaths: [String] = []
     ) {
         self.repositoryID = repositoryID
         self.repositoryFullName = repositoryFullName
@@ -272,6 +336,7 @@ public struct GitHubRemoteVersion: Codable, Hashable, Sendable {
         self.releaseAssets = releaseAssets
         self.selectedReleaseAssetID = selectedReleaseAssetID
         self.usesSourceArchiveFallback = usesSourceArchiveFallback
+        self.packageReviewPaths = packageReviewPaths
     }
 
     public var selectedReleaseAsset: GitHubReleaseAsset? {
@@ -305,10 +370,19 @@ public struct GitHubRemoteVersion: Codable, Hashable, Sendable {
 public struct GitHubSnapshot: Sendable {
     public var version: GitHubRemoteVersion
     public var candidates: [SkillCandidate]
+    public var packageRecipes: [String: GitHubPackageRecipe]
+    public var packageReviews: [GitHubPackageReview]
 
-    public init(version: GitHubRemoteVersion, candidates: [SkillCandidate]) {
+    public init(
+        version: GitHubRemoteVersion,
+        candidates: [SkillCandidate],
+        packageRecipes: [String: GitHubPackageRecipe] = [:],
+        packageReviews: [GitHubPackageReview] = []
+    ) {
         self.version = version
         self.candidates = candidates
+        self.packageRecipes = packageRecipes
+        self.packageReviews = packageReviews
     }
 }
 
@@ -636,39 +710,71 @@ public struct LibraryUpdateBackup: Codable, Hashable, Sendable {
     public var updatedFingerprint: String
     public var previousSourceState: GitHubSourceState?
     public var updatedSourceVersionIdentifier: String?
+    public var previousLocalSourceState: LocalSourceState?
+    public var updatedLocalSourceFingerprint: String?
 
     public init(
         previousRecord: SkillRecord,
         updatedFingerprint: String,
         previousSourceState: GitHubSourceState? = nil,
-        updatedSourceVersionIdentifier: String? = nil
+        updatedSourceVersionIdentifier: String? = nil,
+        previousLocalSourceState: LocalSourceState? = nil,
+        updatedLocalSourceFingerprint: String? = nil
     ) {
         self.previousRecord = previousRecord
         self.updatedFingerprint = updatedFingerprint
         self.previousSourceState = previousSourceState
         self.updatedSourceVersionIdentifier = updatedSourceVersionIdentifier
+        self.previousLocalSourceState = previousLocalSourceState
+        self.updatedLocalSourceFingerprint = updatedLocalSourceFingerprint
     }
 }
 
-public struct DeletedSkillBackup: Hashable, Sendable {
+public struct DeletedSkillBackup: Codable, Hashable, Sendable {
     public var record: SkillRecord
-    public var archivedURL: URL
+    public var archivedURL: URL?
     public var assignments: [Assignment]
+    public var installations: [ManagedInstallation]
     public var placement: SkillPlacement?
     public var sourceState: GitHubSourceState?
+    public var localSourceState: LocalSourceState?
 
     public init(
         record: SkillRecord,
-        archivedURL: URL,
+        archivedURL: URL?,
         assignments: [Assignment],
+        installations: [ManagedInstallation] = [],
         placement: SkillPlacement?,
-        sourceState: GitHubSourceState?
+        sourceState: GitHubSourceState?,
+        localSourceState: LocalSourceState? = nil
     ) {
         self.record = record
         self.archivedURL = archivedURL
         self.assignments = assignments
+        self.installations = installations
         self.placement = placement
         self.sourceState = sourceState
+        self.localSourceState = localSourceState
+    }
+}
+
+public struct LibraryDeletionJournal: Codable, Hashable, Sendable {
+    public var deletion: DeletedSkillBackup
+    public var recoveryBackupRelativePath: String?
+
+    public init(deletion: DeletedSkillBackup, recoveryBackupRelativePath: String? = nil) {
+        self.deletion = deletion
+        self.recoveryBackupRelativePath = recoveryBackupRelativePath
+    }
+}
+
+public struct LibraryRestorationJournal: Codable, Hashable, Sendable {
+    public var deletion: DeletedSkillBackup
+    public var restoredRecord: SkillRecord
+
+    public init(deletion: DeletedSkillBackup, restoredRecord: SkillRecord) {
+        self.deletion = deletion
+        self.restoredRecord = restoredRecord
     }
 }
 
@@ -681,6 +787,8 @@ public struct SyncTransaction: Codable, Hashable, Identifiable, Sendable {
     public var backups: [TransactionBackup]
     public var errors: [String]
     public var libraryUpdate: LibraryUpdateBackup?
+    public var libraryDeletion: LibraryDeletionJournal?
+    public var libraryRestoration: LibraryRestorationJournal?
 
     public init(
         id: UUID = UUID(),
@@ -690,7 +798,9 @@ public struct SyncTransaction: Codable, Hashable, Identifiable, Sendable {
         actions: [SyncAction],
         backups: [TransactionBackup] = [],
         errors: [String] = [],
-        libraryUpdate: LibraryUpdateBackup? = nil
+        libraryUpdate: LibraryUpdateBackup? = nil,
+        libraryDeletion: LibraryDeletionJournal? = nil,
+        libraryRestoration: LibraryRestorationJournal? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -700,6 +810,8 @@ public struct SyncTransaction: Codable, Hashable, Identifiable, Sendable {
         self.backups = backups
         self.errors = errors
         self.libraryUpdate = libraryUpdate
+        self.libraryDeletion = libraryDeletion
+        self.libraryRestoration = libraryRestoration
     }
 }
 
@@ -711,6 +823,7 @@ public struct LibrarySnapshot: Codable, Sendable {
     public var transactions: [SyncTransaction]
     public var organization: SkillOrganization
     public var sourceStates: [GitHubSourceState]
+    public var localSourceStates: [LocalSourceState]
 
     public init(
         skills: [SkillRecord] = [],
@@ -719,7 +832,8 @@ public struct LibrarySnapshot: Codable, Sendable {
         installations: [ManagedInstallation] = [],
         transactions: [SyncTransaction] = [],
         organization: SkillOrganization = .init(),
-        sourceStates: [GitHubSourceState] = []
+        sourceStates: [GitHubSourceState] = [],
+        localSourceStates: [LocalSourceState] = []
     ) {
         self.skills = skills
         self.targets = targets
@@ -728,6 +842,7 @@ public struct LibrarySnapshot: Codable, Sendable {
         self.transactions = transactions
         self.organization = organization
         self.sourceStates = sourceStates
+        self.localSourceStates = localSourceStates
     }
 }
 
@@ -882,6 +997,7 @@ public struct SkillCandidate: Hashable, Identifiable, Sendable {
     public var fingerprint: String
     public var source: SkillSource
     public var riskReport: RiskReport
+    public var temporaryPackageRoot: URL?
 
     public init(
         sourceURL: URL,
@@ -891,7 +1007,8 @@ public struct SkillCandidate: Hashable, Identifiable, Sendable {
         description: String,
         fingerprint: String,
         source: SkillSource,
-        riskReport: RiskReport
+        riskReport: RiskReport,
+        temporaryPackageRoot: URL? = nil
     ) {
         self.sourceURL = sourceURL
         self.directoryName = directoryName
@@ -901,6 +1018,7 @@ public struct SkillCandidate: Hashable, Identifiable, Sendable {
         self.fingerprint = fingerprint
         self.source = source
         self.riskReport = riskReport
+        self.temporaryPackageRoot = temporaryPackageRoot
     }
 }
 

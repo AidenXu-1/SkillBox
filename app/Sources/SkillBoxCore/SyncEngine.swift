@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public protocol SyncPlanner: Sendable {
@@ -97,8 +98,18 @@ public struct DefaultSyncPlanner: SyncPlanner, Sendable {
 }
 
 public protocol SyncExecutor: Sendable {
-    func execute(plan: SyncPlan, store: LibraryStore) async throws -> SyncTransaction
+    func execute(
+        plan: SyncPlan,
+        store: LibraryStore,
+        transaction: SyncTransaction?
+    ) async throws -> SyncTransaction
     func undo(transactionID: UUID, store: LibraryStore) async throws -> SyncTransaction
+}
+
+public extension SyncExecutor {
+    func execute(plan: SyncPlan, store: LibraryStore) async throws -> SyncTransaction {
+        try await execute(plan: plan, store: store, transaction: nil)
+    }
 }
 
 public enum SyncExecutorError: LocalizedError {
@@ -125,28 +136,39 @@ public actor TransactionalSyncExecutor: SyncExecutor {
     private let fileManager: FileManager
     private let fingerprinter: any SkillFingerprinting
     private let shouldInjectFailure: @Sendable (Int) -> Bool
+    private let beforeDestinationMutation: @Sendable (URL) -> Void
 
     public init(fileManager: FileManager = .default, fingerprinter: any SkillFingerprinting = SHA256SkillFingerprinter()) {
         self.fileManager = fileManager
         self.fingerprinter = fingerprinter
         shouldInjectFailure = { _ in false }
+        beforeDestinationMutation = { _ in }
     }
 
     init(
         fileManager: FileManager = .default,
         fingerprinter: any SkillFingerprinting = SHA256SkillFingerprinter(),
-        shouldInjectFailure: @escaping @Sendable (Int) -> Bool
+        shouldInjectFailure: @escaping @Sendable (Int) -> Bool,
+        beforeDestinationMutation: @escaping @Sendable (URL) -> Void = { _ in }
     ) {
         self.fileManager = fileManager
         self.fingerprinter = fingerprinter
         self.shouldInjectFailure = shouldInjectFailure
+        self.beforeDestinationMutation = beforeDestinationMutation
     }
 
-    public func execute(plan: SyncPlan, store: LibraryStore) async throws -> SyncTransaction {
+    public func execute(
+        plan: SyncPlan,
+        store: LibraryStore,
+        transaction initialTransaction: SyncTransaction?
+    ) async throws -> SyncTransaction {
         let snapshot = await store.currentSnapshot()
         let skills = Dictionary(uniqueKeysWithValues: snapshot.skills.map { ($0.id, $0) })
         var installations = snapshot.installations
-        var transaction = SyncTransaction(status: .running, actions: plan.actions)
+        var transaction = initialTransaction ?? SyncTransaction(status: .running, actions: plan.actions)
+        transaction.status = .running
+        transaction.completedAt = nil
+        transaction.actions = plan.actions
         let transactionRoot = store.transactionsDirectory.appendingPathComponent(transaction.id.uuidString)
         let backupRoot = transactionRoot.appendingPathComponent("backups")
         try fileManager.createDirectory(at: backupRoot, withIntermediateDirectories: true)
@@ -165,6 +187,27 @@ public actor TransactionalSyncExecutor: SyncExecutor {
                 let backup = backupRoot.appendingPathComponent(backupName)
                 if current != nil { try SafeFileOperations.copyDirectory(from: destination, to: backup, fileManager: fileManager) }
 
+                let expectedAfterFingerprint: String?
+                switch action.kind {
+                case .create, .update:
+                    expectedAfterFingerprint = action.expectedSourceFingerprint
+                case .takeover:
+                    expectedAfterFingerprint = current
+                case .remove:
+                    expectedAfterFingerprint = nil
+                default:
+                    expectedAfterFingerprint = current
+                }
+                transaction.backups.append(.init(
+                    destinationPath: destination.path,
+                    backupRelativePath: current == nil ? nil : "backups/\(backupName)",
+                    beforeFingerprint: current,
+                    afterFingerprint: expectedAfterFingerprint,
+                    actionKind: action.kind,
+                    previousInstallation: previousInstallation
+                ))
+                try await store.recordTransaction(transaction)
+
                 switch action.kind {
                 case .create, .update:
                     guard let skill = skills[action.skillID] else { throw SyncExecutorError.stateChanged(destination.path) }
@@ -173,10 +216,28 @@ public actor TransactionalSyncExecutor: SyncExecutor {
                     let staged = destination.deletingLastPathComponent().appendingPathComponent(".skillbox-\(UUID().uuidString)")
                     try SafeFileOperations.copyDirectory(from: source, to: staged, fileManager: fileManager)
                     guard try fingerprinter.fingerprint(directory: staged) == action.expectedSourceFingerprint else { throw FileOperationError.fingerprintMismatch }
-                    if fileManager.fileExists(atPath: destination.path) { _ = try fileManager.replaceItemAt(destination, withItemAt: staged) }
-                    else { try fileManager.moveItem(at: staged, to: destination) }
+                    beforeDestinationMutation(destination)
+                    if let expectedBefore = action.expectedDestinationFingerprint {
+                        try replaceExistingDirectoryAtomically(
+                            destination: destination,
+                            staged: staged,
+                            expectedBeforeFingerprint: expectedBefore
+                        )
+                    } else {
+                        guard !fileManager.fileExists(atPath: destination.path) else {
+                            throw SyncExecutorError.stateChanged(destination.path)
+                        }
+                        try fileManager.moveItem(at: staged, to: destination)
+                    }
                 case .remove:
-                    try fileManager.removeItem(at: destination)
+                    beforeDestinationMutation(destination)
+                    guard let expectedBefore = action.expectedDestinationFingerprint else {
+                        throw SyncExecutorError.stateChanged(destination.path)
+                    }
+                    try removeExistingDirectoryAtomically(
+                        destination: destination,
+                        expectedBeforeFingerprint: expectedBefore
+                    )
                 case .takeover:
                     break
                 default:
@@ -184,7 +245,9 @@ public actor TransactionalSyncExecutor: SyncExecutor {
                 }
 
                 let after = fingerprintIfExists(destination)
-                transaction.backups.append(.init(destinationPath: destination.path, backupRelativePath: current == nil ? nil : "backups/\(backupName)", beforeFingerprint: current, afterFingerprint: after, actionKind: action.kind, previousInstallation: previousInstallation))
+                guard after == expectedAfterFingerprint else {
+                    throw SyncExecutorError.stateChanged(destination.path)
+                }
                 installations.removeAll { $0.destinationPath == destination.path }
                 if [.create, .update, .takeover].contains(action.kind), let after {
                     installations.append(.init(skillID: action.skillID, targetID: action.targetID, destinationPath: destination.path, deployedFingerprint: after, transactionID: transaction.id))
@@ -211,6 +274,63 @@ public actor TransactionalSyncExecutor: SyncExecutor {
         }
     }
 
+    public func recoverInterruptedTransactions(store: LibraryStore) async throws -> [SyncTransaction] {
+        let snapshot = await store.currentSnapshot()
+        let interrupted = snapshot.transactions
+            .filter { $0.status == .running }
+            .sorted { $0.createdAt < $1.createdAt }
+        var recovered: [SyncTransaction] = []
+        var installations = snapshot.installations
+
+        for var transaction in interrupted {
+            let transactionRoot = store.transactionsDirectory.appendingPathComponent(transaction.id.uuidString)
+            do {
+                for backup in transaction.backups.reversed() {
+                    let actual = fingerprintIfExists(URL(fileURLWithPath: backup.destinationPath))
+                    guard actual == backup.beforeFingerprint || actual == backup.afterFingerprint else {
+                        throw SyncExecutorError.undoWouldOverwrite(backup.destinationPath)
+                    }
+                }
+                if let libraryUpdate = transaction.libraryUpdate {
+                    let currentRecord = await store.currentSnapshot().skills
+                        .first { $0.id == libraryUpdate.previousRecord.id }
+                    let currentFingerprint = currentRecord?.fingerprint
+                    let contentURL = await store.contentURL(for: libraryUpdate.previousRecord)
+                    let actualFingerprint = fingerprintIfExists(contentURL)
+                    let allowed = Set([
+                        libraryUpdate.previousRecord.fingerprint,
+                        libraryUpdate.updatedFingerprint,
+                    ])
+                    guard currentFingerprint.map(allowed.contains) == true,
+                          actualFingerprint.map(allowed.contains) == true
+                    else {
+                        throw SyncExecutorError.undoWouldOverwrite("SkillBox 中的原件")
+                    }
+                }
+                try rollback(transaction: transaction, transactionRoot: transactionRoot)
+                if let libraryUpdate = transaction.libraryUpdate {
+                    _ = try await store.restoreSkillVersion(libraryUpdate)
+                    try await store.restoreGitHubSourceState(libraryUpdate)
+                    try await store.restoreLocalSourceState(libraryUpdate)
+                }
+                for backup in transaction.backups {
+                    installations.removeAll { $0.destinationPath == backup.destinationPath }
+                    if let previous = backup.previousInstallation { installations.append(previous) }
+                }
+                try await store.replaceInstallations(installations)
+                transaction.status = .rolledBack
+                transaction.errors.append("应用上次异常退出，SkillBox 已恢复这次未完成的操作")
+            } catch {
+                transaction.status = .failed
+                transaction.errors.append("启动恢复失败：\(error.localizedDescription)")
+            }
+            transaction.completedAt = Date()
+            try await store.recordTransaction(transaction)
+            recovered.append(transaction)
+        }
+        return recovered
+    }
+
     public func undo(transactionID: UUID, store: LibraryStore) async throws -> SyncTransaction {
         let snapshot = await store.currentSnapshot()
         guard var transaction = snapshot.transactions.first(where: { $0.id == transactionID }) else { throw SyncExecutorError.transactionNotFound }
@@ -223,6 +343,11 @@ public actor TransactionalSyncExecutor: SyncExecutor {
                snapshot.sourceStates.first(where: { $0.skillID == libraryUpdate.previousRecord.id })?.currentVersionIdentifier != expectedVersion
             {
                 throw SyncExecutorError.undoWouldOverwrite("GitHub 更新记录")
+            }
+            if let expectedFingerprint = libraryUpdate.updatedLocalSourceFingerprint,
+               snapshot.localSourceStates.first(where: { $0.skillID == libraryUpdate.previousRecord.id })?.currentPackageFingerprint != expectedFingerprint
+            {
+                throw SyncExecutorError.undoWouldOverwrite("本地开发源更新记录")
             }
         }
         for backup in transaction.backups.reversed() {
@@ -238,6 +363,7 @@ public actor TransactionalSyncExecutor: SyncExecutor {
         if let libraryUpdate = transaction.libraryUpdate {
             _ = try await store.restoreSkillVersion(libraryUpdate)
             try await store.restoreGitHubSourceState(libraryUpdate)
+            try await store.restoreLocalSourceState(libraryUpdate)
         }
         var installations = snapshot.installations
         for backup in transaction.backups {
@@ -285,7 +411,14 @@ public actor TransactionalSyncExecutor: SyncExecutor {
     }
 
     private func rollback(transaction: SyncTransaction, transactionRoot: URL) throws {
-        for backup in transaction.backups.reversed() { try restore(backup: backup, transactionRoot: transactionRoot) }
+        for backup in transaction.backups.reversed() {
+            let destination = URL(fileURLWithPath: backup.destinationPath)
+            let actual = fingerprintIfExists(destination)
+            guard actual == backup.beforeFingerprint || actual == backup.afterFingerprint else {
+                throw SyncExecutorError.undoWouldOverwrite(backup.destinationPath)
+            }
+            try restore(backup: backup, transactionRoot: transactionRoot)
+        }
     }
 
     private func restore(backup: TransactionBackup, transactionRoot: URL) throws {
@@ -309,6 +442,65 @@ public actor TransactionalSyncExecutor: SyncExecutor {
               fileManager.isWritableFile(atPath: parent.path)
         else {
             throw SyncExecutorError.targetUnavailable(parent.path)
+        }
+    }
+
+    private func replaceExistingDirectoryAtomically(
+        destination: URL,
+        staged: URL,
+        expectedBeforeFingerprint: String
+    ) throws {
+        do {
+            try atomicRename(from: destination, to: staged, flags: UInt32(RENAME_SWAP))
+        } catch {
+            throw SyncExecutorError.stateChanged(destination.path)
+        }
+
+        guard fingerprintIfExists(staged) == expectedBeforeFingerprint else {
+            if (try? atomicRename(from: destination, to: staged, flags: UInt32(RENAME_SWAP))) != nil {
+                try? fileManager.removeItem(at: staged)
+            }
+            throw SyncExecutorError.stateChanged(destination.path)
+        }
+        try fileManager.removeItem(at: staged)
+    }
+
+    private func removeExistingDirectoryAtomically(
+        destination: URL,
+        expectedBeforeFingerprint: String
+    ) throws {
+        let preserved = destination.deletingLastPathComponent()
+            .appendingPathComponent(".skillbox-remove-\(UUID().uuidString)")
+        do {
+            try atomicRename(from: destination, to: preserved, flags: UInt32(RENAME_EXCL))
+        } catch {
+            throw SyncExecutorError.stateChanged(destination.path)
+        }
+
+        guard fingerprintIfExists(preserved) == expectedBeforeFingerprint else {
+            if !fileManager.fileExists(atPath: destination.path) {
+                try? atomicRename(from: preserved, to: destination, flags: UInt32(RENAME_EXCL))
+            }
+            throw SyncExecutorError.stateChanged(destination.path)
+        }
+        try fileManager.removeItem(at: preserved)
+    }
+
+    private func atomicRename(from source: URL, to destination: URL, flags: UInt32) throws {
+        let result = source.withUnsafeFileSystemRepresentation { sourcePath in
+            destination.withUnsafeFileSystemRepresentation { destinationPath in
+                guard let sourcePath, let destinationPath else { return Int32(-1) }
+                return renameatx_np(
+                    AT_FDCWD,
+                    sourcePath,
+                    AT_FDCWD,
+                    destinationPath,
+                    flags
+                )
+            }
+        }
+        guard result == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
     }
 }

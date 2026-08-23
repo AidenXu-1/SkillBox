@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SkillBox 设置 v18</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      --blue:#087cff; --text:#202124; --sub:#74777d; --line:#e8e9eb;
+      --surface:#fff; --soft:#f6f7f8; --sidebar:#f7f7f8;
+    }
+    * { box-sizing:border-box; }
+    [hidden] { display:none !important; }
+    body { margin:0; background:#eceef1; color:var(--text); }
+    button, select, input { font:inherit; }
+    .window { width:1440px; height:960px; margin:0 auto; overflow:hidden; background:var(--surface); border-radius:24px; box-shadow:0 18px 70px #0002; display:grid; grid-template-columns:228px 1fr; }
+    .sidebar { background:var(--sidebar); border-right:1px solid var(--line); padding:18px 16px; display:flex; flex-direction:column; }
+    .traffic { display:flex; gap:10px; height:45px; align-items:flex-start; }
+    .traffic i { width:13px; height:13px; border-radius:50%; display:block; }
+    .traffic i:nth-child(1){background:#ff5f57}.traffic i:nth-child(2){background:#febc2e}.traffic i:nth-child(3){background:#28c840}
+    nav { display:grid; gap:5px; margin-top:10px; }
+    nav button { border:0; background:transparent; text-align:left; padding:11px 13px; border-radius:10px; font-size:16px; font-weight:590; color:#202124; display:flex; align-items:center; gap:11px; }
+    nav button.active { color:#fff; background:linear-gradient(#1785fa,#0874e8); }
+    .nav-icon { width:20px; text-align:center; font-size:18px; }
+    .side-foot { margin-top:auto; color:#85888e; font-size:12px; padding:10px 9px; }
+    .main { min-width:0; display:flex; flex-direction:column; }
+    .titlebar { height:56px; border-bottom:1px solid var(--line); display:flex; align-items:center; padding:0 22px; font-weight:650; font-size:17px; }
+    .content { flex:1; overflow:auto; padding:34px 44px 54px; }
+    .settings { max-width:900px; margin:0 auto; }
+    h1 { font-size:32px; letter-spacing:-.025em; margin:0; }
+    .lead { color:var(--sub); margin:7px 0 24px; font-size:15px; }
+    .tabs { width:max-content; display:flex; gap:3px; padding:4px; border-radius:11px; background:#edeef0; margin-bottom:24px; }
+    .tabs button { min-width:106px; border:0; background:transparent; color:#5f6368; padding:7px 15px; border-radius:8px; font-weight:620; }
+    .tabs button.active { background:#fff; color:#202124; box-shadow:0 1px 4px #0002; }
+    .page { display:none; animation:fade .14s ease-out; }
+    .page.active { display:block; }
+    @keyframes fade { from { opacity:.6; transform:translateY(2px); } }
+    .section-title { font-size:13px; color:#6d7076; font-weight:650; margin:0 0 8px 4px; }
+    .card { border:1px solid var(--line); border-radius:15px; background:#fff; overflow:hidden; margin-bottom:22px; box-shadow:0 1px 2px #00000008; }
+    .row { min-height:68px; padding:14px 17px; display:flex; align-items:center; gap:14px; }
+    .row + .row { border-top:1px solid var(--line); }
+    .badge { width:38px; height:38px; border-radius:11px; background:#edf5ff; color:var(--blue); display:grid; place-items:center; font-size:18px; flex:none; }
+    .row-copy { min-width:0; flex:1; }
+    .row-title { font-size:15px; font-weight:630; }
+    .row-detail { font-size:13px; color:var(--sub); margin-top:3px; line-height:1.38; }
+    .value { color:#696c72; font-size:13px; max-width:330px; text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .button { border:1px solid #dfe1e4; background:#f7f7f8; border-radius:9px; padding:7px 13px; font-weight:600; white-space:nowrap; cursor:pointer; }
+    .button:hover { background:#ededf0; }
+    .button:active { transform:scale(.98); }
+    .button.primary { color:#fff; border-color:var(--blue); background:var(--blue); }
+    .button.danger { color:#e5473d; background:#fff; }
+    .hero { display:flex; align-items:center; gap:15px; padding:18px; background:#f4f9ff; border:1px solid #d4e8ff; border-radius:15px; margin-bottom:22px; }
+    .hero .badge { width:46px; height:46px; font-size:21px; }
+    .hero-copy { flex:1; }
+    .hero-title { font-weight:680; font-size:17px; }
+    .hero-detail { color:var(--sub); font-size:13px; margin-top:4px; }
+    .switch { width:42px; height:24px; border-radius:99px; background:#cfd2d6; padding:2px; border:0; }
+    .switch::after { content:""; display:block; width:20px; height:20px; border-radius:50%; background:#fff; box-shadow:0 1px 3px #0004; transition:.15s; }
+    .switch.on { background:#35c759; }
+    .switch.on::after { transform:translateX(18px); }
+    select { border:1px solid #dfe1e4; background:#f7f7f8; border-radius:8px; padding:7px 28px 7px 11px; min-width:170px; }
+    .privacy { padding:15px 17px; background:#fafafa; color:#666a70; font-size:13px; line-height:1.5; }
+    .warning { background:#fff9f2; border-color:#ffe1bd; }
+    .danger-zone summary { padding:14px 17px; cursor:pointer; font-weight:620; color:#6c6f74; }
+    .danger-zone .danger-body { border-top:1px solid var(--line); padding:15px 17px; display:flex; align-items:center; gap:12px; }
+    .spacer { flex:1; }
+    .provider-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:14px; }
+    .provider { min-height:82px; border:1px solid var(--line); background:#fff; border-radius:13px; padding:13px 14px; display:grid; grid-template-columns:36px 1fr; gap:10px; text-align:left; cursor:pointer; }
+    .provider:hover { background:#f8f9fa; border-color:#dadddf; }
+    .provider.selected { background:#f2f7ff; border-color:#9bc7ff; box-shadow:0 0 0 2px #dcebff inset; }
+    .provider-mark { width:36px; height:36px; border-radius:10px; background:#eef5ff; color:var(--blue); display:grid; place-items:center; font-weight:750; }
+    .provider-name { display:block; font-size:14px; font-weight:670; line-height:1.2; }
+    .provider-status { display:block; font-size:12px; color:var(--sub); margin-top:5px; }
+    .provider-status.connected { color:#1c9a48; }
+    .connection { padding:17px; }
+    .connection-head { display:flex; align-items:flex-start; gap:12px; margin-bottom:15px; }
+    .connection-head .badge { width:40px; height:40px; }
+    .connection-title { font-size:16px; font-weight:680; }
+    .connection-note { margin-top:3px; font-size:12px; color:var(--sub); }
+    .field-grid { display:grid; grid-template-columns:1.15fr .85fr; gap:12px; }
+    .field { display:grid; gap:6px; }
+    .field.full { grid-column:1 / -1; }
+    .field label { color:#60636a; font-size:12px; font-weight:620; }
+    .field input, .field select { width:100%; min-width:0; border:1px solid #dfe1e4; background:#f8f8f9; border-radius:9px; padding:9px 11px; outline:none; }
+    .field input:focus, .field select:focus { border-color:#69abff; box-shadow:0 0 0 3px #dcebff; }
+    .connection-actions { display:flex; align-items:center; gap:9px; margin-top:15px; }
+    .connection-actions .hint { color:#777a80; font-size:12px; margin-left:auto; }
+    .default-model { min-width:220px; }
+  </style>
+</head>
+<body>
+<div class="window">
+  <aside class="sidebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <nav>
+      <button><span class="nav-icon">▦</span>总览</button>
+      <button><span class="nav-icon">▥</span>我的 Skills</button>
+      <button><span class="nav-icon">⌕</span>发现 Skills</button>
+      <button><span class="nav-icon">▦</span>安装到应用</button>
+      <button><span class="nav-icon">◴</span>最近操作</button>
+      <button class="active"><span class="nav-icon">⚙</span>设置</button>
+    </nav>
+    <div class="side-foot">已找到 5 个应用位置</div>
+  </aside>
+  <main class="main">
+    <header class="titlebar">设置</header>
+    <div class="content">
+      <div class="settings">
+        <h1>设置</h1>
+        <p class="lead">只保留会影响 SkillBox 使用方式的选项。</p>
+        <div class="tabs" role="tablist">
+          <button data-page="general">通用</button>
+          <button data-page="ai">AI</button>
+          <button data-page="github">GitHub</button>
+          <button data-page="data">数据</button>
+        </div>
+
+        <section class="page" id="general">
+          <p class="section-title">保存位置</p>
+          <div class="card">
+            <div class="row">
+              <div class="badge">⌂</div>
+              <div class="row-copy"><div class="row-title">我的 Skills 保存在这台 Mac</div><div class="row-detail">Skill、操作记录和恢复文件都存放在这里。</div></div>
+              <div class="value">~/Library/Application Support/SkillBox</div>
+              <button class="button">在 Finder 中显示</button>
+            </div>
+          </div>
+          <p class="section-title">使用</p>
+          <div class="card">
+            <div class="row"><div class="badge">✓</div><div class="row-copy"><div class="row-title">重新查看欢迎说明</div><div class="row-detail">再次了解盘点、安装和恢复是怎样工作的。</div></div><button class="button">查看</button></div>
+          </div>
+        </section>
+
+        <section class="page" id="ai">
+          <div class="hero"><div class="badge">✦</div><div class="hero-copy"><div class="hero-title">AI 功能已开启</div><div class="hero-detail">用于寻找精品 Skill、整理使用说明和辅助检查风险。</div></div><button class="switch on" aria-label="开关"></button></div>
+          <p class="section-title">默认使用</p>
+          <div class="card">
+            <div class="row"><div class="badge">◈</div><div class="row-copy"><div class="row-title">发现和整理默认使用</div><div class="row-detail">发现页面仍可以为本次寻找临时切换模型。</div></div><select class="default-model"><option>Agnes · agnes-2.5-flash</option><option>DeepSeek · deepseek-v4-flash</option></select></div>
+          </div>
+          <p class="section-title">接入模型</p>
+          <div class="provider-grid" aria-label="AI 服务商">
+            <button class="provider selected" data-provider="agnes"><span class="provider-mark">A</span><span><span class="provider-name">Agnes</span><span class="provider-status connected">已连接</span></span></button>
+            <button class="provider" data-provider="deepseek"><span class="provider-mark">D</span><span><span class="provider-name">DeepSeek</span><span class="provider-status">未连接</span></span></button>
+            <button class="provider" data-provider="kimi"><span class="provider-mark">K</span><span><span class="provider-name">Kimi</span><span class="provider-status">未连接</span></span></button>
+            <button class="provider" data-provider="minimax"><span class="provider-mark">M</span><span><span class="provider-name">MiniMax</span><span class="provider-status">未连接</span></span></button>
+            <button class="provider" data-provider="glm"><span class="provider-mark">G</span><span><span class="provider-name">GLM</span><span class="provider-status">未连接</span></span></button>
+            <button class="provider" data-provider="custom"><span class="provider-mark">＋</span><span><span class="provider-name">自定义 API</span><span class="provider-status">未连接</span></span></button>
+          </div>
+          <div class="card connection">
+            <div class="connection-head"><div class="badge" id="provider-badge">A</div><div><div class="connection-title" id="provider-title">接入 Agnes</div><div class="connection-note">接口地址已经为你填好。API Key 只保存在这台 Mac 的钥匙串。</div></div></div>
+            <div class="field-grid">
+              <div class="field full" id="base-url-field" hidden><label for="base-url">接口地址</label><input id="base-url" value="" placeholder="https://example.com/v1" /></div>
+              <div class="field"><label for="api-key">API Key</label><input id="api-key" type="password" value="sk-example-key" /></div>
+              <div class="field"><label for="model">模型</label><select id="model"><option>agnes-2.5-flash</option><option>agnes-2.0-flash</option></select></div>
+            </div>
+            <div class="connection-actions"><button class="button primary">保存并测试</button><button class="button" id="key-page">获取 API Key</button><button class="button danger" id="delete-key">删除密钥</button><span class="hint">测试通过后才会显示为已连接</span></div>
+          </div>
+          <p class="section-title">内容范围</p>
+          <div class="card">
+            <div class="row"><div class="badge">⌁</div><div class="row-copy"><div class="row-title">允许整理本地和私人 Skill</div><div class="row-detail">关闭时，只分析公开 GitHub Skill。开启后也只发送说明文字，不发送脚本和密钥。</div></div><button class="switch" aria-label="开关"></button></div>
+            <div class="privacy">每个 Skill 版本只分析一次。AI 不能安装、删除或替换任何文件。</div>
+          </div>
+        </section>
+
+        <section class="page" id="github">
+          <div class="hero"><div class="badge">◒</div><div class="hero-copy"><div class="hero-title">私人仓库尚未连接</div><div class="hero-detail">公开仓库始终可以直接添加和检查更新。只有使用私人仓库时才需要连接。</div></div><button class="button primary">连接 GitHub</button></div>
+          <p class="section-title">连接后可以做什么</p>
+          <div class="card">
+            <div class="row"><div class="badge">1</div><div class="row-copy"><div class="row-title">只选择需要的仓库</div><div class="row-detail">SkillBox 只读取你亲自允许的仓库。</div></div></div>
+            <div class="row"><div class="badge">2</div><div class="row-copy"><div class="row-title">自动发现版本变化</div><div class="row-detail">只提示新版本，下载和更新仍由你确认。</div></div></div>
+            <div class="privacy">连接不会创建仓库，也不会修改或上传 GitHub 文件。</div>
+          </div>
+          <details class="card danger-zone"><summary>连接管理</summary><div class="danger-body"><span>已连接后可在这里管理仓库、断开连接或清除 GitHub 信息。</span><span class="spacer"></span><button class="button">了解区别</button></div></details>
+        </section>
+
+        <section class="page" id="data">
+          <p class="section-title">寻找记录</p>
+          <div class="card">
+            <div class="row"><div class="badge">◴</div><div class="row-copy"><div class="row-title">已保存 3 条寻找记录</div><div class="row-detail">用于继续补充条件和查看之前找到的候选。</div></div><div class="value">24 KB</div><button class="button">管理记录</button></div>
+          </div>
+          <p class="section-title">文件</p>
+          <div class="card">
+            <div class="row"><div class="badge">⌂</div><div class="row-copy"><div class="row-title">打开 SkillBox 保存位置</div><div class="row-detail">查看中央 Skill、最近操作和本地记录。</div></div><button class="button">在 Finder 中显示</button></div>
+          </div>
+          <details class="card danger-zone"><summary>清理数据</summary><div class="danger-body"><div><div class="row-title">清空所有寻找记录</div><div class="row-detail">不会删除已经加入“我的 Skills”的内容。</div></div><span class="spacer"></span><button class="button danger">清空记录</button></div></details>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+<script>
+  const pages = ['general','ai','github','data'];
+  function show(page) {
+    if (!pages.includes(page)) page='general';
+    document.querySelectorAll('.page').forEach(el=>el.classList.toggle('active',el.id===page));
+    document.querySelectorAll('.tabs button').forEach(el=>el.classList.toggle('active',el.dataset.page===page));
+    history.replaceState(null,'','#'+page);
+  }
+  document.querySelectorAll('.tabs button').forEach(el=>el.addEventListener('click',()=>show(el.dataset.page)));
+  document.querySelectorAll('.switch').forEach(el=>el.addEventListener('click',()=>el.classList.toggle('on')));
+  const providers = {
+    agnes:{name:'Agnes',mark:'A',models:['agnes-2.5-flash','agnes-2.0-flash'],key:true},
+    deepseek:{name:'DeepSeek',mark:'D',models:['deepseek-v4-flash','deepseek-v4-pro'],key:true},
+    kimi:{name:'Kimi',mark:'K',models:['kimi-k2.6','kimi-k2.5'],key:true},
+    minimax:{name:'MiniMax',mark:'M',models:['MiniMax-M2.7','MiniMax-M2.7-highspeed'],key:true},
+    glm:{name:'GLM',mark:'G',models:['glm-5.3','glm-5'],key:true},
+    custom:{name:'自定义 API',mark:'＋',models:['填写模型 ID'],key:false}
+  };
+  document.querySelectorAll('.provider').forEach(el=>el.addEventListener('click',()=>{
+    document.querySelectorAll('.provider').forEach(item=>item.classList.toggle('selected',item===el));
+    const value=providers[el.dataset.provider];
+    document.getElementById('provider-badge').textContent=value.mark;
+    document.getElementById('provider-title').textContent=`接入 ${value.name}`;
+    document.getElementById('model').innerHTML=value.models.map(item=>`<option>${item}</option>`).join('');
+    document.getElementById('base-url-field').hidden=el.dataset.provider!=='custom';
+    document.getElementById('key-page').hidden=!value.key;
+    document.getElementById('delete-key').hidden=el.dataset.provider!=='agnes';
+    document.getElementById('api-key').value=el.dataset.provider==='agnes'?'sk-example-key':'';
+  }));
+  show(new URLSearchParams(location.search).get('page') || location.hash.slice(1));
+</script>
+</body>
+</html>

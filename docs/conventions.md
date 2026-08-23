@@ -24,7 +24,7 @@
 
 - **源码放哪**：`app/SkillBox/` 放应用入口与 SwiftUI；`app/Packages/SkillBoxCore/` 放可独立测试的纯 Swift 核心。
 - **测试放哪**：应用测试随 Xcode target 放置；核心测试放 `app/Packages/SkillBoxCore/Tests/`。
-- **配置 / 环境变量放哪**：构建配置放 `app/Config/`；签名、公证凭据只存在开发者钥匙串或 CI Secrets，不进仓库。
+- **配置 / 环境变量放哪**：构建配置放 `app/Config/`；若未来启用签名、公证，凭据只存在开发者钥匙串或 CI Secrets，不进仓库。当前 GitHub 发行使用 ad-hoc 签名且不公证。
 - **怎么算“验证过了”**：核心 `swift test`、应用 `xcodebuild test`、静态检查与对应功能的前台体验验收均通过。
 
 > 注:这里管的是**自动化测试(代码)**。审核层出具的**把关报告**不在 `app/`,见 `docs/collaboration/部门/<审核部门>/把关报告/`(若已启用多会话协作层)。
