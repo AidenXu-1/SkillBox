@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CryptoKit
 import Foundation
 import SkillBoxCore
 
@@ -88,6 +89,7 @@ struct AIModelChoice: Identifiable, Hashable {
 @MainActor
 final class AppModel: ObservableObject {
     static let githubConnectionHintKey = "SkillBoxGitHubConnectionHint"
+    private static let riskAcknowledgementsKey = "SkillBoxRiskAcknowledgementsV1"
 
     @Published var snapshot = LibrarySnapshot()
     @Published var scanResult: ScanResult?
@@ -115,6 +117,7 @@ final class AppModel: ObservableObject {
     @Published var operationProgress: SkillBoxOperationProgress?
     @Published private(set) var lastDeletedSkill: DeletedSkillBackup?
     @Published private(set) var pendingDeletionAfterSyncSkillID: UUID?
+    @Published private(set) var pendingUndoTransaction: SyncTransaction?
     @Published var canRetryGitHubWithDefaultBranch = false
     @Published var pendingReleasePackageChoice: GitHubReleasePackageChoice?
     @Published var pendingInstallContentChoice: GitHubInstallContentChoice?
@@ -182,6 +185,8 @@ final class AppModel: ObservableObject {
     private var retryGitHubImportContext: GitHubImportContext?
     private var invalidatedDiscoverySessionIDs = Set<UUID>()
     private var aiAuthorizationGeneration = 0
+    private var riskAcknowledgementDigests: [String: String] = [:]
+    private var pendingSyncAssignments: [Assignment]?
 
     var githubClientID: String { Bundle.main.object(forInfoDictionaryKey: "SkillBoxGitHubClientID") as? String ?? "" }
     var isGitHubConfigured: Bool { !githubClientID.isEmpty && githubInstallURL != nil }
@@ -222,10 +227,61 @@ final class AppModel: ObservableObject {
         aiKeyStore = providedAIKeyStore ?? KeychainAIKeyStore()
         aiProvider = providedAIProvider ?? OpenAICompatibleProvider()
         self.userDefaults = userDefaults
+        riskAcknowledgementDigests = userDefaults.dictionary(forKey: Self.riskAcknowledgementsKey) as? [String: String] ?? [:]
         showOnboarding = !UserDefaults.standard.bool(forKey: "SkillBoxOnboardingCompleted")
         if startBootstrap {
             Task { await bootstrap() }
         }
+    }
+
+    func needsRiskAcknowledgement(for skill: SkillRecord) -> Bool {
+        guard skill.riskReport.requiresUserAttention, !skill.riskReport.isBlocked else { return false }
+        return riskAcknowledgementDigests[skill.id.uuidString] != riskAcknowledgementDigest(for: skill)
+    }
+
+    func isRiskAcknowledged(for skill: SkillRecord) -> Bool {
+        skill.riskReport.requiresUserAttention &&
+            !skill.riskReport.isBlocked &&
+            !needsRiskAcknowledgement(for: skill)
+    }
+
+    func shouldShowRiskAttention(for skill: SkillRecord) -> Bool {
+        skill.riskReport.isBlocked || needsRiskAcknowledgement(for: skill)
+    }
+
+    func acknowledgeRisk(for skill: SkillRecord) {
+        guard skill.riskReport.requiresUserAttention, !skill.riskReport.isBlocked else { return }
+        riskAcknowledgementDigests[skill.id.uuidString] = riskAcknowledgementDigest(for: skill)
+        userDefaults.set(riskAcknowledgementDigests, forKey: Self.riskAcknowledgementsKey)
+    }
+
+    private func riskAcknowledgementDigest(for skill: SkillRecord) -> String {
+        let findings = skill.riskReport.actionableFindings
+            .sorted { lhs, rhs in
+                let left = [
+                    String(lhs.severity.rawValue), lhs.category.rawValue, lhs.relativePath, lhs.title, lhs.evidence,
+                ]
+                let right = [
+                    String(rhs.severity.rawValue), rhs.category.rawValue, rhs.relativePath, rhs.title, rhs.evidence,
+                ]
+                return left.lexicographicallyPrecedes(right)
+            }
+            .flatMap { finding in
+                [
+                    String(finding.severity.rawValue),
+                    finding.category.rawValue,
+                    finding.relativePath,
+                    finding.title,
+                    finding.evidence,
+                ]
+            }
+        let components = [
+            skill.id.uuidString,
+            skill.fingerprint,
+            String(skill.riskReport.scannedFileCount),
+        ] + findings
+        let payload = components.map { "\($0.utf8.count):\($0)" }.joined(separator: "|")
+        return SHA256.hash(data: Data(payload.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     func bootstrap() async {
@@ -2426,6 +2482,14 @@ final class AppModel: ObservableObject {
     }
 
     func prepareInstallEverywhere(_ skill: SkillRecord) async -> Bool {
+        guard !skill.riskReport.isBlocked else {
+            noticeMessage = "这份 Skill 已被安全检查阻止，无法安装。"
+            return false
+        }
+        guard !needsRiskAcknowledgement(for: skill) else {
+            noticeMessage = "请先了解并确认这份 Skill 的内容提示。"
+            return false
+        }
         let available = snapshot.targets.filter(isAvailableForInstallation)
         guard !available.isEmpty else {
             noticeMessage = "本机还没有找到可以安装 Skill 的应用。SkillBox 不会代为创建应用文件夹。"
@@ -2435,16 +2499,16 @@ final class AppModel: ObservableObject {
         for target in available {
             setAssignment(skill: skill, target: target, desired: true, assignments: &assignments)
         }
-        do {
-            try await store.replaceAssignments(assignments)
-            await reload()
-            let shouldPreview = syncPlan?.actions.contains { $0.skillID == skill.id && $0.kind != .noChange } == true
-            if !shouldPreview { noticeMessage = "这份 Skill 已经安装到所有可用应用。" }
-            return shouldPreview
-        } catch {
-            present(error)
-            return false
+        pendingDeletionAfterSyncSkillID = nil
+        pendingSyncAssignments = assignments
+        refreshPlan()
+        let shouldPreview = syncPlan?.actions.contains { $0.skillID == skill.id && $0.kind != .noChange } == true
+        if !shouldPreview {
+            pendingSyncAssignments = nil
+            refreshPlan()
+            noticeMessage = "这份 Skill 已经安装到所有可用应用。"
         }
+        return shouldPreview
     }
 
     func prepareUninstallEverywhere(
@@ -2465,24 +2529,27 @@ final class AppModel: ObservableObject {
             noticeMessage = "这份 Skill 还没有通过 SkillBox 安装到任何应用。"
             return false
         }
-        do {
-            try await store.replaceAssignments(assignments)
-            await reload()
-            let shouldPreview = syncPlan?.actions.contains { $0.skillID == skill.id && $0.kind != .noChange } == true
-            if !shouldPreview {
-                pendingDeletionAfterSyncSkillID = nil
-                noticeMessage = "这份 Skill 当前没有可卸载的受管理副本。"
-            }
-            return shouldPreview
-        } catch {
+        pendingSyncAssignments = assignments
+        refreshPlan()
+        let shouldPreview = syncPlan?.actions.contains { $0.skillID == skill.id && $0.kind != .noChange } == true
+        if !shouldPreview {
+            pendingSyncAssignments = nil
             pendingDeletionAfterSyncSkillID = nil
-            present(error)
-            return false
+            refreshPlan()
+            noticeMessage = "这份 Skill 当前没有可卸载的受管理副本。"
         }
+        return shouldPreview
     }
 
     func cancelPendingDeletionAfterSync() {
+        cancelSyncPreview()
+    }
+
+    func cancelSyncPreview() {
+        pendingSyncAssignments = nil
         pendingDeletionAfterSyncSkillID = nil
+        refreshPlan()
+        noticeMessage = "已取消，没有保存任何安装选择。"
     }
 
     var isDeletingSkillAfterSync: Bool {
@@ -2600,23 +2667,38 @@ final class AppModel: ObservableObject {
     }
 
     func authorize(action: SyncAction, replacement: Bool) async {
-        var assignments = snapshot.assignments
+        var assignments = pendingSyncAssignments ?? snapshot.assignments
         guard let index = assignments.firstIndex(where: { $0.skillID == action.skillID && $0.targetID == action.targetID }) else { return }
         if replacement { assignments[index].allowReplacement = true }
         else { assignments[index].allowTakeover = true }
         assignments[index].authorizedDestinationFingerprint = action.expectedDestinationFingerprint
-        do { try await store.replaceAssignments(assignments); await reload() } catch { present(error) }
+        if pendingSyncAssignments != nil {
+            pendingSyncAssignments = assignments
+            refreshPlan()
+        } else {
+            do { try await store.replaceAssignments(assignments); await reload() } catch { present(error) }
+        }
     }
 
     func executePlan() async {
-        guard let syncPlan else { return }
+        guard syncPlan != nil else { return }
         let deletionSkillID = pendingDeletionAfterSyncSkillID
         isBusy = true
         defer {
+            pendingSyncAssignments = nil
             pendingDeletionAfterSyncSkillID = nil
             isBusy = false
         }
         do {
+            if let pendingSyncAssignments {
+                try await store.replaceAssignments(pendingSyncAssignments)
+                self.pendingSyncAssignments = nil
+                await reload()
+            }
+            guard let syncPlan, !syncPlan.executableActions.isEmpty else {
+                noticeMessage = "开始前重新检查时发现了变化，暂时没有修改应用文件。"
+                return
+            }
             let result = try await executor.execute(plan: syncPlan, store: store)
             await reload()
             var completionMessage = "安装完成：更新了 \(result.backups.count) 个位置"
@@ -2643,6 +2725,28 @@ final class AppModel: ObservableObject {
             await scanInstalledSkills()
             statusMessage = completionMessage
         } catch { present(error) }
+    }
+
+    func prepareUndoPreview(_ transaction: SyncTransaction) -> Bool {
+        guard let current = snapshot.transactions.first(where: { $0.id == transaction.id }),
+              current.status == .succeeded
+        else {
+            noticeMessage = "这条操作记录已经无法恢复，请刷新后再查看。"
+            return false
+        }
+        pendingUndoTransaction = current
+        return true
+    }
+
+    func cancelUndoPreview() {
+        pendingUndoTransaction = nil
+        noticeMessage = "已取消恢复，没有修改任何文件。"
+    }
+
+    func confirmPendingUndo() async {
+        guard let transaction = pendingUndoTransaction else { return }
+        pendingUndoTransaction = nil
+        await undo(transaction)
     }
 
     func undo(_ transaction: SyncTransaction) async {
@@ -2849,7 +2953,11 @@ final class AppModel: ObservableObject {
     }
 
     private func refreshPlan() {
-        do { syncPlan = try planner.makePlan(snapshot: snapshot, libraryRoot: libraryRoot) }
+        var planningSnapshot = snapshot
+        if let pendingSyncAssignments {
+            planningSnapshot.assignments = pendingSyncAssignments
+        }
+        do { syncPlan = try planner.makePlan(snapshot: planningSnapshot, libraryRoot: libraryRoot) }
         catch { present(error) }
     }
 

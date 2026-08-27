@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SkillBox v21 · 消费级交互闭环</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Helvetica Neue", sans-serif;
+      color: #1d1d1f;
+      background: #e8ecf2;
+      --blue: #0b72e7;
+      --blue-hover: #0868d3;
+      --blue-soft: #eaf3ff;
+      --line: #dedfe4;
+      --muted: #70737a;
+      --muted-2: #92949a;
+      --green: #23843a;
+      --green-soft: #eef8f0;
+      --orange: #b96000;
+      --orange-soft: #fff7e8;
+      --orange-line: #f0d5ad;
+      --red: #c52c2c;
+      --sidebar: #f3f4f6;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-width: 1220px; min-height: 820px; }
+    body { min-height: 100vh; display: grid; place-items: center; padding: 28px; }
+    button { font: inherit; }
+    button, [role="button"] { -webkit-tap-highlight-color: transparent; }
+    button:focus-visible, [role="button"]:focus-visible { outline: 3px solid rgba(11,114,231,.28); outline-offset: 2px; }
+    button:active { transform: scale(.985); }
+    [hidden] { display: none !important; }
+
+    .window {
+      position: relative;
+      width: min(1540px, calc(100vw - 56px));
+      height: min(960px, calc(100vh - 56px));
+      min-height: 780px;
+      overflow: hidden;
+      border: 1px solid rgba(0,0,0,.15);
+      border-radius: 22px;
+      background: #fff;
+      box-shadow: 0 28px 82px rgba(27,35,51,.24);
+    }
+    .titlebar {
+      height: 58px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 0 20px;
+      background: rgba(248,249,251,.96);
+      border-bottom: 1px solid rgba(0,0,0,.05);
+    }
+    .dot { width: 13px; height: 13px; border-radius: 50%; }
+    .red-dot { background:#ff5f57; } .yellow-dot { background:#febc2e; } .green-dot { background:#28c840; }
+    .app-title { margin-left: 22px; font-size: 16px; font-weight: 670; letter-spacing: -.012em; }
+    .prototype-label { margin-left: 10px; color: var(--muted-2); font-size: 11.5px; }
+    .scenario-switch { margin-left: auto; display:flex; gap:2px; padding:3px; border-radius:10px; background:#e7e8ec; }
+    .scenario-switch button { height:30px; padding:0 13px; border:0; border-radius:8px; color:#62636a; background:transparent; font-size:12px; cursor:pointer; }
+    .scenario-switch button.active { color:#1d1d1f; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.15); font-weight:620; }
+
+    .app-body { height: calc(100% - 58px); display:grid; grid-template-columns:224px 1fr; }
+    .sidebar { position:relative; padding:22px 14px; border-right:1px solid var(--line); background:var(--sidebar); }
+    .nav { height:41px; display:flex; align-items:center; gap:10px; padding:0 13px; margin-bottom:4px; border-radius:9px; color:#25262a; font-size:14.5px; }
+    .nav.active { color:#0b5fb9; background:#dfeaf9; font-weight:650; }
+    .nav-glyph { width:19px; text-align:center; color:#36383d; font-size:17px; }
+    .nav.active .nav-glyph { color:#0b67c8; }
+    .sidebar-note { position:absolute; left:24px; bottom:22px; color:#81838a; font-size:11.5px; }
+
+    .stage { position:relative; min-width:0; overflow:hidden; background:#fff; }
+    .scene { position:absolute; inset:0; display:grid; min-width:0; }
+    .scene[hidden] { display:none; }
+    .scene-risk { grid-template-columns:390px 1fr; }
+    .list-pane { border-right:1px solid var(--line); background:#fff; }
+    .list-header { padding:25px 20px 13px; }
+    .eyebrow { color:#0b72e7; font-size:11.5px; font-weight:700; }
+    .list-header h1 { margin:7px 0 0; font-size:25px; letter-spacing:-.025em; }
+    .search { height:34px; margin-top:17px; padding:7px 10px; border-radius:8px; color:#93959a; background:#f0f1f3; font-size:13px; }
+    .group-label { display:flex; justify-content:space-between; padding:12px 21px 7px; color:#6f7178; font-size:11.5px; }
+    .skill-row { min-height:66px; display:grid; grid-template-columns:36px 1fr auto; gap:11px; align-items:center; margin:3px 11px; padding:9px 11px; border-radius:11px; }
+    .skill-row.active { background:#e7f1ff; }
+    .skill-icon { width:35px; height:35px; display:grid; place-items:center; border-radius:10px; color:#1470d8; background:#d9eaff; font-size:15px; font-weight:700; }
+    .skill-row b { display:block; font-size:14px; }
+    .skill-row small { display:block; max-width:245px; margin-top:3px; color:#7d7f85; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:11.5px; }
+    .attention-dot { width:8px; height:8px; border-radius:50%; background:#ef8a17; box-shadow:0 0 0 4px #fff3e4; }
+
+    .detail { overflow:auto; padding:29px 38px 54px; background:#fff; }
+    .detail-head { display:flex; justify-content:space-between; align-items:flex-start; gap:22px; }
+    .detail-head h2 { margin:0; font-size:28px; letter-spacing:-.025em; }
+    .detail-head p { margin:6px 0 0; color:var(--muted); font-size:13.5px; }
+    .toolbar-actions { display:flex; gap:8px; }
+    .btn { min-height:34px; padding:0 14px; border:1px solid #c9cbd0; border-radius:9px; color:#27282c; background:#fff; cursor:pointer; font-weight:560; }
+    .btn:hover { background:#f7f7f8; }
+    .btn.primary { color:#fff; border-color:#0b69d2; background:var(--blue); font-weight:650; }
+    .btn.primary:hover { background:var(--blue-hover); }
+    .btn.danger { color:#fff; border-color:#b82626; background:#d13939; font-weight:650; }
+    .btn.text { border-color:transparent; color:#176bc5; background:transparent; }
+    .btn.quiet { color:#61636a; background:#f6f6f7; }
+    .btn[disabled] { opacity:.46; cursor:not-allowed; }
+
+    .install-card { margin-top:25px; padding:18px; border:1px solid #cfe1f8; border-radius:15px; background:#f2f7ff; }
+    .card-title-row { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+    .card-title { font-size:16px; font-weight:680; }
+    .card-sub { margin-top:4px; color:#6d7077; font-size:12.5px; line-height:1.45; }
+    .pill { padding:4px 9px; border-radius:999px; color:#0b6dd7; background:#dfeeff; font-size:11px; font-weight:650; white-space:nowrap; }
+    .install-actions { display:flex; align-items:center; gap:8px; margin-top:15px; }
+    .install-meta { margin-left:auto; color:#85878d; font-size:11.5px; }
+
+    .safety-card { margin-top:20px; overflow:hidden; border:1px solid var(--orange-line); border-radius:15px; background:var(--orange-soft); }
+    .safety-top { display:grid; grid-template-columns:34px 1fr auto; gap:12px; align-items:start; padding:17px 18px 13px; }
+    .status-icon { width:30px; height:30px; display:grid; place-items:center; border-radius:9px; color:#b85e00; background:#ffe4bd; font-size:16px; font-weight:800; }
+    .safety-title { font-size:15px; font-weight:680; }
+    .safety-desc { margin-top:3px; color:#735f49; font-size:12.5px; }
+    .risk-content { padding:0 18px 16px 64px; }
+    .risk-row { display:grid; grid-template-columns:1fr auto; gap:16px; padding:14px 0; border-top:1px solid rgba(177,112,35,.18); }
+    .risk-row b { display:block; font-size:13.5px; }
+    .risk-row p { margin:5px 0 0; max-width:720px; color:#75695d; font-size:12px; line-height:1.52; }
+    .risk-tag { align-self:start; color:#ba5d00; font-size:11.5px; font-weight:680; }
+    .risk-actions { display:flex; align-items:center; justify-content:space-between; margin-top:4px; }
+    .evidence-link { border:0; color:#866c50; background:transparent; cursor:pointer; font-size:11.5px; }
+    .safety-footnote { margin:11px 0 0; color:#93806d; font-size:10.8px; line-height:1.5; }
+    .confirmed-card { margin-top:20px; display:flex; align-items:center; gap:12px; padding:13px 15px; border:1px solid #cce6d2; border-radius:13px; background:var(--green-soft); }
+    .confirmed-icon { width:27px; height:27px; display:grid; place-items:center; border-radius:50%; color:white; background:#35a34e; font-size:15px; }
+    .confirmed-copy b { display:block; color:#266a35; font-size:13.5px; }
+    .confirmed-copy small { display:block; margin-top:2px; color:#66806b; font-size:11.5px; }
+    .confirmed-card .btn { margin-left:auto; min-height:30px; color:#347242; }
+
+    .plain-card { margin-top:20px; padding:17px; border:1px solid var(--line); border-radius:15px; background:#fff; }
+    .plain-card h3 { margin:0; font-size:15px; }
+    .plain-card p { margin:8px 0 0; color:#6e7076; font-size:12.5px; line-height:1.55; }
+    .file-row { display:flex; align-items:center; justify-content:space-between; margin-top:12px; padding-top:12px; border-top:1px solid #ededf0; color:#55575d; font-size:12px; }
+
+    .full-page { overflow:auto; padding:28px 38px 60px; }
+    .page-head { display:flex; align-items:flex-start; justify-content:space-between; }
+    .page-head h1 { margin:6px 0 0; font-size:28px; letter-spacing:-.026em; }
+    .page-head p { margin:6px 0 0; color:var(--muted); font-size:13.5px; }
+    .draft-banner { display:flex; align-items:center; gap:9px; margin-top:20px; padding:11px 13px; border:1px solid #d5e4f6; border-radius:11px; color:#46647f; background:#f3f8fe; font-size:12px; }
+    .draft-banner b { color:#275a88; }
+    .matrix { margin-top:16px; overflow:hidden; border:1px solid var(--line); border-radius:14px; }
+    .matrix-head, .matrix-row { display:grid; grid-template-columns:1fr 170px 170px; align-items:center; }
+    .matrix-head { min-height:42px; color:#74767c; background:#f6f6f7; font-size:11.5px; }
+    .matrix-head > *, .matrix-row > * { padding:0 17px; }
+    .matrix-row { min-height:58px; border-top:1px solid #ededf0; font-size:13px; }
+    .app-name { display:flex; align-items:center; gap:10px; font-weight:620; }
+    .app-symbol { width:29px; height:29px; display:grid; place-items:center; border-radius:8px; color:#246fc2; background:#e8f2ff; font-size:12px; font-weight:750; }
+    .state-current { color:#6f7177; }
+    .state-draft { color:#0d70d8; font-weight:620; }
+    .matrix-footer { display:flex; align-items:center; justify-content:flex-end; gap:9px; margin-top:18px; }
+
+    .history-card { margin-top:18px; padding:17px; border:1px solid var(--line); border-radius:14px; }
+    .history-top { display:flex; align-items:center; gap:12px; }
+    .history-icon { width:34px; height:34px; display:grid; place-items:center; border-radius:50%; color:white; background:#31a14a; }
+    .history-copy b { display:block; font-size:14px; }
+    .history-copy small { display:block; margin-top:3px; color:#7b7d83; font-size:11.5px; }
+    .history-actions { margin-left:auto; display:flex; gap:8px; }
+    .history-details { display:grid; grid-template-columns:repeat(5, 1fr); gap:8px; margin-top:15px; padding-top:14px; border-top:1px solid #ececef; }
+    .history-target { padding:10px; border-radius:9px; color:#61636a; background:#f5f6f7; font-size:11.5px; }
+    .history-target b { display:block; margin-bottom:3px; color:#34353a; }
+
+    .scrim { position:absolute; inset:0; display:grid; place-items:center; padding:28px; background:rgba(21,26,35,.38); backdrop-filter:blur(3px); z-index:20; }
+    .sheet { width:min(680px, calc(100% - 40px)); max-height:calc(100% - 40px); overflow:auto; padding:24px; border:1px solid rgba(255,255,255,.78); border-radius:19px; background:rgba(253,253,254,.985); box-shadow:0 26px 72px rgba(0,0,0,.29); transform-origin:50% 58%; animation:materialize 180ms ease-out; }
+    .sheet.wide { width:min(770px, calc(100% - 40px)); }
+    .sheet-icon { width:38px; height:38px; display:grid; place-items:center; margin:0 auto 10px; border-radius:12px; color:#b96000; background:#ffebcc; font-size:19px; font-weight:800; }
+    .sheet-icon.blue { color:#0c69c9; background:#e4f0ff; }
+    .sheet-icon.purple { color:#6f4cc4; background:#eee8ff; }
+    .sheet h2 { margin:0; text-align:center; font-size:21px; letter-spacing:-.018em; }
+    .sheet-lead { max-width:590px; margin:8px auto 18px; text-align:center; color:#666970; font-size:13px; line-height:1.55; }
+    .explain-box { padding:14px; border-radius:12px; color:#594a38; background:#fff7e9; font-size:12.5px; line-height:1.58; }
+    .explain-box strong { color:#41382e; }
+    .binding-note { display:flex; align-items:center; gap:8px; margin-top:11px; color:#7b7d82; font-size:11.5px; }
+    .binding-dot { width:7px; height:7px; border-radius:50%; background:#35a34e; }
+    .tech-evidence { margin-top:14px; padding:12px 13px; border:1px solid #e1e2e5; border-radius:11px; background:#f8f8f9; }
+    .tech-evidence b { display:block; font-size:12px; }
+    .tech-evidence span { display:block; margin-top:5px; color:#777980; font:11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .sheet-actions { display:flex; align-items:center; justify-content:flex-end; gap:9px; margin-top:20px; }
+    .sheet-actions .left { margin-right:auto; }
+
+    .preview-note { display:flex; gap:9px; margin-bottom:13px; padding:10px 12px; border-radius:10px; color:#315b80; background:#eef6ff; font-size:12px; line-height:1.45; }
+    .preview-list { overflow:hidden; border:1px solid var(--line); border-radius:12px; }
+    .preview-row { min-height:52px; display:grid; grid-template-columns:34px 1fr auto; gap:10px; align-items:center; padding:9px 13px; }
+    .preview-row + .preview-row { border-top:1px solid #ededf0; }
+    .preview-row b { display:block; font-size:12.5px; }
+    .preview-row small { display:block; margin-top:3px; color:#777980; font-size:11px; }
+    .preview-symbol { width:27px; height:27px; display:grid; place-items:center; border-radius:8px; color:#166dc7; background:#e8f2ff; font-size:12px; font-weight:700; }
+    .preview-change { color:#0c6fd7; font-size:11.5px; font-weight:650; }
+    .preview-change.remove { color:#b33b35; }
+    .preview-summary { display:flex; align-items:center; justify-content:space-between; margin-top:12px; padding:11px 13px; border-radius:10px; background:#f4f5f6; font-size:12px; }
+    .preview-summary span { color:#74767c; }
+    .preview-summary b { color:#303137; }
+    .warning-note { margin-top:12px; color:#7c654c; font-size:11.5px; line-height:1.5; }
+
+    .toast { position:absolute; left:50%; bottom:26px; z-index:30; transform:translateX(-50%); padding:10px 14px; border:1px solid rgba(255,255,255,.22); border-radius:10px; color:#fff; background:rgba(35,37,42,.92); box-shadow:0 8px 24px rgba(0,0,0,.24); font-size:12px; animation:toastIn 160ms ease-out; }
+    @keyframes materialize { from { opacity:0; transform:scale(.975) translateY(7px); } to { opacity:1; transform:scale(1) translateY(0); } }
+    @keyframes toastIn { from { opacity:0; transform:translate(-50%, 8px); } to { opacity:1; transform:translate(-50%, 0); } }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior:auto !important; animation-duration:1ms !important; transition-duration:1ms !important; }
+      button:active { transform:none; }
+    }
+    @media (prefers-reduced-transparency: reduce) {
+      .titlebar, .sheet { background:#fff; backdrop-filter:none; }
+      .scrim { backdrop-filter:none; }
+    }
+    @media (prefers-contrast: more) {
+      .window, .sheet, .safety-card, .plain-card, .matrix { border-color:#666; }
+    }
+  </style>
+</head>
+<body>
+  <main class="window">
+    <header class="titlebar">
+      <span class="dot red-dot"></span><span class="dot yellow-dot"></span><span class="dot green-dot"></span>
+      <span class="app-title">SkillBox</span><span class="prototype-label">v21 交互原型</span>
+      <nav class="scenario-switch" aria-label="原型场景">
+        <button data-scene="risk">风险确认</button>
+        <button data-scene="bulk">取消不留痕</button>
+        <button data-scene="restore">恢复预览</button>
+      </nav>
+    </header>
+    <section class="app-body">
+      <aside class="sidebar">
+        <div class="nav" data-nav="overview"><span class="nav-glyph">⌂</span>总览</div>
+        <div class="nav active" data-nav="skills"><span class="nav-glyph">▥</span>我的 Skills</div>
+        <div class="nav" data-nav="discover"><span class="nav-glyph">⌕</span>发现 Skills</div>
+        <div class="nav" data-nav="install"><span class="nav-glyph">⊞</span>安装到应用</div>
+        <div class="nav" data-nav="history"><span class="nav-glyph">◷</span>最近操作</div>
+        <div class="nav" data-nav="settings"><span class="nav-glyph">⚙</span>设置</div>
+        <div class="sidebar-note">已找到 5 个应用位置</div>
+      </aside>
+      <section class="stage">
+
+        <section class="scene scene-risk" data-panel="risk">
+          <aside class="list-pane">
+            <div class="list-header"><span class="eyebrow">集中管理</span><h1>我的 Skills</h1><div class="search">搜索 Skills</div></div>
+            <div class="group-label"><span>未分类</span><span>5</span></div>
+            <div class="skill-row"><span class="skill-icon">V</span><span><b>vibe-project-foundation</b><small>搭建长期 Vibe Coding 项目的基础</small></span></div>
+            <div class="skill-row active"><span class="skill-icon">A</span><span><b>agent-team</b><small>搭建多 Agent 协作团队</small></span><span class="attention-dot" id="risk-list-dot" title="有内容需要了解"></span></div>
+            <div class="skill-row"><span class="skill-icon">Z</span><span><b>zhaoji-writing</b><small>兆基的文案写作技能</small></span></div>
+            <div class="skill-row"><span class="skill-icon">O</span><span><b>obsidian-feishu-sync</b><small>Obsidian 与飞书知识库同步</small></span></div>
+          </aside>
+          <section class="detail">
+            <div class="detail-head">
+              <div><h2>agent-team</h2><p>搭建低上下文、多会话协作的 Agent 团队。</p></div>
+              <div class="toolbar-actions"><button class="btn quiet">•••</button></div>
+            </div>
+            <section class="install-card">
+              <div class="card-title-row"><div><div class="card-title">安装到你的 AI 应用</div><div class="card-sub">已找到 5 个可安装位置。确认风险说明后即可继续。</div></div><span class="pill">5 个可用</span></div>
+              <div class="install-actions"><button class="btn primary" id="install-all">安装到全部应用</button><button class="btn" disabled>卸载全部</button><span class="install-meta">尚未通过 SkillBox 安装</span></div>
+            </section>
+
+            <section class="safety-card" id="risk-pending">
+              <div class="safety-top">
+                <span class="status-icon">!</span>
+                <div><div class="safety-title">安装前，有 1 项内容需要你了解</div><div class="safety-desc">看完并作出选择后，这条提示就会收起。</div></div>
+                <span class="risk-tag">待了解</span>
+              </div>
+              <div class="risk-content">
+                <div class="risk-row">
+                  <div><b>脚本可能请求更高的系统权限</b><p>添加和安装时不会运行脚本。只有以后你或 AI 应用主动使用相关功能时，它才可能请求权限。</p></div>
+                  <span class="risk-tag">需要确认</span>
+                </div>
+                <div class="risk-actions"><button class="evidence-link" id="toggle-evidence">查看技术证据</button><button class="btn primary" id="open-risk">查看并确认</button></div>
+                <div class="tech-evidence" id="inline-evidence" hidden><b>发现位置</b><span>scripts/scaffold_team.py · LaunchAgents / LaunchDaemons</span></div>
+                <p class="safety-footnote">这是文件内容提示，不代表 Skill 已经运行，也不代表它一定有问题。</p>
+              </div>
+            </section>
+
+            <section class="confirmed-card" id="risk-confirmed" hidden>
+              <span class="confirmed-icon">✓</span><span class="confirmed-copy"><b>你已了解这项内容</b><small>确认对应 agent-team 的当前内容版本</small></span><button class="btn" id="review-risk">重新查看</button>
+            </section>
+
+            <section class="plain-card"><h3>Skill 简要说明</h3><p>为复杂任务组织多个相互独立的 Agent，并通过明确的交接记录降低上下文消耗。</p></section>
+            <section class="plain-card"><h3>查看 Skill 详情</h3><div class="file-row"><span>5 个文件 · 主说明文件可预览</span><span>⌄</span></div></section>
+          </section>
+
+          <div class="scrim" id="risk-dialog" hidden>
+            <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="risk-dialog-title">
+              <div class="sheet-icon">!</div><h2 id="risk-dialog-title">确认这项权限风险</h2>
+              <p class="sheet-lead">先看清它可能在什么时候发生，再决定是否继续安装。</p>
+              <div class="explain-box"><strong>这个 Skill 中有一个脚本，可能在运行时请求更高的系统权限。</strong><br />把它加入 SkillBox 或安装到应用时不会运行任何脚本。只有以后你或 AI 应用主动使用相关功能时，它才可能请求权限；届时 macOS 仍会显示系统授权提示。</div>
+              <div class="tech-evidence"><b>发现位置</b><span>scripts/scaffold_team.py · LaunchAgents / LaunchDaemons</span></div>
+              <div class="binding-note"><span class="binding-dot"></span><span>这次确认只适用于 agent-team 的当前内容版本；内容变化后会重新询问。</span></div>
+              <div class="sheet-actions"><button class="btn left" id="risk-cancel">暂不安装</button><button class="btn primary" id="risk-confirm">我已了解，继续安装</button></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="scene scene-bulk" data-panel="bulk" hidden>
+          <section class="full-page">
+            <div class="page-head"><div><span class="eyebrow">按应用整理</span><h1>安装到应用</h1><p>选择哪些 Skills 可以在每个 AI 应用中使用。</p></div><button class="btn primary" id="open-bulk">预览 5 项改动</button></div>
+            <div class="draft-banner"><span>✎</span><span><b>当前是未保存草稿。</b> 预览、返回和调整都不会改变已经安装的内容。</span></div>
+            <div class="matrix">
+              <div class="matrix-head"><span>应用位置</span><span>操作前</span><span>本次草稿</span></div>
+              <div class="matrix-row"><span class="app-name"><span class="app-symbol">C</span>Codex</span><span class="state-current">未安装</span><span class="state-draft">将安装</span></div>
+              <div class="matrix-row"><span class="app-name"><span class="app-symbol">CL</span>Claude Code</span><span class="state-current">未安装</span><span class="state-draft">将安装</span></div>
+              <div class="matrix-row"><span class="app-name"><span class="app-symbol">CU</span>Cursor</span><span class="state-current">未安装</span><span class="state-draft">将安装</span></div>
+              <div class="matrix-row"><span class="app-name"><span class="app-symbol">K</span>Kimi Code</span><span class="state-current">未安装</span><span class="state-draft">将安装</span></div>
+              <div class="matrix-row"><span class="app-name"><span class="app-symbol">G</span>Gemini CLI</span><span class="state-current">未安装</span><span class="state-draft">将安装</span></div>
+            </div>
+            <div class="matrix-footer"><button class="btn" id="discard-base">取消，不保存</button><button class="btn primary" id="preview-base">预览改动</button></div>
+          </section>
+          <div class="scrim" id="bulk-dialog">
+            <section class="sheet wide" role="dialog" aria-modal="true" aria-labelledby="bulk-title">
+              <div class="sheet-icon blue">↓</div><h2 id="bulk-title">确认安装到 5 个应用</h2>
+              <p class="sheet-lead">现在只是预览。确认前不会保存安装选择，也不会写入任何应用文件夹。</p>
+              <div class="preview-note"><span>ⓘ</span><span>如果返回调整，这份草稿会暂时保留；如果取消，所有选择和替换授权都会被丢弃。</span></div>
+              <div class="preview-list">
+                <div class="preview-row"><span class="preview-symbol">C</span><span><b>Codex</b><small>安装 agent-team</small></span><span class="preview-change">将安装</span></div>
+                <div class="preview-row"><span class="preview-symbol">CL</span><span><b>Claude Code</b><small>安装 agent-team</small></span><span class="preview-change">将安装</span></div>
+                <div class="preview-row"><span class="preview-symbol">CU</span><span><b>Cursor</b><small>安装 agent-team</small></span><span class="preview-change">将安装</span></div>
+                <div class="preview-row"><span class="preview-symbol">K</span><span><b>Kimi Code</b><small>安装 agent-team</small></span><span class="preview-change">将安装</span></div>
+                <div class="preview-row"><span class="preview-symbol">G</span><span><b>Gemini CLI</b><small>安装 agent-team</small></span><span class="preview-change">将安装</span></div>
+              </div>
+              <div class="preview-summary"><span>确认后会创建恢复记录</span><b>新增 5 个安装副本</b></div>
+              <div class="sheet-actions"><button class="btn left" id="bulk-cancel">取消，不保存</button><button class="btn" id="bulk-back">返回调整</button><button class="btn primary" id="bulk-confirm">确认安装</button></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="scene scene-restore" data-panel="restore" hidden>
+          <section class="full-page">
+            <div class="page-head"><div><span class="eyebrow">可以反悔</span><h1>最近操作</h1><p>安装、卸载和原件更新都会留在这里，需要时可以恢复。</p></div></div>
+            <section class="history-card">
+              <div class="history-top"><span class="history-icon">✓</span><span class="history-copy"><b>安装了 agent-team</b><small>已完成 · 今天 14:32</small></span><div class="history-actions"><button class="btn">查看详情</button><button class="btn" id="open-restore">恢复到操作前</button></div></div>
+              <div class="history-details"><div class="history-target"><b>Codex</b>已安装</div><div class="history-target"><b>Claude Code</b>已安装</div><div class="history-target"><b>Cursor</b>已安装</div><div class="history-target"><b>Kimi Code</b>已安装</div><div class="history-target"><b>Gemini CLI</b>已安装</div></div>
+            </section>
+            <section class="history-card"><div class="history-top"><span class="history-icon">✓</span><span class="history-copy"><b>更新了 zhaoji-writing</b><small>已完成 · 昨天 21:08</small></span><div class="history-actions"><button class="btn">查看详情</button><button class="btn">恢复到操作前</button></div></div></section>
+          </section>
+          <div class="scrim" id="restore-dialog">
+            <section class="sheet wide" role="dialog" aria-modal="true" aria-labelledby="restore-title">
+              <div class="sheet-icon blue">↶</div><h2 id="restore-title">恢复“安装了 agent-team”？</h2>
+              <p class="sheet-lead">恢复后，下面 5 个安装副本会被移除。我的 Skills 中保存的原件不受影响。</p>
+              <div class="preview-list">
+                <div class="preview-row"><span class="preview-symbol">C</span><span><b>Codex</b><small>移除由 SkillBox 安装的 agent-team</small></span><span class="preview-change remove">将移除</span></div>
+                <div class="preview-row"><span class="preview-symbol">CL</span><span><b>Claude Code</b><small>移除由 SkillBox 安装的 agent-team</small></span><span class="preview-change remove">将移除</span></div>
+                <div class="preview-row"><span class="preview-symbol">CU</span><span><b>Cursor</b><small>移除由 SkillBox 安装的 agent-team</small></span><span class="preview-change remove">将移除</span></div>
+                <div class="preview-row"><span class="preview-symbol">K</span><span><b>Kimi Code</b><small>移除由 SkillBox 安装的 agent-team</small></span><span class="preview-change remove">将移除</span></div>
+                <div class="preview-row"><span class="preview-symbol">G</span><span><b>Gemini CLI</b><small>移除由 SkillBox 安装的 agent-team</small></span><span class="preview-change remove">将移除</span></div>
+              </div>
+              <p class="warning-note">如果某个副本在安装后被其他应用修改，SkillBox 会停下来并保留它，不会直接覆盖或删除。</p>
+              <div class="sheet-actions"><button class="btn left" id="restore-cancel">取消</button><button class="btn primary" id="restore-confirm">确认恢复 5 个位置</button></div>
+            </section>
+          </div>
+        </section>
+
+      </section>
+    </section>
+    <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
+  </main>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const validScenes = new Set(['risk', 'bulk', 'restore']);
+    let scene = validScenes.has(params.get('scene')) ? params.get('scene') : 'risk';
+    let toastTimer;
+
+    const $ = selector => document.querySelector(selector);
+    const $$ = selector => [...document.querySelectorAll(selector)];
+    function setHidden(selector, hidden) { $(selector).hidden = hidden; }
+    function flash(message) {
+      clearTimeout(toastTimer);
+      $('#toast').textContent = message;
+      $('#toast').hidden = false;
+      toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 2600);
+    }
+    function syncNavigation(nextScene) {
+      const nav = nextScene === 'bulk' ? 'install' : nextScene === 'restore' ? 'history' : 'skills';
+      $$('.nav').forEach(item => item.classList.toggle('active', item.dataset.nav === nav));
+    }
+    function showScene(nextScene, updateURL = true) {
+      scene = nextScene;
+      $$('[data-panel]').forEach(panel => { panel.hidden = panel.dataset.panel !== nextScene; });
+      $$('.scenario-switch button').forEach(button => button.classList.toggle('active', button.dataset.scene === nextScene));
+      syncNavigation(nextScene);
+      if (nextScene === 'bulk') $('#bulk-dialog').hidden = false;
+      if (nextScene === 'restore') $('#restore-dialog').hidden = false;
+      if (updateURL) history.replaceState(null, '', '?scene=' + nextScene);
+    }
+    $$('.scenario-switch button').forEach(button => button.addEventListener('click', () => showScene(button.dataset.scene)));
+
+    $('#open-risk').addEventListener('click', () => setHidden('#risk-dialog', false));
+    $('#install-all').addEventListener('click', () => setHidden('#risk-dialog', false));
+    $('#review-risk').addEventListener('click', () => setHidden('#risk-dialog', false));
+    $('#risk-cancel').addEventListener('click', () => { setHidden('#risk-dialog', true); flash('已暂缓安装，没有保存确认状态'); });
+    $('#risk-confirm').addEventListener('click', () => {
+      setHidden('#risk-dialog', true); setHidden('#risk-pending', true); setHidden('#risk-confirmed', false);
+      setHidden('#risk-list-dot', true);
+      flash('已了解这项内容，可以继续安装');
+    });
+    $('#toggle-evidence').addEventListener('click', event => {
+      const evidence = $('#inline-evidence'); evidence.hidden = !evidence.hidden;
+      event.currentTarget.textContent = evidence.hidden ? '查看技术证据' : '收起技术证据';
+    });
+
+    function cancelBulk() {
+      setHidden('#bulk-dialog', true);
+      $$('.state-draft').forEach(item => { item.textContent = '未安装'; item.classList.remove('state-draft'); item.classList.add('state-current'); });
+      $('.draft-banner').innerHTML = '<span>✓</span><span><b>这次更改已取消。</b> 安装关系仍与操作前相同。</span>';
+      flash('已取消，没有保存任何安装选择');
+    }
+    $('#bulk-cancel').addEventListener('click', cancelBulk);
+    $('#discard-base').addEventListener('click', cancelBulk);
+    $('#bulk-back').addEventListener('click', () => { setHidden('#bulk-dialog', true); flash('已返回调整，当前仍是未保存草稿'); });
+    $('#bulk-confirm').addEventListener('click', () => { setHidden('#bulk-dialog', true); flash('已确认，正在安装到 5 个应用'); });
+    $('#open-bulk').addEventListener('click', () => setHidden('#bulk-dialog', false));
+    $('#preview-base').addEventListener('click', () => setHidden('#bulk-dialog', false));
+
+    $('#open-restore').addEventListener('click', () => setHidden('#restore-dialog', false));
+    $('#restore-cancel').addEventListener('click', () => { setHidden('#restore-dialog', true); flash('已取消恢复，没有改动任何文件'); });
+    $('#restore-confirm').addEventListener('click', () => { setHidden('#restore-dialog', true); flash('已开始恢复，外部改动会被保留'); });
+
+    showScene(scene, false);
+    if (scene === 'risk' && params.get('dialog') === '1') setHidden('#risk-dialog', false);
+    if (scene === 'risk' && params.get('confirmed') === '1') { setHidden('#risk-pending', true); setHidden('#risk-confirmed', false); setHidden('#risk-list-dot', true); }
+  </script>
+</body>
+</html>
