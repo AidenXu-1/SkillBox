@@ -1234,7 +1234,7 @@ private struct SkillOrganizerSidebar: View {
             case .attention:
                 let sourceState = model.snapshot.sourceStates.first { $0.skillID == skill.id }
                 let localState = model.snapshot.localSourceStates.first { $0.skillID == skill.id }
-                return skill.riskReport.requiresUserAttention ||
+                return model.shouldShowRiskAttention(for: skill) ||
                     sourceState?.lastCheckIssue != nil ||
                     sourceState?.status == .authenticationRequired ||
                     sourceState?.status == .unavailable ||
@@ -1363,7 +1363,7 @@ private struct SkillOrganizerRow: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 4)
-                if skill.riskReport.requiresUserAttention {
+                if model.shouldShowRiskAttention(for: skill) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(skill.riskReport.isBlocked ? Color.red : Color.orange)
@@ -2007,6 +2007,9 @@ private struct SkillDetailView: View {
     @State private var confirmation: Confirmation?
     @State private var showRemovalOptions = false
     @State private var showSyncPreviewAfterRemovalOptions = false
+    @State private var showRiskConfirmation = false
+    @State private var continueInstallAfterRiskConfirmation = false
+    @State private var showInstallConfirmationAfterRiskSheet = false
 
     private var availableTargets: [AgentTarget] { model.availableTargets() }
     private var unavailableTargets: [AgentTarget] { model.unavailableTargets() }
@@ -2082,14 +2085,19 @@ private struct SkillDetailView: View {
                     }
                     HStack(spacing: 8) {
                         Button {
-                            confirmation = .installEverywhere
+                            if model.needsRiskAcknowledgement(for: skill) {
+                                continueInstallAfterRiskConfirmation = true
+                                showRiskConfirmation = true
+                            } else {
+                                confirmation = .installEverywhere
+                            }
                         } label: {
                             Label("安装到全部应用", systemImage: "square.and.arrow.down")
                         }
                         .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
                         .fixedSize(horizontal: true, vertical: false)
-                        .disabled(availableTargets.isEmpty)
-                        .help(availableTargets.isEmpty ? "本机还没有找到可安装 Skill 的应用" : "先查看完整安装清单")
+                        .disabled(availableTargets.isEmpty || skill.riskReport.isBlocked)
+                        .help(installButtonHelp)
                         Button {
                             confirmation = .uninstallEverywhere
                         } label: {
@@ -2143,8 +2151,10 @@ private struct SkillDetailView: View {
                     SkillUsageGuideCard(guide: usageGuide)
                 }
 
-                if skill.riskReport.requiresUserAttention {
+                if model.shouldShowRiskAttention(for: skill) {
                     riskSummary
+                } else if model.isRiskAcknowledged(for: skill) {
+                    riskAcknowledgedSummary
                 }
 
                 VStack(spacing: 0) {
@@ -2239,6 +2249,14 @@ private struct SkillDetailView: View {
         .sheet(isPresented: $showRawSource) {
             SkillRawSourceView(model: model, skill: skill, isPresented: $showRawSource)
         }
+        .sheet(isPresented: $showRiskConfirmation, onDismiss: {
+            continueInstallAfterRiskConfirmation = false
+            guard showInstallConfirmationAfterRiskSheet else { return }
+            showInstallConfirmationAfterRiskSheet = false
+            confirmation = .installEverywhere
+        }) {
+            riskConfirmationSheet
+        }
         .sheet(isPresented: $showRemovalOptions, onDismiss: {
             guard showSyncPreviewAfterRemovalOptions else { return }
             showSyncPreviewAfterRemovalOptions = false
@@ -2311,86 +2329,184 @@ private struct SkillDetailView: View {
 
     @ViewBuilder
     private var riskSummary: some View {
-        VStack(alignment: .leading, spacing: 0) {
-                Button {
-                    if reduceMotion { showSafetyDetails.toggle() }
-                    else {
-                        withAnimation(.easeOut(duration: 0.14)) { showSafetyDetails.toggle() }
-                    }
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: riskSummaryIcon)
-                            .foregroundStyle(riskTint)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("安装前需要确认")
-                                .font(.callout.weight(.medium))
-                            Text("\(skill.riskReport.actionableFindings.count) 项内容需要你决定后再安装")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: riskSummaryIcon)
+                    .font(.title3)
+                    .foregroundStyle(riskTint)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(skill.riskReport.isBlocked ? "这份 Skill 已被安全检查阻止" : "安装前，有 \(skill.riskReport.actionableFindings.count) 项内容需要你了解")
+                        .font(.headline)
+                    Text(skill.riskReport.isBlocked ? "你仍可以查看发现了什么，但无法安装。" : "看完并作出选择后，这条提示就会收起。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(skill.riskReport.isBlocked ? "已阻止" : "待了解")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(riskTint)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(riskTint.opacity(0.10), in: Capsule())
+            }
+            Divider().opacity(0.5)
+
+            if let finding = skill.riskReport.actionableFindings.first {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(riskFindingTitle(finding)).font(.callout.weight(.medium))
                         Spacer()
-                        Text(showSafetyDetails ? "收起" : "查看")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.blue)
-                        Image(systemName: "chevron.right")
+                        Text(riskLevel(finding.severity))
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .rotationEffect(.degrees(showSafetyDetails ? 90 : 0))
+                            .foregroundStyle(riskFindingColor(finding.severity))
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 11)
-                    .contentShape(Rectangle())
+                    Text(riskFindingExplanation(finding))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if showSafetyDetails {
+                VStack(alignment: .leading, spacing: 9) {
+                    ForEach(skill.riskReport.actionableFindings.prefix(6)) { finding in
+                        if let evidence = riskEvidence(finding) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(finding.relativePath)
+                                    .font(.caption.weight(.medium))
+                                Text(evidence)
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+                .padding(10)
+                .background(.background.opacity(0.62), in: RoundedRectangle(cornerRadius: 9))
+                .transition(.opacity)
+            }
+
+            HStack {
+                Button(showSafetyDetails ? "收起技术证据" : "查看技术证据") {
+                    if reduceMotion { showSafetyDetails.toggle() }
+                    else { withAnimation(.easeOut(duration: 0.14)) { showSafetyDetails.toggle() } }
                 }
                 .buttonStyle(.plain)
-                .help(showSafetyDetails ? "收起需要确认的内容" : "查看安装前需要确认的内容")
-
-                if showSafetyDetails {
-                    Divider()
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: riskSummaryIcon)
-                        .font(.title3)
-                        .foregroundStyle(riskTint)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(riskSummaryTitle)
-                            .font(.headline)
-                        Text("添加和安装 Skill 时不会运行这些文件。下面的命令只有在你或 AI 应用主动运行脚本时才可能执行。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                .foregroundStyle(.blue)
+                Spacer()
+                if !skill.riskReport.isBlocked {
+                    Button("查看并确认") {
+                        continueInstallAfterRiskConfirmation = false
+                        showRiskConfirmation = true
                     }
+                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
                 }
-                        ForEach(skill.riskReport.actionableFindings.prefix(6)) { finding in
-                            Divider().opacity(0.45)
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text(riskFindingTitle(finding)).font(.callout.weight(.medium))
-                                    Spacer()
-                                    Text(riskLevel(finding.severity))
-                                        .font(.caption2.weight(.semibold))
-                                        .foregroundStyle(riskFindingColor(finding.severity))
-                                }
-                                Text(riskFindingExplanation(finding))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                if let evidence = riskEvidence(finding) {
-                                    Text(evidence)
-                                        .font(.system(.caption2, design: .monospaced))
+            }
+            Text("这是文件内容提示，不代表 Skill 已经运行，也不代表它一定有问题。")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(14)
+        .background(riskTint.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(riskTint.opacity(0.15)))
+    }
+
+    private var riskAcknowledgedSummary: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.title3)
+                .foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("你已了解这项内容")
+                    .font(.callout.weight(.medium))
+                Text("确认对应 \(skill.displayName) 的当前内容版本")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("重新查看") {
+                continueInstallAfterRiskConfirmation = false
+                showRiskConfirmation = true
+            }
+            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+        }
+        .padding(13)
+        .background(.green.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(.green.opacity(0.16)))
+    }
+
+    private var riskConfirmationSheet: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 13) {
+                Image(systemName: riskSummaryIcon)
+                    .font(.title2)
+                    .foregroundStyle(riskTint)
+                    .frame(width: 38, height: 38)
+                    .background(riskTint.opacity(0.10), in: RoundedRectangle(cornerRadius: 11))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(skill.riskReport.isBlocked ? "查看安全检查结果" : "确认这项风险提示")
+                        .font(.title2.bold())
+                    Text("先看清它可能在什么时候发生，再决定是否继续安装。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(skill.riskReport.actionableFindings) { finding in
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text(riskFindingTitle(finding)).font(.headline)
+                            Text(riskFindingExplanation(finding))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                            if let evidence = riskEvidence(finding) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("发现位置").font(.caption.weight(.semibold))
+                                    Text("\(finding.relativePath) · \(evidence)")
+                                        .font(.system(.caption, design: .monospaced))
                                         .foregroundStyle(.secondary)
                                         .textSelection(.enabled)
                                 }
+                                .padding(10)
+                                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 9))
                             }
                         }
-                        Text("这是文件内容提示，不代表 Skill 已经运行，也不代表它一定有问题。静态检查无法保证绝对安全。")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                        .padding(13)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(riskTint.opacity(0.055), in: RoundedRectangle(cornerRadius: 11))
                     }
-                    .padding(14)
-                    .transition(.opacity)
                 }
             }
-            .background(riskTint.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
-            .overlay(RoundedRectangle(cornerRadius: 13).stroke(riskTint.opacity(0.15)))
+            .frame(maxHeight: 300)
+
+            if !skill.riskReport.isBlocked {
+                Label("这次确认只适用于 \(skill.displayName) 的当前内容版本；内容或风险证据变化后会重新询问。", systemImage: "checkmark.shield")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(11)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 9))
+            }
+
+            HStack {
+                Button(continueInstallAfterRiskConfirmation ? "暂不安装" : "关闭") {
+                    showRiskConfirmation = false
+                }
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                Spacer()
+                if !skill.riskReport.isBlocked && model.needsRiskAcknowledgement(for: skill) {
+                    Button(continueInstallAfterRiskConfirmation ? "我已了解，继续安装" : "我已了解") {
+                        model.acknowledgeRisk(for: skill)
+                        showInstallConfirmationAfterRiskSheet = continueInstallAfterRiskConfirmation
+                        showRiskConfirmation = false
+                    }
+                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 590)
     }
 
     private var confirmationTitle: String {
@@ -2426,7 +2542,20 @@ private struct SkillDetailView: View {
         guard !availableTargets.isEmpty else {
             return "本机还没有找到可安装的应用，SkillBox 不会代为创建目录。"
         }
+        if skill.riskReport.isBlocked {
+            return "安全检查已阻止这份 Skill，可以在下方查看原因。"
+        }
+        if model.needsRiskAcknowledgement(for: skill) {
+            return "已找到 \(availableTargets.count) 个可安装应用。确认下方的内容提示后即可继续。"
+        }
         return "已找到 \(availableTargets.count) 个可安装应用。继续后会先让你查看完整清单。"
+    }
+
+    private var installButtonHelp: String {
+        if availableTargets.isEmpty { return "本机还没有找到可安装 Skill 的应用" }
+        if skill.riskReport.isBlocked { return "这份 Skill 已被安全检查阻止" }
+        if model.needsRiskAcknowledgement(for: skill) { return "先了解风险提示，再查看安装清单" }
+        return "先查看完整安装清单"
     }
 
     private func riskLevel(_ severity: RiskSeverity) -> String {
@@ -3227,6 +3356,18 @@ private struct HistoryView: View {
             }
             .padding(28)
         }
+        .sheet(isPresented: Binding(
+            get: { model.pendingUndoTransaction != nil },
+            set: { isPresented in
+                if !isPresented, model.pendingUndoTransaction != nil {
+                    model.cancelUndoPreview()
+                }
+            }
+        )) {
+            if let transaction = model.pendingUndoTransaction {
+                UndoPreviewView(model: model, transaction: transaction)
+            }
+        }
     }
 }
 
@@ -3251,7 +3392,7 @@ private struct HistoryTransactionCard: View {
                 Button(showDetails ? "收起详情" : "查看详情") { showDetails.toggle() }
                     .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                 if transaction.status == .succeeded {
-                    Button("恢复到操作前") { Task { await model.undo(transaction) } }
+                    Button("恢复到操作前") { _ = model.prepareUndoPreview(transaction) }
                         .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                 }
             }
@@ -3304,6 +3445,125 @@ private struct HistoryTransactionCard: View {
 
     private func actionLabel(_ kind: SyncActionKind) -> String {
         switch kind { case .create: "安装"; case .update: "更新"; case .remove: "卸载"; case .takeover: "纳入管理"; case .noChange: "无需改动"; case .blocked: "未处理" }
+    }
+}
+
+private struct UndoPreviewView: View {
+    @ObservedObject var model: AppModel
+    let transaction: SyncTransaction
+
+    private var visibleActions: [SyncAction] {
+        transaction.actions.filter { [.create, .update, .remove, .takeover].contains($0.kind) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 13) {
+                Image(systemName: "arrow.uturn.backward.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.blue)
+                    .frame(width: 40, height: 40)
+                    .background(.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 11))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("恢复到这次操作之前？")
+                        .font(.title2.bold())
+                    Text("先查看即将恢复的位置。现在还没有修改任何文件。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("将恢复 \(visibleActions.count) 个位置")
+                    .font(.headline)
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(visibleActions) { action in
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: undoIcon(for: action.kind))
+                                    .foregroundStyle(.blue)
+                                    .frame(width: 22)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("\(targetName(for: action)) · \(undoLabel(for: action.kind))")
+                                        .font(.callout.weight(.medium))
+                                    Text(action.destinationPath)
+                                        .font(.system(.caption2, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                        .textSelection(.enabled)
+                                }
+                                Spacer()
+                            }
+                            .padding(11)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+                }
+                .frame(maxHeight: 270)
+            }
+
+            Label(centralContentMessage, systemImage: "shippingbox")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Label("如果某个位置在这次操作后被其他软件改过，SkillBox 会保留新改动，并停下来提醒你。", systemImage: "shield.lefthalf.filled")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Button("取消") { model.cancelUndoPreview() }
+                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("确认恢复 \(visibleActions.count) 个位置") {
+                    Task { await model.confirmPendingUndo() }
+                }
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.isBusy || visibleActions.isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 660)
+    }
+
+    private var centralContentMessage: String {
+        if transaction.libraryUpdate != nil {
+            return "「我的 Skills」中的原件也会恢复到更新前版本。"
+        }
+        if transaction.libraryDeletion != nil {
+            return "「我的 Skills」中的原件会一起恢复。"
+        }
+        if transaction.libraryRestoration != nil {
+            return "「我的 Skills」中这次恢复的原件会回到操作前状态。"
+        }
+        return "「我的 Skills」中的主 Skill 不会改变。"
+    }
+
+    private func targetName(for action: SyncAction) -> String {
+        model.snapshot.targets.first { $0.id == action.targetID }?.displayName ?? "已移除的应用"
+    }
+
+    private func undoLabel(for kind: SyncActionKind) -> String {
+        switch kind {
+        case .create: "移除这次新安装的副本"
+        case .update: "恢复为更新前的内容"
+        case .remove: "恢复这次卸载的副本"
+        case .takeover: "恢复为操作前的管理状态"
+        case .noChange: "无需恢复"
+        case .blocked: "未曾修改"
+        }
+    }
+
+    private func undoIcon(for kind: SyncActionKind) -> String {
+        switch kind {
+        case .create: "minus.circle"
+        case .update: "clock.arrow.circlepath"
+        case .remove: "arrow.uturn.backward.circle"
+        case .takeover: "person.crop.circle.badge.minus"
+        case .noChange: "equal.circle"
+        case .blocked: "exclamationmark.triangle"
+        }
     }
 }
 
@@ -5080,8 +5340,11 @@ private struct SyncPreviewView: View {
     @ObservedObject var model: AppModel; @Binding var isPresented: Bool
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(model.isDeletingSkillAfterSync ? "确认卸载并清理" : "确认安装改动")
+            Text(previewTitle)
                 .font(.title2.bold())
+            Text("现在只是预览。确认前不会保存安装选择，也不会写入任何应用文件夹。")
+                .font(.callout)
+                .foregroundStyle(.secondary)
             if let plan = model.syncPlan {
                 HStack {
                     MetricCard(title: "准备改动", value: "\(plan.executableActions.count)", note: "开始前会留备份", color: .blue)
@@ -5118,12 +5381,12 @@ private struct SyncPreviewView: View {
                     .foregroundStyle(.secondary)
             }
             HStack {
-                Button("返回调整") {
-                    model.cancelPendingDeletionAfterSync()
+                Button("取消，不保存") {
+                    model.cancelSyncPreview()
                     isPresented = false
                 }
                 Spacer()
-                Button(model.isDeletingSkillAfterSync ? "确认卸载并清理" : "确认并开始") {
+                Button(confirmButtonTitle) {
                     isPresented = false
                     Task { await model.executePlan() }
                 }
@@ -5134,7 +5397,22 @@ private struct SyncPreviewView: View {
         }
         .padding(24)
         .frame(width: 760, height: 560)
-        .interactiveDismissDisabled(model.isDeletingSkillAfterSync)
+        .interactiveDismissDisabled(true)
+    }
+
+    private var isRemovalPreview: Bool {
+        let actions = model.syncPlan?.executableActions ?? []
+        return !actions.isEmpty && actions.allSatisfy { $0.kind == .remove }
+    }
+
+    private var previewTitle: String {
+        if model.isDeletingSkillAfterSync { return "确认卸载并清理" }
+        return isRemovalPreview ? "确认卸载改动" : "确认安装改动"
+    }
+
+    private var confirmButtonTitle: String {
+        if model.isDeletingSkillAfterSync { return "确认卸载并清理" }
+        return isRemovalPreview ? "确认卸载" : "确认安装"
     }
 
     private func targetName(for action: SyncAction) -> String {
