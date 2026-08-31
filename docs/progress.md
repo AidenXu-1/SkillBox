@@ -7,6 +7,9 @@
 
 ## 2026-09-01
 
+- ✅ 修复“幽灵分类”：真实数据中存在一个名称为“操盘”、数量为 0 的历史分类；旧界面主列表会过滤空分类，右键“移动到”却列出全部分类，造成用户从未见过或管理过该分类却在菜单中突然看到。展示策略现保留全部已保存分类，空分类显示 `0` 并继续提供重命名、删除入口；新增回归先因缺少空分类展示策略编译失败，最小实现后转绿。
+- ✅ 经用户授权，已精确清理真实使用数据中唯一的空“操盘”分类 `2A9F06F3-0BFE-47EA-BABD-189215C14DC8`。操作前保存 `organization.json` 与完整 `library-state.json` 的两代可恢复备份；候选按最新状态重新生成并逐字段对比，5 个 Skill 的顺序、来源、安装和其余状态未变化。正式 `~/Applications/SkillBox.app` 重新启动后，两份状态均保持 `folders=0` 且没有非空 `folderID`，没有恢复该分类。
+- ✅ `app/Scripts/test-all.sh` 完整门禁通过，新增“已保存空分类仍可见”用例；Release arm64 构建、ad-hoc Hardened Runtime 与 `codesign --verify --deep --strict` 通过。当前修复版仅形成项目内 Release 候选，尚未替换正式安装版、未发布 GitHub；正式安装版的数据异常已经清理，但以后新建空分类保持可见的程序修复仍须独立安装与发布。
 - ✅ 将已经完成真实拖动验收的本地工作区冻结为 `v0.2.0 (Build 3)`，发布提交为 `1b43cad89933181cf1b8cba39cc9ef697ca79faa`。提交包含「我的 Skills」单行来源与大小、同组拖动占位／让位、独立落点线、右键移动与可恢复删除，以及相应测试和 v22–v26 视觉依据；仓库内的个人绝对路径已改为通用 `~/Applications` 表述。
 - ✅ 最终发布门重新发现并执行 277 项自动化测试，全部通过；Release arm64 构建、ad-hoc Hardened Runtime 严格签名、包内隐私、应用图标系统回读、DMG 系统完整性、来源清单和隔离属性模拟均通过。隔离副本仍按正式策略得到 `manual-approval-required`，没有冒充 Developer ID 或 Apple 公证包。
 - ✅ GitHub `master`、`v0.2.0` 标签和 Latest Release 均回读到提交 `1b43cad…`；Release 为公开、非草稿、非预发布，包含 `SkillBox-0.2.0.dmg`、`.sha256` 与 `-release.json`。从 GitHub 重新下载后的 DMG SHA-256 为 `7b9a2ea76c62c1828f338716217853a3061f3cbd0cd5d4f5f1a75375e97e8bed`，清单 SHA-256 为 `508e2124f0394e46c8acc3d08ed246f9d23d39fe4d3ce3bedb67f91ebed8dc97`，二者均与线上摘要和校验文件一致。
