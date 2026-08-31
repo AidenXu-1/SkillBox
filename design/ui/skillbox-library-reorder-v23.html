@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SkillBox v23 · 克制版 Skill 列表整理</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Helvetica Neue", sans-serif;
+      color: #1d1d1f;
+      background: #edf0f5;
+      --blue: #0879ed;
+      --blue-strong: #0068d8;
+      --blue-soft: #e7f1ff;
+      --line: #e3e4e7;
+      --muted: #777a81;
+      --muted-2: #96999f;
+      --sidebar: #f5f6f8;
+      --red: #d83232;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-width: 1280px; min-height: 780px; }
+    body { min-height: 100vh; display: grid; place-items: center; padding: 22px; }
+    button { font: inherit; }
+    button:focus-visible, [tabindex]:focus-visible { outline: 3px solid rgba(8,121,237,.28); outline-offset: 2px; }
+    [hidden] { display: none !important; }
+
+    .window {
+      width: min(1600px, calc(100vw - 44px));
+      height: min(980px, calc(100vh - 44px));
+      min-height: 760px;
+      overflow: hidden;
+      border: 1px solid rgba(0,0,0,.14);
+      border-radius: 24px;
+      background: #fff;
+      box-shadow: 0 26px 80px rgba(28,35,52,.22);
+    }
+
+    .titlebar {
+      height: 56px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 0 20px;
+      border-bottom: 1px solid rgba(0,0,0,.045);
+      background: rgba(250,250,251,.96);
+    }
+    .dot { width: 13px; height: 13px; border-radius: 50%; }
+    .dot.red { background: #ff5f57; }
+    .dot.yellow { background: #febc2e; }
+    .dot.green { background: #28c840; }
+    .title { margin-left: 18px; font-size: 15px; font-weight: 680; letter-spacing: -.01em; }
+    .version { color: var(--muted-2); font-size: 11.5px; }
+    .scenarios {
+      margin-left: auto;
+      display: flex;
+      gap: 2px;
+      padding: 3px;
+      border-radius: 10px;
+      background: #e9eaed;
+    }
+    .scenarios button {
+      height: 29px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 8px;
+      color: #676970;
+      background: transparent;
+      cursor: pointer;
+      font-size: 11.5px;
+    }
+    .scenarios button.active {
+      color: #202124;
+      background: #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,.15);
+      font-weight: 650;
+    }
+
+    .body { height: calc(100% - 56px); display: grid; grid-template-columns: 232px 1fr; }
+    .sidebar {
+      position: relative;
+      padding: 22px 14px;
+      border-right: 1px solid var(--line);
+      background: var(--sidebar);
+    }
+    .nav {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      margin-bottom: 4px;
+      padding: 0 13px;
+      border-radius: 10px;
+      color: #28292d;
+      font-size: 14px;
+    }
+    .nav .glyph { width: 20px; text-align: center; color: #3b3d42; font-size: 17px; }
+    .nav.active { color: #075fb7; background: #dfeafb; font-weight: 650; }
+    .nav.active .glyph { color: #0872df; }
+    .sidebar-foot { position: absolute; bottom: 22px; left: 26px; color: #85878e; font-size: 11.5px; }
+
+    .main { min-width: 0; display: grid; grid-template-rows: 170px 1fr; background: #fff; }
+    .main-head {
+      padding: 39px 36px 22px;
+      border-bottom: 1px solid #f1f1f3;
+    }
+    .head-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+    .eyebrow { color: var(--blue); font-size: 11.5px; font-weight: 720; }
+    h1 { margin: 6px 0 0; font-size: 31px; line-height: 1.08; letter-spacing: -.032em; }
+    .subtitle { margin-top: 9px; color: var(--muted); font-size: 13.5px; }
+    .head-actions { display: flex; gap: 10px; margin-top: 2px; }
+    .button {
+      min-height: 36px;
+      padding: 0 14px;
+      border: 1px solid #d8d9dd;
+      border-radius: 10px;
+      color: #303136;
+      background: #fff;
+      cursor: pointer;
+      font-weight: 590;
+    }
+    .button:hover { background: #f7f7f8; }
+    .button:active { transform: scale(.985); }
+
+    .workspace { min-height: 0; display: grid; grid-template-columns: 630px 1fr; }
+    .library {
+      min-width: 0;
+      overflow: hidden;
+      border-right: 1px solid var(--line);
+      background: #fff;
+    }
+    .list-controls { padding: 17px 18px 13px; border-bottom: 1px solid #ececef; }
+    .control-label { display: flex; justify-content: space-between; align-items: end; }
+    .control-label b { font-size: 14px; }
+    .control-label small { color: #83858b; font-size: 11.5px; }
+    .search-row { display: grid; grid-template-columns: 1fr 92px; gap: 9px; margin-top: 12px; }
+    .search, .filter {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      border: 1px solid #e0e1e4;
+      border-radius: 9px;
+      color: #8c8e94;
+      background: #f7f7f8;
+      font-size: 12.5px;
+    }
+    .filter { justify-content: space-between; color: #56585e; font-weight: 600; }
+    .rows { height: calc(100% - 105px); overflow: auto; padding: 11px 10px 60px; }
+    .group-head {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 9px;
+      color: #5b5e64;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .group-head .count { margin-left: auto; color: #a0a2a7; font-weight: 500; }
+    .group-head.folder { margin-top: 10px; }
+
+    .skill-row {
+      position: relative;
+      min-height: 48px;
+      display: grid;
+      grid-template-columns: 36px minmax(0, 1fr) 20px auto 22px;
+      gap: 9px;
+      align-items: center;
+      margin: 3px 0;
+      padding: 8px 10px;
+      border: 1px solid transparent;
+      border-radius: 11px;
+      user-select: none;
+      cursor: default;
+      transition: background-color 100ms ease, box-shadow 160ms ease, opacity 100ms ease, transform 100ms ease;
+    }
+    .skill-row:hover { background: #f5f6f7; }
+    .skill-row.selected { background: var(--blue-soft); }
+    .skill-row.menu-owner { box-shadow: inset 0 0 0 1px rgba(8,121,237,.18); }
+    .skill-row.dragging {
+      opacity: .34;
+      background: #edf4fc;
+      border-color: #cfe1f5;
+    }
+    .skill-row.drop-before::before,
+    .skill-row.drop-after::after {
+      content: "";
+      position: absolute;
+      z-index: 45;
+      left: 13px;
+      right: 10px;
+      height: 2px;
+      background: var(--blue);
+    }
+    .skill-row.drop-before::before { top: -3px; }
+    .skill-row.drop-after::after { bottom: -3px; }
+    .skill-icon {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      color: #1472d7;
+      background: #deedff;
+      font-size: 14px;
+      font-weight: 720;
+    }
+    .skill-copy { min-width: 0; }
+    .skill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 660; letter-spacing: -.008em; }
+    .source-icon { display: grid; width: 20px; height: 20px; place-items: center; color: #7d8086; font-size: 15px; }
+    .source-icon.local { font-size: 14px; }
+    .storage-size { color: #7d8086; font-size: 11.5px; white-space: nowrap; }
+    .drag-handle { color: #b9bbc0; opacity: 0; font-size: 15px; letter-spacing: -3px; cursor: grab; }
+    .skill-row:hover .drag-handle, .skill-row.selected .drag-handle { opacity: 1; }
+    .skill-row:active .drag-handle { cursor: grabbing; }
+
+    .drag-ghost {
+      position: absolute;
+      z-index: 40;
+      width: 350px;
+      min-height: 48px;
+      display: grid;
+      grid-template-columns: 36px minmax(0, 1fr) 20px auto;
+      gap: 9px;
+      align-items: center;
+      padding: 8px 11px;
+      border: 1px solid rgba(8,121,237,.2);
+      border-radius: 12px;
+      background: rgba(255,255,255,.96);
+      box-shadow: 0 16px 38px rgba(26,57,91,.22), 0 2px 8px rgba(0,0,0,.09);
+      transform: rotate(-.35deg) scale(1.01);
+      pointer-events: none;
+    }
+
+    .detail { overflow: auto; padding: 34px 36px 56px; background: #fff; }
+    .detail-title { display: flex; align-items: flex-start; gap: 15px; }
+    .detail-title .skill-icon { width: 54px; height: 54px; border-radius: 14px; font-size: 19px; }
+    .detail h2 { margin: 1px 0 0; font-size: 25px; letter-spacing: -.025em; }
+    .detail .desc { margin-top: 6px; max-width: 560px; color: #73767c; font-size: 13px; line-height: 1.45; }
+    .detail-meta { display: flex; gap: 9px; margin-top: 19px; color: #7d8086; font-size: 11.5px; }
+    .detail-card { margin-top: 25px; padding: 17px; border: 1px solid #d5e4f7; border-radius: 15px; background: #f3f8ff; }
+    .detail-card b { font-size: 15px; }
+    .detail-card p { margin: 6px 0 0; color: #70747a; font-size: 12.5px; }
+    .card-actions { display: flex; gap: 8px; margin-top: 15px; }
+    .primary { color: #fff; border-color: #0872df; background: var(--blue); }
+    .primary:hover { background: var(--blue-strong); }
+    .quiet-card { margin-top: 18px; padding: 16px; border: 1px solid #e2e3e6; border-radius: 15px; }
+    .quiet-card p { margin: 6px 0 0; color: #777a81; font-size: 12px; line-height: 1.5; }
+
+    .context-menu, .submenu {
+      position: absolute;
+      z-index: 60;
+      min-width: 188px;
+      padding: 6px;
+      border: 1px solid rgba(0,0,0,.12);
+      border-radius: 12px;
+      background: rgba(251,251,252,.96);
+      backdrop-filter: blur(24px) saturate(170%);
+      box-shadow: 0 18px 46px rgba(0,0,0,.21), 0 2px 7px rgba(0,0,0,.08);
+      transform-origin: top left;
+      animation: menu-in 120ms ease-out;
+    }
+    .context-menu { left: 520px; top: 510px; }
+    .submenu { left: calc(100% - 2px); top: 4px; min-width: 166px; }
+    .menu-item {
+      position: relative;
+      width: 100%;
+      height: 31px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 0 9px;
+      border: 0;
+      border-radius: 7px;
+      color: #27282c;
+      background: transparent;
+      cursor: default;
+      text-align: left;
+      font-size: 12.5px;
+    }
+    .menu-item:hover, .menu-item.active { color: #fff; background: var(--blue); }
+    .menu-icon { width: 17px; text-align: center; color: #5b5e64; }
+    .menu-item:hover .menu-icon, .menu-item.active .menu-icon { color: #fff; }
+    .menu-arrow { margin-left: auto; }
+    .menu-check { width: 14px; color: #6d7076; }
+    .menu-separator { height: 1px; margin: 5px 6px; background: rgba(0,0,0,.10); }
+    .menu-item.destructive { color: var(--red); }
+    .menu-item.destructive:hover { color: #fff; background: var(--red); }
+
+    .scrim { position: absolute; inset: 56px 0 0 232px; z-index: 70; display: grid; place-items: center; background: rgba(24,28,35,.34); backdrop-filter: blur(2px); }
+    .dialog { width: 420px; padding: 22px; border: 1px solid rgba(255,255,255,.7); border-radius: 18px; background: rgba(253,253,254,.98); box-shadow: 0 25px 70px rgba(0,0,0,.28); }
+    .dialog h3 { margin: 0; font-size: 18px; letter-spacing: -.015em; }
+    .dialog p { margin: 9px 0 0; color: #696c72; font-size: 12.5px; line-height: 1.5; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+    .danger { color: #fff; border-color: #c62b2b; background: var(--red); }
+    .toast { position: absolute; z-index: 90; left: 50%; bottom: 27px; transform: translateX(-50%); padding: 10px 14px; border-radius: 10px; color: #fff; background: rgba(35,37,42,.92); box-shadow: 0 8px 24px rgba(0,0,0,.22); font-size: 12px; }
+
+    @keyframes menu-in { from { opacity: 0; transform: scale(.975) translateY(-3px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+      .drag-ghost { transform: none; }
+    }
+    @media (prefers-reduced-transparency: reduce) {
+      .context-menu, .submenu, .dialog { background: #fff; backdrop-filter: none; }
+    }
+    @media (prefers-contrast: more) {
+      .skill-row.drop-before::before, .skill-row.drop-after::after { height: 3px; }
+      .context-menu, .submenu, .dialog { border-color: #5f6167; }
+    }
+  </style>
+</head>
+<body>
+  <main class="window" id="app-window">
+    <header class="titlebar">
+      <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+      <span class="title">SkillBox</span><span class="version">v23 克制版交互预览</span>
+      <nav class="scenarios" aria-label="预览状态">
+        <button data-state="normal">普通列表</button>
+        <button data-state="above">拖动时：上方</button>
+        <button data-state="below">拖动时：下方</button>
+        <button data-state="menu">右键菜单</button>
+      </nav>
+    </header>
+
+    <section class="body">
+      <aside class="sidebar">
+        <div class="nav"><span class="glyph">⌂</span>总览</div>
+        <div class="nav active"><span class="glyph">▥</span>我的 Skills</div>
+        <div class="nav"><span class="glyph">⌕</span>发现 Skills</div>
+        <div class="nav"><span class="glyph">⊞</span>安装到应用</div>
+        <div class="nav"><span class="glyph">◷</span>最近操作</div>
+        <div class="nav"><span class="glyph">⚙</span>设置</div>
+        <div class="sidebar-foot">已找到 5 个应用位置</div>
+      </aside>
+
+      <section class="main">
+        <header class="main-head">
+          <div class="head-row">
+            <div><div class="eyebrow">集中管理</div><h1>我的 Skills</h1><div class="subtitle">每个 Skill 在这里保留一份，再由你决定安装到哪些应用。</div></div>
+            <div class="head-actions"><button class="button">↻&nbsp; 检查更新</button><button class="button">◉&nbsp; 连接 GitHub</button><button class="button">＋ 添加 Skill</button></div>
+          </div>
+        </header>
+
+        <section class="workspace">
+          <section class="library">
+            <div class="list-controls">
+              <div class="control-label"><b>我的分类</b><small>拖动 Skill 可整理和排序</small></div>
+              <div class="search-row"><div class="search">搜索 Skills</div><div class="filter">全部 <span>⌄</span></div></div>
+            </div>
+            <div class="rows" id="rows">
+              <div class="group-head"><span>▱</span><span>未分类</span><span class="count">5</span></div>
+
+              <article class="skill-row" draggable="true" data-id="vibe" data-name="vibe-project-foundation">
+                <span class="skill-icon">V</span>
+                <span class="skill-copy"><span class="skill-name">vibe-project-foundation</span></span>
+                <span class="source-icon github" title="GitHub 来源" aria-label="GitHub 来源">⌁</span><span class="storage-size">116 KB</span>
+                <span class="drag-handle" aria-hidden="true">••</span>
+              </article>
+
+              <article class="skill-row" draggable="true" data-id="obsidian" data-name="obsidian-feishu-sync">
+                <span class="skill-icon">O</span>
+                <span class="skill-copy"><span class="skill-name">obsidian-feishu-sync</span></span>
+                <span class="source-icon local" title="本地来源" aria-label="本地来源">▱</span><span class="storage-size">56 KB</span>
+                <span class="drag-handle" aria-hidden="true">••</span>
+              </article>
+
+              <article class="skill-row" draggable="true" data-id="zhaoji" data-name="zhaoji-writing">
+                <span class="skill-icon">Z</span>
+                <span class="skill-copy"><span class="skill-name">zhaoji-writing</span></span>
+                <span class="source-icon github" title="GitHub 来源" aria-label="GitHub 来源">⌁</span><span class="storage-size">128 KB</span>
+                <span class="drag-handle" aria-hidden="true">••</span>
+              </article>
+
+              <article class="skill-row" draggable="true" data-id="deck" data-name="html-deck-studio">
+                <span class="skill-icon">H</span>
+                <span class="skill-copy"><span class="skill-name">html-deck-studio</span></span>
+                <span class="source-icon local" title="本地来源" aria-label="本地来源">▱</span><span class="storage-size">4.8 MB</span>
+                <span class="drag-handle" aria-hidden="true">••</span>
+              </article>
+
+              <article class="skill-row selected" draggable="true" data-id="agent" data-name="agent-team">
+                <span class="skill-icon">A</span>
+                <span class="skill-copy"><span class="skill-name">agent-team</span></span>
+                <span class="source-icon github" title="GitHub 来源" aria-label="GitHub 来源">⌁</span><span class="storage-size">600 KB</span>
+                <span class="drag-handle" aria-hidden="true">••</span>
+              </article>
+
+              <div class="group-head folder"><span>▱</span><span>操盘</span><span class="count">0</span></div>
+            </div>
+          </section>
+
+          <section class="detail">
+            <div class="detail-title"><span class="skill-icon">A</span><div><h2>agent-team</h2><div class="desc">搭建低上下文多会话团队、持久交接、原子任务与独立审核。</div></div></div>
+            <div class="detail-meta"><span>GitHub 来源</span><span>·</span><span>AidenXu-1/agent-team-skill</span><span>·</span><span>600 KB</span></div>
+            <section class="detail-card"><b>安装到你的 AI 应用</b><p>已找到 5 个可安装位置。继续后会让你查看完整清单。</p><div class="card-actions"><button class="button primary">安装到全部应用</button><button class="button">选择应用</button></div></section>
+            <section class="quiet-card"><b>GitHub 来源已是最新</b><p>当前跟踪最新稳定 Release：v2.1.0。</p></section>
+            <section class="quiet-card"><b>Skill 简要说明</b><p>搭建低上下文多会话团队、持久交接、原子任务与独立审核。</p></section>
+          </section>
+        </section>
+      </section>
+    </section>
+
+    <div class="drag-ghost" id="drag-ghost" hidden>
+      <span class="skill-icon">A</span><span class="skill-copy"><span class="skill-name">agent-team</span></span><span class="source-icon github" title="GitHub 来源">⌁</span><span class="storage-size">600 KB</span>
+    </div>
+
+    <div class="context-menu" id="context-menu" hidden role="menu">
+      <button class="menu-item active" id="move-menu"><span class="menu-icon">▱</span><span>移动到</span><span class="menu-arrow">›</span></button>
+      <div class="submenu" id="submenu">
+        <button class="menu-item" data-move="未分类"><span class="menu-check">✓</span><span>未分类</span></button>
+        <button class="menu-item" data-move="操盘"><span class="menu-check"></span><span>操盘</span></button>
+      </div>
+      <div class="menu-separator"></div>
+      <button class="menu-item destructive" id="delete-item"><span class="menu-icon">⌫</span><span>删除 Skill…</span></button>
+    </div>
+
+    <div class="scrim" id="delete-dialog" hidden>
+      <div class="dialog"><h3>删除“agent-team”？</h3><p>主 Skill 会移到 macOS 废纸篓。删除完成后，你仍可以在“最近操作”中撤销。</p><div class="dialog-actions"><button class="button" id="cancel-delete">取消</button><button class="button danger" id="confirm-delete">删除 Skill</button></div></div>
+    </div>
+    <div class="toast" id="toast" hidden></div>
+  </main>
+
+  <script>
+    const app = document.getElementById('app-window');
+    const rows = document.getElementById('rows');
+    const ghost = document.getElementById('drag-ghost');
+    const menu = document.getElementById('context-menu');
+    const submenu = document.getElementById('submenu');
+    const dialog = document.getElementById('delete-dialog');
+    const toast = document.getElementById('toast');
+    let dragged = null;
+    let contextRow = null;
+    let toastTimer = null;
+
+    function row(id) { return document.querySelector(`.skill-row[data-id="${id}"]`); }
+    function clearIndicators() {
+      document.querySelectorAll('.skill-row').forEach(el => {
+        el.classList.remove('drop-before', 'drop-after', 'dragging', 'menu-owner');
+      });
+      ghost.hidden = true;
+    }
+    function showDrop(target, edge, draggedName = 'agent-team') {
+      clearIndicators();
+      row(draggedName === 'agent-team' ? 'agent' : draggedName)?.classList.add('dragging');
+      target.classList.add(edge === 'before' ? 'drop-before' : 'drop-after');
+      ghost.hidden = false;
+    }
+    function positionGhost(target, edge) {
+      const appRect = app.getBoundingClientRect();
+      const rect = target.getBoundingClientRect();
+      ghost.style.left = `${rect.left - appRect.left + 80}px`;
+      ghost.style.top = `${rect.top - appRect.top + (edge === 'before' ? -37 : 36)}px`;
+    }
+    function showToast(message) {
+      toast.textContent = message;
+      toast.hidden = false;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { toast.hidden = true; }, 2200);
+    }
+    function closeMenu() {
+      menu.hidden = true;
+      submenu.hidden = true;
+      contextRow?.classList.remove('menu-owner');
+      contextRow = null;
+    }
+    function openMenuFor(target, x, y, keepSubmenu = false) {
+      clearIndicators();
+      closeMenu();
+      contextRow = target;
+      target.classList.add('menu-owner');
+      const appRect = app.getBoundingClientRect();
+      menu.style.left = `${Math.min(x - appRect.left, app.clientWidth - 380)}px`;
+      menu.style.top = `${Math.min(y - appRect.top, app.clientHeight - 170)}px`;
+      menu.hidden = false;
+      submenu.hidden = !keepSubmenu;
+    }
+    function setState(state) {
+      clearIndicators();
+      closeMenu();
+      document.querySelectorAll('[data-state]').forEach(button => button.classList.toggle('active', button.dataset.state === state));
+      if (state === 'above') {
+        const target = row('zhaoji');
+        showDrop(target, 'before');
+        positionGhost(target, 'before');
+      } else if (state === 'below') {
+        const target = row('obsidian');
+        showDrop(target, 'after');
+        positionGhost(target, 'after');
+      } else if (state === 'menu') {
+        const target = row('agent');
+        const rect = target.getBoundingClientRect();
+        openMenuFor(target, rect.right - 8, rect.top + 18, true);
+      }
+    }
+
+    document.querySelectorAll('[data-state]').forEach(button => button.addEventListener('click', () => setState(button.dataset.state)));
+    document.querySelectorAll('.skill-row').forEach(skillRow => {
+      skillRow.addEventListener('click', () => {
+        document.querySelectorAll('.skill-row').forEach(item => item.classList.remove('selected'));
+        skillRow.classList.add('selected');
+      });
+      skillRow.addEventListener('contextmenu', event => {
+        event.preventDefault();
+        document.querySelectorAll('.skill-row').forEach(item => item.classList.remove('selected'));
+        skillRow.classList.add('selected');
+        openMenuFor(skillRow, event.clientX, event.clientY);
+      });
+      skillRow.addEventListener('dragstart', event => {
+        dragged = skillRow;
+        skillRow.classList.add('dragging');
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', skillRow.dataset.id);
+      });
+      skillRow.addEventListener('dragover', event => {
+        if (!dragged || dragged === skillRow) return;
+        event.preventDefault();
+        const rect = skillRow.getBoundingClientRect();
+        const edge = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+        document.querySelectorAll('.skill-row').forEach(item => {
+          item.classList.remove('drop-before', 'drop-after');
+        });
+        skillRow.classList.add(edge === 'before' ? 'drop-before' : 'drop-after');
+      });
+      skillRow.addEventListener('drop', event => {
+        if (!dragged || dragged === skillRow) return;
+        event.preventDefault();
+        const rect = skillRow.getBoundingClientRect();
+        const before = event.clientY < rect.top + rect.height / 2;
+        rows.insertBefore(dragged, before ? skillRow : skillRow.nextSibling);
+        const name = dragged.dataset.name;
+        dragged = null;
+        clearIndicators();
+        showToast(`已移动 ${name}`);
+      });
+      skillRow.addEventListener('dragend', () => { dragged = null; clearIndicators(); });
+    });
+
+    document.getElementById('move-menu').addEventListener('mouseenter', () => { submenu.hidden = false; });
+    document.querySelectorAll('[data-move]').forEach(item => item.addEventListener('click', () => {
+      showToast(`已移动到“${item.dataset.move}”`);
+      closeMenu();
+    }));
+    document.getElementById('delete-item').addEventListener('click', () => { closeMenu(); dialog.hidden = false; });
+    document.getElementById('cancel-delete').addEventListener('click', () => { dialog.hidden = true; });
+    document.getElementById('confirm-delete').addEventListener('click', () => { dialog.hidden = true; showToast('已移到废纸篓 · 可在最近操作中撤销'); });
+    app.addEventListener('click', event => { if (!menu.hidden && !menu.contains(event.target)) closeMenu(); });
+
+    const params = new URLSearchParams(location.search);
+    setState(params.get('state') || 'normal');
+  </script>
+</body>
+</html>
