@@ -1121,6 +1121,10 @@ enum SkillOrganizerSourceIcon: Equatable, Sendable {
 enum SkillOrganizerRowPresentation {
     static let rowSpacing: CGFloat = 5
 
+    static func visibleFolders(orderedFolders: [SkillFolder]) -> [SkillFolder] {
+        orderedFolders
+    }
+
     static func sourceLabel(for sourceKind: SkillSourceKind) -> String {
         switch sourceKind {
         case .github: "GitHub 来源"
@@ -1401,7 +1405,9 @@ private struct SkillOrganizerSidebar: View {
     @State private var dragSession = SkillOrganizerDragSession()
     @State private var rowFrames: [UUID: CGRect] = [:]
 
-    private var folders: [SkillFolder] { model.orderedFolders().filter { !filteredSkills(in: $0.id).isEmpty } }
+    private var folders: [SkillFolder] {
+        SkillOrganizerRowPresentation.visibleFolders(orderedFolders: model.orderedFolders())
+    }
     private var uncategorized: [SkillRecord] { displayedSkills(in: nil) }
     private var hasResults: Bool { !uncategorized.isEmpty || !folders.isEmpty }
     private var visibleSkillIDs: [UUID] {

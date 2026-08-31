@@ -129,6 +129,17 @@ struct SkillOrganizerInteractionTests {
         ))
     }
 
+    @Test("Saved folders remain visible even when they contain no matching Skills")
+    func savedEmptyFoldersRemainVisible() {
+        let emptyFolder = SkillFolder(name: "操盘", sortIndex: 0)
+
+        let visibleFolders = SkillOrganizerRowPresentation.visibleFolders(
+            orderedFolders: [emptyFolder]
+        )
+
+        #expect(visibleFolders == [emptyFolder])
+    }
+
     @Test("Completing a drag returns one move and clears every transient marker")
     func completingDragClearsTheSession() {
         let first = UUID()
