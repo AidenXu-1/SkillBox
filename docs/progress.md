@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-01
+
+- ✅ 将已经完成真实拖动验收的本地工作区冻结为 `v0.2.0 (Build 3)`，发布提交为 `1b43cad89933181cf1b8cba39cc9ef697ca79faa`。提交包含「我的 Skills」单行来源与大小、同组拖动占位／让位、独立落点线、右键移动与可恢复删除，以及相应测试和 v22–v26 视觉依据；仓库内的个人绝对路径已改为通用 `~/Applications` 表述。
+- ✅ 最终发布门重新发现并执行 277 项自动化测试，全部通过；Release arm64 构建、ad-hoc Hardened Runtime 严格签名、包内隐私、应用图标系统回读、DMG 系统完整性、来源清单和隔离属性模拟均通过。隔离副本仍按正式策略得到 `manual-approval-required`，没有冒充 Developer ID 或 Apple 公证包。
+- ✅ GitHub `master`、`v0.2.0` 标签和 Latest Release 均回读到提交 `1b43cad…`；Release 为公开、非草稿、非预发布，包含 `SkillBox-0.2.0.dmg`、`.sha256` 与 `-release.json`。从 GitHub 重新下载后的 DMG SHA-256 为 `7b9a2ea76c62c1828f338716217853a3061f3cbd0cd5d4f5f1a75375e97e8bed`，清单 SHA-256 为 `508e2124f0394e46c8acc3d08ed246f9d23d39fe4d3ce3bedb67f91ebed8dc97`，二者均与线上摘要和校验文件一致。
+- ✅ 只读挂载重新下载的 GitHub DMG 后，包内 App 为 `0.2.0 (3)`，可执行文件 SHA-256 为 `7392dea51b3e2f2a32fbb103ba1858c5cf1d4faebe5a10e7fdd7ef1ba7522def`，严格签名和发布隐私门再次通过。该 GitHub 下载副本已复制到暂存路径并二次校验，再可恢复切换到 `~/Applications/SkillBox.app`；旧 `0.1.0 (2)` 整包保留为 `~/Applications/SkillBox-before-v0.2.0-20260901-004221.app`。
+- ✅ 新正式版从 `~/Applications/SkillBox.app` 启动成功，进程路径准确；真实窗口回读为「我的 Skills」，显示 5 个 Skill、GitHub／本地来源、中央库大小与拖动整理提示。安装没有改动 `Application Support` 中的中央 Skill、排序数据或任何 AI 应用目录。
+- 📌 三端产品运行内容已经对齐到 v0.2.0。仍未把“另一台干净 Mac 通过浏览器下载并走一次隔离后的‘仍要打开’”冒充已验收；这属于面向陌生用户安装体验的独立门槛，不影响本机正式版、GitHub 附件和来源提交的一致性。
+
 ## 2026-08-30
 
 - ✅ 用户明确要求清理过期版本并强调不得误删后，先对个人 Applications 目录中所有 `SkillBox*.app` 逐个核对名称、容量、修改时间、版本号、可执行文件 SHA-256 与签名；同时检查 `/Applications` 和正在运行的进程路径。正式版只有 `~/Applications/SkillBox.app`，未发现系统 Applications 中的另一份或指向历史版的链接。
