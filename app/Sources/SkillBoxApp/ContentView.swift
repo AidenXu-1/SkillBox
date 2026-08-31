@@ -1073,6 +1073,7 @@ private struct LibraryView: View {
                     SkillOrganizerSidebar(
                         model: model,
                         selectedSkillID: $selectedSkillID,
+                        showSyncPreview: $showSyncPreview,
                         searchText: $searchText,
                         filter: $filter
                     )
@@ -1107,18 +1108,311 @@ private enum SkillListFilter: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum SkillOrganizerSourceTint: Equatable, Sendable {
+    case blue
+    case secondary
+}
+
+enum SkillOrganizerSourceIcon: Equatable, Sendable {
+    case githubMark
+    case system(name: String, tint: SkillOrganizerSourceTint)
+}
+
+enum SkillOrganizerRowPresentation {
+    static let rowSpacing: CGFloat = 5
+
+    static func sourceLabel(for sourceKind: SkillSourceKind) -> String {
+        switch sourceKind {
+        case .github: "GitHub 来源"
+        case .localFolder: "本地来源"
+        case .agentDirectory: "应用导入"
+        }
+    }
+
+    static func sourceIcon(for sourceKind: SkillSourceKind) -> SkillOrganizerSourceIcon {
+        switch sourceKind {
+        case .github: .githubMark
+        case .localFolder: .system(name: "folder.fill", tint: .blue)
+        case .agentDirectory: .system(name: "square.and.arrow.down.fill", tint: .secondary)
+        }
+    }
+
+    static func showsInsertionLine(
+        session: SkillOrganizerDragSession,
+        rowID: UUID
+    ) -> Bool {
+        session.movingSkillID == rowID && session.destination != nil
+    }
+
+    static func insertionLineY(
+        session: SkillOrganizerDragSession,
+        movingRowFrame: CGRect?
+    ) -> CGFloat? {
+        guard session.isActive,
+              session.destination != nil,
+              let movingRowFrame
+        else { return nil }
+        return movingRowFrame.maxY + 3
+    }
+
+    static func disposition(
+        session: SkillOrganizerDragSession,
+        rowID: UUID
+    ) -> SkillOrganizerRowDisposition {
+        guard session.isActive, session.movingSkillID == rowID else { return .card }
+        return .placeholder
+    }
+
+    static func floatingSkillID(session: SkillOrganizerDragSession) -> UUID? {
+        guard session.isActive else { return nil }
+        return session.movingSkillID
+    }
+
+    static func stableListOrder(
+        session: SkillOrganizerDragSession,
+        fallback: [UUID]
+    ) -> [UUID] {
+        guard session.isActive, !session.originOrder.isEmpty else { return fallback }
+        return session.originOrder
+    }
+
+    static func previewSlotOffset(
+        session: SkillOrganizerDragSession,
+        rowID: UUID
+    ) -> Int {
+        guard session.isActive,
+              session.movingSkillID != rowID,
+              let originIndex = session.originOrder.firstIndex(of: rowID),
+              let previewIndex = session.previewOrder.firstIndex(of: rowID)
+        else { return 0 }
+        return previewIndex - originIndex
+    }
+
+    static func insertionSlotID(session: SkillOrganizerDragSession) -> UUID? {
+        guard session.isActive,
+              session.destination != nil,
+              let movingSkillID = session.movingSkillID,
+              let previewIndex = session.previewOrder.firstIndex(of: movingSkillID),
+              session.originOrder.indices.contains(previewIndex)
+        else { return nil }
+        return session.originOrder[previewIndex]
+    }
+}
+
+enum SkillOrganizerRowDisposition: Equatable, Sendable {
+    case card
+    case placeholder
+}
+
+enum SkillOrganizerDropEdge: Equatable, Sendable {
+    case before
+    case after
+}
+
+struct SkillOrganizerDropDestination: Equatable, Sendable {
+    let edge: SkillOrganizerDropEdge
+    let targetSkillID: UUID
+    let accessibilityLabel: String
+}
+
+enum SkillOrganizerGroup: Equatable, Sendable {
+    case uncategorized
+    case folder(UUID)
+
+    init(folderID: UUID?) {
+        if let folderID { self = .folder(folderID) }
+        else { self = .uncategorized }
+    }
+
+    var folderID: UUID? {
+        if case let .folder(id) = self { return id }
+        return nil
+    }
+}
+
+struct SkillOrganizerMoveIntent: Equatable, Sendable {
+    let movingSkillID: UUID
+    let group: SkillOrganizerGroup
+    let beforeSkillID: UUID?
+}
+
+struct SkillOrganizerDragSession: Equatable, Sendable {
+    private(set) var movingSkillID: UUID?
+    private(set) var group: SkillOrganizerGroup?
+    private(set) var originOrder: [UUID] = []
+    private(set) var previewOrder: [UUID] = []
+    private(set) var destination: SkillOrganizerDropDestination?
+    private(set) var grabOffsetY: CGFloat = 0
+    private(set) var pointerY: CGFloat = 0
+
+    var isActive: Bool { movingSkillID != nil }
+
+    mutating func begin(
+        skillID: UUID,
+        group: SkillOrganizerGroup,
+        orderedSkillIDs: [UUID],
+        grabOffsetY: CGFloat,
+        pointerY: CGFloat
+    ) {
+        movingSkillID = skillID
+        self.group = group
+        originOrder = orderedSkillIDs
+        previewOrder = orderedSkillIDs
+        destination = nil
+        self.grabOffsetY = max(grabOffsetY, 0)
+        self.pointerY = pointerY
+    }
+
+    mutating func update(destination: SkillOrganizerDropDestination?, pointerY: CGFloat) {
+        guard let movingSkillID else { return }
+        self.destination = destination
+        self.pointerY = pointerY
+        guard let destination else {
+            previewOrder = originOrder
+            return
+        }
+
+        let beforeSkillID = SkillOrganizerDropPolicy.beforeSkillID(
+            for: destination,
+            movingSkillID: movingSkillID,
+            orderedSkillIDs: originOrder
+        )
+        var remaining = originOrder.filter { $0 != movingSkillID }
+        if let beforeSkillID, let index = remaining.firstIndex(of: beforeSkillID) {
+            remaining.insert(movingSkillID, at: index)
+        } else {
+            remaining.append(movingSkillID)
+        }
+        previewOrder = remaining
+    }
+
+    mutating func finish() -> SkillOrganizerMoveIntent? {
+        guard let movingSkillID, let group, let destination else {
+            cancel()
+            return nil
+        }
+        let intent = SkillOrganizerMoveIntent(
+            movingSkillID: movingSkillID,
+            group: group,
+            beforeSkillID: SkillOrganizerDropPolicy.beforeSkillID(
+                for: destination,
+                movingSkillID: movingSkillID,
+                orderedSkillIDs: originOrder
+            )
+        )
+        cancel()
+        return intent
+    }
+
+    mutating func cancel() {
+        movingSkillID = nil
+        group = nil
+        originOrder = []
+        previewOrder = []
+        destination = nil
+        grabOffsetY = 0
+        pointerY = 0
+    }
+}
+
+enum SkillOrganizerDropPolicy {
+    static func reorderBounds(for rowFrames: [CGRect]) -> CGRect? {
+        rowFrames.reduce(nil) { bounds, frame in
+            guard let bounds else { return frame }
+            return bounds.union(frame)
+        }
+    }
+
+    static func contains(_ location: CGPoint, in rowFrames: [CGRect]) -> Bool {
+        reorderBounds(for: rowFrames)?.contains(location) == true
+    }
+
+    static func resolveValidDestination(
+        locationY: CGFloat,
+        rowHeight: CGFloat,
+        movingSkillID: UUID?,
+        targetSkillID: UUID,
+        targetName: String
+    ) -> SkillOrganizerDropDestination? {
+        guard movingSkillID != targetSkillID else { return nil }
+        return resolve(
+            locationY: locationY,
+            rowHeight: rowHeight,
+            targetSkillID: targetSkillID,
+            targetName: targetName
+        )
+    }
+
+    static func resolve(
+        locationY: CGFloat,
+        rowHeight: CGFloat,
+        targetSkillID: UUID,
+        targetName: String
+    ) -> SkillOrganizerDropDestination {
+        let isBefore = locationY < max(rowHeight, 0) / 2
+        return SkillOrganizerDropDestination(
+            edge: isBefore ? .before : .after,
+            targetSkillID: targetSkillID,
+            accessibilityLabel: "放到 \(targetName) \(isBefore ? "上方" : "下方")"
+        )
+    }
+
+    static func beforeSkillID(
+        for destination: SkillOrganizerDropDestination,
+        movingSkillID: UUID,
+        orderedSkillIDs: [UUID]
+    ) -> UUID? {
+        let remaining = orderedSkillIDs.filter { $0 != movingSkillID }
+        guard let targetIndex = remaining.firstIndex(of: destination.targetSkillID) else {
+            return nil
+        }
+        switch destination.edge {
+        case .before:
+            return destination.targetSkillID
+        case .after:
+            let nextIndex = remaining.index(after: targetIndex)
+            return nextIndex < remaining.endIndex ? remaining[nextIndex] : nil
+        }
+    }
+}
+
+private enum SkillOrganizerCoordinateSpace {
+    static let name = "skill-organizer-list"
+}
+
+private struct SkillOrganizerRowFramesPreferenceKey: PreferenceKey {
+    static let defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+    }
+}
+
 private struct SkillOrganizerSidebar: View {
     @ObservedObject var model: AppModel
     @Binding var selectedSkillID: UUID?
+    @Binding var showSyncPreview: Bool
     @Binding var searchText: String
     @Binding var filter: SkillListFilter
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var collapsedFolderIDs: Set<UUID> = []
     @State private var showNewFolder = false
     @State private var newFolderName = ""
+    @State private var dragSession = SkillOrganizerDragSession()
+    @State private var rowFrames: [UUID: CGRect] = [:]
 
     private var folders: [SkillFolder] { model.orderedFolders().filter { !filteredSkills(in: $0.id).isEmpty } }
-    private var uncategorized: [SkillRecord] { filteredSkills(in: nil) }
+    private var uncategorized: [SkillRecord] { displayedSkills(in: nil) }
     private var hasResults: Bool { !uncategorized.isEmpty || !folders.isEmpty }
+    private var visibleSkillIDs: [UUID] {
+        displayedSkills(in: nil).map(\.id) + folders.flatMap { displayedSkills(in: $0.id).map(\.id) }
+    }
+    private var activeDragRowFrames: [CGRect] {
+        dragSession.originOrder.compactMap { rowFrames[$0] }
+    }
+    private var activeDragBounds: CGRect? {
+        SkillOrganizerDropPolicy.reorderBounds(for: activeDragRowFrames)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1154,10 +1448,11 @@ private struct SkillOrganizerSidebar: View {
             Divider()
             ScrollView {
                 if hasResults {
-                    LazyVStack(alignment: .leading, spacing: 5) {
+                    LazyVStack(alignment: .leading, spacing: SkillOrganizerRowPresentation.rowSpacing) {
                     OrganizerGroupHeader(title: "未分类", count: uncategorized.count, systemImage: "tray")
                         .dropDestination(for: String.self) { items, _ in
                             guard let skillID = firstSkillID(in: items) else { return false }
+                            cancelSkillDrag()
                             Task { await model.moveSkill(skillID, to: nil) }
                             return true
                         }
@@ -1166,7 +1461,13 @@ private struct SkillOrganizerSidebar: View {
                             model: model,
                             skill: skill,
                             folderID: nil,
-                            selectedSkillID: $selectedSkillID
+                            selectedSkillID: $selectedSkillID,
+                            showSyncPreview: $showSyncPreview,
+                            dragSession: dragSession,
+                            dragOffsetY: dragOffsetY(for: skill.id),
+                            previewOffsetY: previewOffsetY(for: skill.id),
+                            onDragChanged: { updateSkillDrag(skill, folderID: nil, value: $0) },
+                            onDragEnded: { finishSkillDrag(skill, folderID: nil, value: $0) }
                         )
                     }
                     ForEach(folders) { folder in
@@ -1178,21 +1479,34 @@ private struct SkillOrganizerSidebar: View {
                             onToggle: {
                                 if collapsedFolderIDs.contains(folder.id) { collapsedFolderIDs.remove(folder.id) }
                                 else { collapsedFolderIDs.insert(folder.id) }
+                            },
+                            onDropComplete: {
+                                cancelSkillDrag()
                             }
                         )
                         if !collapsedFolderIDs.contains(folder.id) {
-                            ForEach(filteredSkills(in: folder.id)) { skill in
+                            ForEach(displayedSkills(in: folder.id)) { skill in
                                 SkillOrganizerRow(
                                     model: model,
                                     skill: skill,
                                     folderID: folder.id,
-                                    selectedSkillID: $selectedSkillID
+                                    selectedSkillID: $selectedSkillID,
+                                    showSyncPreview: $showSyncPreview,
+                                    dragSession: dragSession,
+                                    dragOffsetY: dragOffsetY(for: skill.id),
+                                    previewOffsetY: previewOffsetY(for: skill.id),
+                                    onDragChanged: { updateSkillDrag(skill, folderID: folder.id, value: $0) },
+                                    onDragEnded: { finishSkillDrag(skill, folderID: folder.id, value: $0) }
                                 )
                             }
                         }
                     }
                     }
                     .padding(8)
+                    .animation(
+                        reduceMotion ? nil : .easeOut(duration: 0.18),
+                        value: dragSession.previewOrder
+                    )
                 } else {
                     ContentUnavailableView(
                         "没有符合条件的 Skill",
@@ -1202,8 +1516,39 @@ private struct SkillOrganizerSidebar: View {
                     .padding(.top, 44)
                 }
             }
+            .coordinateSpace(name: SkillOrganizerCoordinateSpace.name)
+            .overlay(alignment: .topLeading) {
+                if let insertionSlotID = SkillOrganizerRowPresentation.insertionSlotID(
+                    session: dragSession
+                ),
+                   let lineY = SkillOrganizerRowPresentation.insertionLineY(
+                       session: dragSession,
+                       movingRowFrame: rowFrames[insertionSlotID]
+                   ), let destination = dragSession.destination,
+                   let activeDragBounds {
+                    SkillOrganizerDropIndicator(destination: destination)
+                        .frame(width: activeDragBounds.width)
+                        .offset(x: activeDragBounds.minX, y: lineY)
+                        .zIndex(100)
+                }
+            }
+            .onPreferenceChange(SkillOrganizerRowFramesPreferenceKey.self) { rowFrames = $0 }
         }
         .background(.quaternary.opacity(0.12))
+        .onExitCommand { cancelSkillDrag() }
+        .onDisappear { cancelSkillDrag() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
+            cancelSkillDrag()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            cancelSkillDrag()
+        }
+        .onChange(of: visibleSkillIDs) { _, skillIDs in
+            guard let movingSkillID = dragSession.movingSkillID,
+                  !skillIDs.contains(movingSkillID)
+            else { return }
+            cancelSkillDrag()
+        }
         .alert("新建文件夹", isPresented: $showNewFolder) {
             TextField("例如：写作、开发、运营", text: $newFolderName)
             Button("取消", role: .cancel) {}
@@ -1213,6 +1558,113 @@ private struct SkillOrganizerSidebar: View {
         } message: {
             Text("文件夹只用于整理列表，不会移动或修改 Skill 原件。")
         }
+    }
+
+    private func displayedSkills(in folderID: UUID?) -> [SkillRecord] {
+        let skills = filteredSkills(in: folderID)
+        guard dragSession.group == SkillOrganizerGroup(folderID: folderID),
+              !dragSession.previewOrder.isEmpty
+        else { return skills }
+
+        let byID = Dictionary(uniqueKeysWithValues: skills.map { ($0.id, $0) })
+        let stableOrder = SkillOrganizerRowPresentation.stableListOrder(
+            session: dragSession,
+            fallback: skills.map(\.id)
+        )
+        let ordered = stableOrder.compactMap { byID[$0] }
+        let orderedIDs = Set(ordered.map(\.id))
+        return ordered + skills.filter { !orderedIDs.contains($0.id) }
+    }
+
+    private func updateSkillDrag(
+        _ skill: SkillRecord,
+        folderID: UUID?,
+        value: DragGesture.Value
+    ) {
+        let group = SkillOrganizerGroup(folderID: folderID)
+        if !dragSession.isActive {
+            let frame = rowFrames[skill.id]
+            selectedSkillID = skill.id
+            dragSession.begin(
+                skillID: skill.id,
+                group: group,
+                orderedSkillIDs: filteredSkills(in: folderID).map(\.id),
+                grabOffsetY: value.startLocation.y - (frame?.minY ?? value.startLocation.y),
+                pointerY: value.location.y
+            )
+        }
+        guard dragSession.movingSkillID == skill.id, dragSession.group == group else { return }
+        let destination = dropDestination(at: value.location)
+        dragSession.update(destination: destination, pointerY: value.location.y)
+    }
+
+    private func finishSkillDrag(
+        _ skill: SkillRecord,
+        folderID: UUID?,
+        value: DragGesture.Value
+    ) {
+        updateSkillDrag(skill, folderID: folderID, value: value)
+        guard let intent = dragSession.finish() else { return }
+        Task {
+            await model.moveSkill(
+                intent.movingSkillID,
+                to: intent.group.folderID,
+                before: intent.beforeSkillID
+            )
+        }
+    }
+
+    private func cancelSkillDrag() {
+        guard dragSession.isActive else { return }
+        dragSession.cancel()
+    }
+
+    private func dragOffsetY(for skillID: UUID) -> CGFloat {
+        guard dragSession.movingSkillID == skillID,
+              let frame = rowFrames[skillID]
+        else { return 0 }
+        return dragSession.pointerY - frame.minY - dragSession.grabOffsetY
+    }
+
+    private func previewOffsetY(for skillID: UUID) -> CGFloat {
+        let slotOffset = SkillOrganizerRowPresentation.previewSlotOffset(
+            session: dragSession,
+            rowID: skillID
+        )
+        guard slotOffset != 0,
+              let rowHeight = rowFrames[skillID]?.height ?? dragSession.movingSkillID.flatMap({ rowFrames[$0]?.height })
+        else { return 0 }
+        return CGFloat(slotOffset) * (rowHeight + SkillOrganizerRowPresentation.rowSpacing)
+    }
+
+    private func dropDestination(at location: CGPoint) -> SkillOrganizerDropDestination? {
+        guard dragSession.isActive,
+              SkillOrganizerDropPolicy.contains(location, in: activeDragRowFrames),
+              let movingSkillID = dragSession.movingSkillID
+        else { return nil }
+
+        let candidates = dragSession.originOrder.compactMap { skillID -> (UUID, CGRect)? in
+            guard skillID != movingSkillID, let frame = rowFrames[skillID] else { return nil }
+            return (skillID, frame)
+        }.sorted { $0.1.midY < $1.1.midY }
+        guard let last = candidates.last else { return nil }
+
+        if let next = candidates.first(where: { location.y < $0.1.midY }) {
+            return namedDestination(edge: .before, targetSkillID: next.0)
+        }
+        return namedDestination(edge: .after, targetSkillID: last.0)
+    }
+
+    private func namedDestination(
+        edge: SkillOrganizerDropEdge,
+        targetSkillID: UUID
+    ) -> SkillOrganizerDropDestination {
+        let name = model.snapshot.skills.first(where: { $0.id == targetSkillID })?.displayName ?? "Skill"
+        return SkillOrganizerDropDestination(
+            edge: edge,
+            targetSkillID: targetSkillID,
+            accessibilityLabel: "放到 \(name) \(edge == .before ? "上方" : "下方")"
+        )
     }
 
     private func filteredSkills(in folderID: UUID?) -> [SkillRecord] {
@@ -1273,6 +1725,7 @@ private struct OrganizerFolderHeader: View {
     let count: Int
     let isCollapsed: Bool
     let onToggle: () -> Void
+    let onDropComplete: () -> Void
     @State private var isHovered = false
     @State private var showRename = false
     @State private var showDelete = false
@@ -1320,6 +1773,7 @@ private struct OrganizerFolderHeader: View {
             case let .skill(skillID): Task { await model.moveSkill(skillID, to: folder.id) }
             case let .folder(folderID): Task { await model.moveFolder(folderID, before: folder.id) }
             }
+            onDropComplete()
             return true
         }
         .alert("重命名文件夹", isPresented: $showRename) {
@@ -1337,15 +1791,128 @@ private struct OrganizerFolderHeader: View {
 }
 
 private struct SkillOrganizerRow: View {
+    private enum StorageState {
+        case loading
+        case available(Int64)
+        case unavailable
+    }
+
     @ObservedObject var model: AppModel
     let skill: SkillRecord
     let folderID: UUID?
     @Binding var selectedSkillID: UUID?
+    @Binding var showSyncPreview: Bool
+    let dragSession: SkillOrganizerDragSession
+    let dragOffsetY: CGFloat
+    let previewOffsetY: CGFloat
+    let onDragChanged: (DragGesture.Value) -> Void
+    let onDragEnded: (DragGesture.Value) -> Void
     @State private var isHovered = false
+    @State private var storageState: StorageState = .loading
+    @State private var showDeleteConfirmation = false
+    @State private var showRemovalOptions = false
+    @State private var showSyncPreviewAfterRemovalOptions = false
 
     private var isSelected: Bool { selectedSkillID == skill.id }
+    private var disposition: SkillOrganizerRowDisposition {
+        SkillOrganizerRowPresentation.disposition(session: dragSession, rowID: skill.id)
+    }
+    private var isDragging: Bool {
+        SkillOrganizerRowPresentation.floatingSkillID(session: dragSession) == skill.id
+    }
 
     var body: some View {
+        ZStack {
+            rowCard
+                .opacity(disposition == .placeholder ? 0 : 1)
+                .offset(y: previewOffsetY)
+                .accessibilityHidden(disposition == .placeholder)
+            if isDragging {
+                rowCard
+                    .shadow(color: Color.black.opacity(0.13), radius: 9, y: 4)
+                    .offset(y: dragOffsetY)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+        .zIndex(isDragging ? 10 : 0)
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: SkillOrganizerRowFramesPreferenceKey.self,
+                    value: [skill.id: proxy.frame(in: .named(SkillOrganizerCoordinateSpace.name))]
+                )
+            }
+        }
+        .onHover { isHovered = $0 }
+        .simultaneousGesture(
+            DragGesture(
+                minimumDistance: 8,
+                coordinateSpace: .named(SkillOrganizerCoordinateSpace.name)
+            )
+            .onChanged(onDragChanged)
+            .onEnded(onDragEnded)
+        )
+        .contextMenu {
+            Menu("移动到") {
+                Button("未分类") { moveSkill(to: nil) }
+                    .disabled(folderID == nil)
+                ForEach(model.orderedFolders()) { folder in
+                    Button(folder.name) { moveSkill(to: folder.id) }
+                        .disabled(folder.id == folderID)
+                }
+            }
+            Divider()
+            Button("删除 Skill…", role: .destructive) {
+                if model.hasManagedInstallation(for: skill) {
+                    showRemovalOptions = true
+                } else {
+                    showDeleteConfirmation = true
+                }
+            }
+        }
+        .task(id: skill.fingerprint) {
+            storageState = .loading
+            if let byteCount = await model.skillStorageSize(skill) {
+                storageState = .available(byteCount)
+            } else {
+                storageState = .unavailable
+            }
+        }
+        .confirmationDialog(
+            "删除“\(skill.displayName)”？",
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("移到废纸篓", role: .destructive) {
+                Task {
+                    if await model.deleteSkill(skill) { finishDeletion() }
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("中央内容会移到 macOS 废纸篓，可以立即撤销；清空废纸篓后将无法恢复。其他应用中未由 SkillBox 管理的文件不会被改动。")
+        }
+        .sheet(isPresented: $showRemovalOptions, onDismiss: {
+            guard showSyncPreviewAfterRemovalOptions else { return }
+            showSyncPreviewAfterRemovalOptions = false
+            showSyncPreview = true
+        }) {
+            SkillRemovalOptionsView(
+                model: model,
+                skill: skill,
+                isPresented: $showRemovalOptions,
+                onDeleted: finishDeletion,
+                onPreparedUninstall: {
+                    showSyncPreviewAfterRemovalOptions = true
+                    showRemovalOptions = false
+                }
+            )
+        }
+        .help("拖动调整顺序，或右键移动和删除")
+    }
+
+    private var rowCard: some View {
         Button { selectedSkillID = skill.id } label: {
             HStack(spacing: 9) {
                 Text(skillInitial)
@@ -1353,36 +1920,18 @@ private struct SkillOrganizerRow: View {
                     .foregroundStyle(.blue)
                     .frame(width: 26, height: 26)
                     .background(.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 7))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(skill.displayName)
-                        .font(.callout.weight(.medium))
-                        .lineLimit(1)
-                    Text(skill.description)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                if model.shouldShowRiskAttention(for: skill) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(skill.riskReport.isBlocked ? Color.red : Color.orange)
-                        .help("安装前有内容需要确认")
-                }
-                let status = model.snapshot.sourceStates.first(where: { $0.skillID == skill.id })?.status
-                let localStatus = model.snapshot.localSourceStates.first(where: { $0.skillID == skill.id })?.status
-                if status == .updateAvailable || status == .releasePackageAvailable || localStatus == .updateAvailable {
-                    Text("有更新")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.blue)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.blue.opacity(0.10), in: Capsule())
-                }
-                Image(systemName: "line.3.horizontal")
+                Text(skill.displayName)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                SkillOrganizerSourceIconView(sourceKind: skill.source.kind)
+                    .frame(width: 18, height: 18)
+                Text(storageText)
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .opacity(isHovered ? 1 : 0)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(width: 68, alignment: .trailing)
+                    .help("大小只计算 SkillBox 中央库里的这份内容")
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -1390,28 +1939,10 @@ private struct SkillOrganizerRow: View {
         }
         .buttonStyle(.plain)
         .background(rowBackground, in: RoundedRectangle(cornerRadius: 8))
-        .onHover { isHovered = $0 }
-        .draggable("skill:\(skill.id.uuidString)")
-        .dropDestination(for: String.self) { items, _ in
-            guard let movingID = items.compactMap(OrganizerDragItem.init).compactMap(\.skillID).first,
-                  movingID != skill.id
-            else { return false }
-            Task { await model.moveSkill(movingID, to: folderID, before: skill.id) }
-            return true
-        }
-        .contextMenu {
-            Menu("移动到") {
-                Button("未分类") { Task { await model.moveSkill(skill.id, to: nil) } }
-                ForEach(model.orderedFolders()) { folder in
-                    Button(folder.name) { Task { await model.moveSkill(skill.id, to: folder.id) } }
-                }
-            }
-        }
-        .help("拖动调整顺序，或拖到文件夹中分类")
     }
 
     private var rowBackground: Color {
-        if isSelected { return .accentColor.opacity(0.16) }
+        if isDragging || isSelected { return .accentColor.opacity(0.16) }
         if isHovered { return .primary.opacity(0.055) }
         return .clear
     }
@@ -1420,9 +1951,91 @@ private struct SkillOrganizerRow: View {
         let name = skill.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.first.map { String($0).uppercased() } ?? "S"
     }
+
+    private var storageText: String {
+        switch storageState {
+        case .loading:
+            "正在计算…"
+        case let .available(byteCount):
+            ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file)
+        case .unavailable:
+            "大小不可用"
+        }
+    }
+
+    private func finishDeletion() {
+        if selectedSkillID == skill.id {
+            selectedSkillID = model.snapshot.skills.first?.id
+        }
+    }
+
+    private func moveSkill(to destinationFolderID: UUID?) {
+        Task { await model.moveSkill(skill.id, to: destinationFolderID) }
+    }
 }
 
-private enum OrganizerDragItem {
+private struct SkillOrganizerSourceIconView: View {
+    let sourceKind: SkillSourceKind
+
+    var body: some View {
+        Group {
+            switch SkillOrganizerRowPresentation.sourceIcon(for: sourceKind) {
+            case .githubMark:
+                GitHubSourceMark()
+                    .foregroundStyle(.primary)
+            case let .system(name, tint):
+                Image(systemName: name)
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(tint == .blue ? Color.blue : Color.secondary)
+            }
+        }
+        .padding(1)
+        .help(SkillOrganizerRowPresentation.sourceLabel(for: sourceKind))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(SkillOrganizerRowPresentation.sourceLabel(for: sourceKind))
+    }
+}
+
+private struct GitHubSourceMark: View {
+    var body: some View {
+        Image(nsImage: Self.image)
+            .resizable()
+            .renderingMode(.template)
+            .scaledToFit()
+            .accessibilityHidden(true)
+    }
+
+    private static let image: NSImage = {
+        let svg = #"""
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+          <path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.71.4.08.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.22 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.2-3.64-.9-3.64-4 0-.88.31-1.61.82-2.18-.08-.2-.36-1.03.08-2.15 0 0 .67-.22 2.2.83A7.4 7.4 0 0 1 8 4.11c.68 0 1.36.09 2 .27 1.53-1.05 2.2-.83 2.2-.83.44 1.12.16 1.95.08 2.15.51.57.82 1.29.82 2.18 0 3.11-1.87 3.8-3.65 4 .29.25.54.73.54 1.49 0 1.08-.01 1.94-.01 2.21 0 .21.15.46.55.38A8.02 8.02 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z" fill="black"/>
+        </svg>
+        """#
+        let image = NSImage(data: Data(svg.utf8)) ?? NSImage(
+            systemSymbolName: "chevron.left.forwardslash.chevron.right",
+            accessibilityDescription: nil
+        )!
+        image.isTemplate = true
+        return image
+    }()
+}
+
+private struct SkillOrganizerDropIndicator: View {
+    let destination: SkillOrganizerDropDestination
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.accentColor)
+            .frame(height: 2)
+            .padding(.horizontal, 2)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(destination.accessibilityLabel)
+            .allowsHitTesting(false)
+    }
+}
+
+private enum OrganizerDragItem: Sendable {
     case skill(UUID)
     case folder(UUID)
 

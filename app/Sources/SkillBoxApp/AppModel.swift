@@ -2826,6 +2826,13 @@ final class AppModel: ObservableObject {
 
     func contentURL(for skill: SkillRecord) async -> URL { await store.contentURL(for: skill) }
 
+    func skillStorageSize(_ skill: SkillRecord) async -> Int64? {
+        let url = await store.contentURL(for: skill)
+        return await Task.detached(priority: .utility) {
+            try? SkillStorageMetrics.byteCount(at: url)
+        }.value
+    }
+
     func skillMarkdown(_ skill: SkillRecord) async -> String {
         let url = await store.contentURL(for: skill).appendingPathComponent("SKILL.md")
         return await Task.detached(priority: .userInitiated) {

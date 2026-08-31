@@ -5,12 +5,53 @@
 
 ---
 
+## 2026-08-30
+
+- ✅ 用户明确要求清理过期版本并强调不得误删后，先对个人 Applications 目录中所有 `SkillBox*.app` 逐个核对名称、容量、修改时间、版本号、可执行文件 SHA-256 与签名；同时检查 `/Applications` 和正在运行的进程路径。正式版只有 `~/Applications/SkillBox.app`，未发现系统 Applications 中的另一份或指向历史版的链接。
+- ✅ 只将 6 个精确命名的历史包移入 macOS 废纸篓：`SkillBox-backup-iconfix-20260821-115857.app`、`SkillBox-before-placeholder-20260829-073300.app`、`SkillBox-before-reorder-runtime-20260829-082414.app`、`SkillBox-before-v26-20260829-001559.app`、`SkillBox.backup-20260828-014342.app`、`SkillBox.backup-20260828-224135.app`。未清空废纸篓，6 个名称均已通过 Finder 回读，仍可恢复。
+- ✅ 清理后 `~/Applications` 中只剩正式 `SkillBox.app`；其可执行文件 SHA-256 仍为 `acc6cb11342458d98c384149c076f8a01c269e83753f979c3e8694aeac17ace9`，严格签名和 Designated Requirement 复核通过。项目源码、构建目录、Skill 内容、排序数据与 AI 应用目录都未纳入本次清理。
+
+## 2026-08-29
+
+- ✅ 用户完成候选版真实拖动验收并明确要求“替换”后，已将修复拖动命中边界的 Release 候选可恢复安装到 `~/Applications/SkillBox.app`。正式安装版可执行文件 SHA-256 为 `acc6cb11342458d98c384149c076f8a01c269e83753f979c3e8694aeac17ace9`，与验收候选一致；严格签名与 Designated Requirement 复核通过。
+- ✅ 被替换的 `f143d037…` 版本已整包保留为 `~/Applications/SkillBox-before-reorder-runtime-20260829-082414.app`，可执行文件 SHA-256 为 `f143d0374f6fe5f43d6e8859e5f27b22b551f8e2da4d77cd4b7dcdb3539c6e62`，签名仍有效。新版已从正式路径启动，验收进程 PID 为 `97344`，窗口与侧边栏状态回读正常。
+- ✅ 用户刚才在候选版中进行真实拖动后，`organization.json` 在 `08:23:06` 已保存新顺序，时间早于 `08:24:14` 开始的安装替换；安装过程保留了该顺序，没有用旧数据覆盖。本次只替换 SkillBox 应用包，没有写入任何 AI 应用目录。
+- ✅ 用户对已安装的等高占位版本实测后再次发现“拖动时卡片不让位”。运行时轨迹确认：每张 Skill 卡片的真实坐标都正确，但外层 `ScrollView` 的尺寸偏好始终回报 `0 × 0`，导致所有指针位置都被误判为“列表外”，`previewOrder` 从未更新。前一轮仅验证了让位状态计算，没有覆盖这个真实命中边界，因此当时的“已修复”结论不成立。
+- ✅ 拖动命中区现改为由当前分组内已测量的真实 Skill 卡片边界合并得出，不再依赖会回报零值的滚动区尺寸；插入线的宽度和起点也改用同一份真实边界。新增回归先因缺少实卡片边界策略编译失败，实现后转绿。
+- ✅ 已对清除诊断日志后的 Release 候选执行真实 macOS 鼠标拖动：`html-deck-studio` 跨过 `zhaoji-writing` 中线后，后者立即上移占据原位，目标槽位同步腾出；鼠标移出列表并松手后，浮层、蓝线和临时顺序全部清除。`organization.json` 验收前后 SHA-256 同为 `92c610b4abed80bdd00d45c3fc015d8876eb6b447d9f10b4f06307cdd4b274f3`，未落地改变用户排序。
+- ✅ `app/Scripts/test-all.sh` 完整门禁 276/276 通过，`git diff --check` 通过；最终 Release 候选可执行文件 SHA-256 为 `acc6cb11342458d98c384149c076f8a01c269e83753f979c3e8694aeac17ace9`，严格签名与 Designated Requirement 验证通过。该候选已打开供用户直接试拖，尚未替换 `~/Applications/SkillBox.app`；已安装版仍是用户刚才验出问题的 `f143d037…` 版本。
+- ✅ 用户确认后，已把“等高占位槽＋独立跟手卡片”修复版按同卷可恢复方式安装到 `~/Applications/SkillBox.app`。正式安装版 SHA-256 与 Release 候选一致（`f143d0374f6fe5f43d6e8859e5f27b22b551f8e2da4d77cd4b7dcdb3539c6e62`），严格签名与 Designated Requirement 复核通过，并已从正式路径成功启动。
+- ✅ 被替换的上一版完整保留为 `~/Applications/SkillBox-before-placeholder-20260829-073300.app`，SHA-256 为 `afd7e97772eaaadc752758a831632285175fc3b87242c84aa7578ac09929531a`。启动复核发现一条自 00:17 起残留的旧进程，已精确结束；当前只运行新安装实例 PID `72258`。本次没有改动中央 Skill 数据或任何 AI 应用目录。
+- ✅ 用户真实拖动已安装 v26 后发现卡片没有形成“互相让位”的松手结果预览，被拖卡片会与相邻卡片重影、压叠。根因是 SwiftUI 中同一张卡片同时参加 `LazyVStack` 排位动画和鼠标位移，布局层与跟手层没有分离；HTML 原型其实已经使用独立 ghost 与 placeholder，正式实现没有完整复现这层结构。
+- ✅ 正式 SwiftUI 已改为“等高空占位槽＋独立跟手卡片”：被拖卡片在列表中只保留透明占位，目标变化时占位槽随 `previewOrder` 移动并推动其他卡片让位；视觉卡片单独跟随鼠标，蓝线固定在占位槽底部。新增回归先因缺少占位／浮层分离接口失败，修复后转绿；`app/Scripts/test-all.sh` 自动发现的 276 项测试全部通过，`git diff --check` 通过。新 Release 候选的 SHA-256 为 `f143d0374f6fe5f43d6e8859e5f27b22b551f8e2da4d77cd4b7dcdb3539c6e62`，严格签名与 Designated Requirement 通过；正式安装版尚未再次替换。
+- ✅ 用户明确确认替换后，已将 v26 Release 候选按同卷可恢复方式安装到 `~/Applications/SkillBox.app`。安装版可执行文件 SHA-256 与候选一致（`afd7e97772eaaadc752758a831632285175fc3b87242c84aa7578ac09929531a`），严格签名与 Designated Requirement 复核通过，并已从正式路径成功启动。
+- ✅ 原安装版完整保留为 `~/Applications/SkillBox-before-v26-20260829-001559.app`，其可执行文件 SHA-256 为 `049b750e39d85e27541e1d0e81ccbcca56440a970c80c8d7a3c4298f4347ebdb`。本次只替换应用包，没有改动中央 Skill 数据或任何 AI 应用目录。
+- ✅ 用户真实拖动 v26 时反馈“看不到落点线”。根因是蓝线被绑在被拖卡片或占位层的底边，与卡片阴影重合，截图中虽有 `2 px` 色带，用户感知上几乎等于没有。
+- ✅ v26 HTML 原型和正式 SwiftUI 已同步改为独立落点层：蓝线固定在最终插入槽位、层级高于跟手卡片和阴影；拖出列表、取消或松手后仍统一清除。原型页面使用 `file://` 打开，已有页面需手动按 `⌘R` 重载才会读取新文件。
+- ✅ 交互回归先在旧实现上因缺少“独立插入线位置”而失败，修复后 8/8 通过；`app/Scripts/test-all.sh` 自动发现的 275 项测试全部通过，`git diff --check` 通过。新 Release 候选的 `Info.plist`、ad-hoc Hardened Runtime、严格签名和 Designated Requirement 均通过；未替换已安装 SkillBox。
+- 📌 重建后的 Release 候选已在真实 macOS 窗口回读，普通列表无蓝线残留，拖出列表后五个 Skill 顺序保持不变。辅助操作未能在鼠标按住的中间帧同时回传截图，因此“拖动中蓝线的实际像素观感”仍留给用户在已刷新原型中直接确认，不用静态测试代替这道真实体验门。
+
 ## 2026-08-28
 
+- ✅ 用户确认 v26 后已接入正式 SwiftUI：Skill 卡片的来源图标移到尾部固定列，GitHub 使用可直接识别的章鱼猫标志，本地使用蓝色实心文件夹，存储大小固定在最右侧，不再因名称长短左右不齐。
+- ✅ 原生逐行拖放已改为统一拖动会话：移动超过 `8 pt` 才启动，被拖行在列表轨道内跟手，相邻行实时让位，落点只在被拖行下方显示一根 `2 pt` 蓝线。松手、取消、离开列表、窗口或应用失焦、页面消失及对象被刷新移除都会统一清空临时状态，不再遗留蓝线、空位或浮层。
+- ✅ 新增并更新 8 项列表交互回归，覆盖三类来源图标、上下落点、邻接顺序、完成后只产生一次移动且清空状态、取消后回到空闲。`app/Scripts/test-all.sh` 自动发现的 275 项测试全部通过，`git diff --check` 通过。
+- ✅ 已生成 `app/.build/release/SkillBox.app` Release 候选；`Info.plist` 校验、ad-hoc Hardened Runtime、严格签名和 Designated Requirement 均通过。本轮只生成项目内候选，没有替换 `~/Applications/SkillBox.app`，没有改动中央 Skill 数据或任何 AI 应用目录。
+- ✅ 根据用户对 v22 真实拖动界面的反馈，完成 v23 克制版列表：拖动落点只保留一根 `2 pt` 系统蓝插入线，去掉端点和「放到某 Skill 上方／下方」文字胶囊，不再额外撑开列表空白。插入线只在拖动且存在有效落点时显示，离开、取消或放置后立即清除；精确落点文字仅保留给 VoiceOver。
+- ✅ Skill 卡片改为单行「名称＋尾部来源图标＋中央库大小」：GitHub 使用远程网络图标，本地来源使用文件夹图标，应用导入使用导入图标；来源全称改放悬停说明与辅助功能名称。新增 2 项回归后完整门禁 274/274 通过，Debug App 的 `Info.plist`、ad-hoc Hardened Runtime 与严格签名通过。
+- ✅ 真实 macOS 窗口已验收普通状态和取消式拖动：普通状态没有任何插入线，拖动中只出现系统蓝线，按 Esc 后线立即消失，html-deck-studio 与 agent-team 顺序保持不变。可视化产物保存为 `skillbox-library-reorder-v23.html`、`skillbox-library-reorder-v23-normal.png` 和 `skillbox-library-reorder-v23-drag.png`；本轮只验收 Debug 候选，没有再次替换已安装 SkillBox。
+- ✅ 用户通过「我的 Skills」列表整理 v22 原型后，已接入正式 SwiftUI：列表行只保留 Skill 名称、GitHub／本地来源与中央库占用大小，移除原简介和状态徽标；存储大小递归计算中央主 Skill 内的普通文件，不计安装副本、来源缓存和备份。
+- ✅ 同组拖动按目标行上下半区解析为上方／下方，拖动中显示蓝色插入线和「放到 <Skill> 上方／下方」文字；邻接行和向下移动会先排除被拖 Skill 再计算落点，避免索引偏移。减少动态效果时保留落点而取消过渡动画。
+- ✅ Skill 行右键菜单现只提供「移动到」已有文件夹和「删除 Skill…」。删除复用现有系统废纸篓与即时撤销链路；有受管理安装副本时继续先选「保留副本」或「全部卸载并清理」，不会因为从右键入口进入就绕过确认和预览。
+- ✅ 新增 5 项 TDD 回归，覆盖命名上下落点、邻接向下排序、起始卡片不冒充落点、中央库嵌套文件大小和三类来源文案。`app/Scripts/test-all.sh` 完整门禁 272/272 通过（主测试 240 项，GitHub 来源隔离测试 32 项），`git diff --check` 通过。
+- ✅ 从当前源码生成独立 Debug App 并通过 `Info.plist`、ad-hoc Hardened Runtime 与严格签名校验。真实 macOS 窗口确认五份 Skill 正确显示来源与 34 KB／46 KB／97 KB／5 MB／600 KB 的中央库大小，右键菜单显示「移动到」和「删除 Skill…」，拖动前台真实显示「放到 agent-team 上方」的插入线。本轮只停留在拖动预览后关闭验收副本，未落地改变用户排序，未触发删除，也未替换已安装 SkillBox。
 - ✅ 用户确认进入下一步后，重新执行 `app/Scripts/test-all.sh` 完整门禁并通过，再由当前工作区源码重新运行 `package-app.sh release`。新候选 `Info.plist` 校验通过，ad-hoc Hardened Runtime 签名在磁盘有效并满足 Designated Requirement；可执行文件 SHA-256 为 `6017e49fce3a2808cf6c3b62d33b459592f1e1ee8959838913ae9b341350856e`。
-- ✅ 已完成本机安装版的可恢复更新：先把候选复制到 Applications 同卷暂存位置并复核摘要与签名，精确结束旧安装进程后，将原 `/Users/aiden/Applications/SkillBox.app` 整体保存为 `/Users/aiden/Applications/SkillBox.backup-20260828-014342.app`，再把候选原子改名到正式路径。旧版备份 SHA-256 为 `693681db29f41f47760e8dda8a013ffb1d64a2c2f9a9e48e4415b9ddf24ff6ca`，签名仍有效，可用于回退。
-- ✅ 安装后从正式路径真实启动，运行进程为 `/Users/aiden/Applications/SkillBox.app/Contents/MacOS/SkillBox`；正式安装版可执行摘要与 Release 候选一致。系统截图与精确 PID 辅助操作确认总览正常加载，并在 `agent-team` 详情中真实显示「安装前，有 1 项内容需要你了解」「待了解」与显式「查看并确认」，没有裁切或遮挡。
+- ✅ 已完成本机安装版的可恢复更新：先把候选复制到 Applications 同卷暂存位置并复核摘要与签名，精确结束旧安装进程后，将原 `~/Applications/SkillBox.app` 整体保存为 `~/Applications/SkillBox.backup-20260828-014342.app`，再把候选原子改名到正式路径。旧版备份 SHA-256 为 `693681db29f41f47760e8dda8a013ffb1d64a2c2f9a9e48e4415b9ddf24ff6ca`，签名仍有效，可用于回退。
+- ✅ 安装后从正式路径真实启动，运行进程为 `~/Applications/SkillBox.app/Contents/MacOS/SkillBox`；正式安装版可执行摘要与 Release 候选一致。系统截图与精确 PID 辅助操作确认总览正常加载，并在 `agent-team` 详情中真实显示「安装前，有 1 项内容需要你了解」「待了解」与显式「查看并确认」，没有裁切或遮挡。
 - 📌 本次只替换 SkillBox 应用包，没有修改中央 Skill 数据、任何 AI 应用目录或 GitHub。应用元数据仍为 `0.1.0 (2)`，本轮更新以可执行摘要和真实前台内容识别；原生 Computer Use 管道仍返回 `native pipe closed before response`，按用户已授权的系统截图与辅助操作完成兜底验收。源码与本轮设计产物仍保留在未提交工作区，未擅自创建 Git 提交。
+- ✅ 用户明确要求“替换”后，再次从当前 v22 源码构建 Release 候选，`Info.plist`、ad-hoc Hardened Runtime、严格签名和 Designated Requirement 均通过；候选可执行文件 SHA-256 为 `049b750e39d85e27541e1d0e81ccbcca56440a970c80c8d7a3c4298f4347ebdb`。
+- ✅ 已完成第二次同卷可恢复替换：原安装版保留为 `~/Applications/SkillBox.backup-20260828-224135.app`，其可执行文件 SHA-256 为 `6017e49fce3a2808cf6c3b62d33b459592f1e1ee8959838913ae9b341350856e`，签名仍有效。新版已原子改名到 `~/Applications/SkillBox.app`，验收时进程 PID 为 `60474`，可执行路径与候选摘要完全一致。
+- ✅ 从正式安装路径真实回读“我的 Skills”：五张卡片只显示名称、GitHub／本地来源和 34 KB／46 KB／97 KB／5 MB／600 KB 大小；右键菜单真实显示“移动到”和“删除 Skill…”。验收只展开菜单后按 Esc 关闭，没有移动、删除、改变排序或写入任何 AI 应用目录；正式 SkillBox 已留在“我的 Skills”页运行。
 
 ## 2026-08-27
 
