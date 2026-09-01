@@ -7,7 +7,7 @@
 
   本地优先 · 安装前预览 · 操作可撤销 · 无账号 · 无遥测
 
-  [下载最新版](https://github.com/AidenXu-1/SkillBox/releases/latest/download/SkillBox-0.2.0.dmg) · [查看版本说明](https://github.com/AidenXu-1/SkillBox/releases/latest) · [反馈问题](https://github.com/AidenXu-1/SkillBox/issues)
+  [下载最新版](https://github.com/AidenXu-1/SkillBox/releases/latest/download/SkillBox-0.2.1.dmg) · [查看版本说明](https://github.com/AidenXu-1/SkillBox/releases/latest) · [反馈问题](https://github.com/AidenXu-1/SkillBox/issues)
 </div>
 
 ![SkillBox 总览](design/ui/skillbox-ai-discovery-v16-overview.png)
@@ -36,9 +36,9 @@ SkillBox 是一款面向 AI 产品创作者的原生 macOS 应用。它会先只
 
 ## 下载与安装
 
-当前版本：**v0.2.0（Build 3）**
+当前版本：**v0.2.1（Build 4）**
 
-[**下载 SkillBox-0.2.0.dmg**](https://github.com/AidenXu-1/SkillBox/releases/latest/download/SkillBox-0.2.0.dmg)
+[**下载 SkillBox-0.2.1.dmg**](https://github.com/AidenXu-1/SkillBox/releases/latest/download/SkillBox-0.2.1.dmg)
 
 系统要求：Apple Silicon Mac，macOS 15.0 或更高版本。
 
@@ -60,10 +60,10 @@ SkillBox 是一款面向 AI 产品创作者的原生 macOS 应用。它会先只
 你可以使用发布页附带的 SHA-256 文件验证下载完整性：
 
 ```bash
-shasum -a 256 SkillBox-0.2.0.dmg
+shasum -a 256 SkillBox-0.2.1.dmg
 ```
 
-正确校验值请以同一 Release 附带的 `SkillBox-0.2.0.sha256` 为准。
+正确校验值请以同一 Release 附带的 `SkillBox-0.2.1.sha256` 为准。
 
 ## 已支持的 AI 应用
 
@@ -79,6 +79,6 @@ cd app
 ./Scripts/package-app.sh release
 ```
 
-当前发布门禁包含 277 项自动化测试，以及 Release 构建、应用签名完整性、图标、隐私信息和 DMG 校验。
+当前发布门禁包含 278 项自动化测试，以及 Release 构建、应用签名完整性、图标、隐私信息和 DMG 校验。
 
 开发说明：[`docs/spec.md`](docs/spec.md) · [`docs/agent-guide.md`](docs/agent-guide.md) · [`docs/progress.md`](docs/progress.md) · [`app/README.md`](app/README.md)
