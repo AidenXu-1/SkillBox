@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SkillBox v31 · 设置</title>
+  <style>
+    :root{color-scheme:light;--bg:#e7eaf0;--panel:#fff;--sidebar:rgba(247,247,249,.92);--subsidebar:#f8f8fa;--surface:#f7f7f8;--line:rgba(31,31,36,.095);--text:#1d1d1f;--muted:#6e6e73;--faint:#96969c;--blue:#087af5;--blue2:#006bdc;--green:#2bad60;--orange:#e88a22;--red:#d84a45;--shadow:0 28px 80px rgba(31,35,44,.18)}
+    *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","PingFang SC",sans-serif;color:var(--text);background:var(--bg)}button,input,select{font:inherit}button{cursor:default}
+    .desktop{width:100vw;height:100vh;padding:22px;background:radial-gradient(circle at 8% 4%,#fff 0,#edf0f5 44%,#dfe3ea 100%)}
+    .window{height:100%;min-height:740px;display:grid;grid-template-columns:236px minmax(0,1fr);grid-template-rows:52px 1fr;overflow:hidden;border:1px solid rgba(255,255,255,.88);border-radius:22px;background:var(--panel);box-shadow:var(--shadow)}
+    .titlebar{grid-column:1/-1;display:flex;align-items:center;border-bottom:1px solid var(--line);background:rgba(251,251,252,.88);backdrop-filter:blur(28px);z-index:10}.traffic{width:236px;display:flex;gap:9px;padding-left:18px}.traffic i{width:13px;height:13px;border-radius:50%;background:#ff5f57}.traffic i:nth-child(2){background:#febc2e}.traffic i:nth-child(3){background:#28c840}.titlebar b{font-size:14px;letter-spacing:-.01em}
+    .sidebar{grid-row:2;background:var(--sidebar);border-right:1px solid var(--line);padding:14px 10px 10px;display:flex;flex-direction:column}.brand{display:flex;align-items:center;gap:10px;padding:0 4px 16px}.brand img{width:36px;height:36px;border-radius:10px}.brand span{display:grid;gap:2px}.brand strong{font-size:15px;letter-spacing:-.02em}.brand small{font-size:10.5px;color:var(--muted)}
+    .nav{display:grid;gap:5px;padding:7px;border:1px solid rgba(30,30,35,.08);border-radius:13px;background:rgba(20,20,25,.025)}.nav button{min-height:46px;border:1px solid rgba(30,30,35,.055);background:rgba(20,20,25,.018);border-radius:10px;padding:0 12px;display:flex;align-items:center;gap:11px;text-align:left;font-size:14px;font-weight:560;color:#36363a}.nav button:hover{background:rgba(20,20,25,.06);border-color:rgba(30,30,35,.12)}.nav button:active,.settings-nav button:active,.btn:active{transform:scale(.985)}.nav button.active{background:var(--blue);border-color:var(--blue);color:white;font-weight:660}.nav svg{width:18px;height:18px}.nav-separator{height:1px;background:var(--line);margin:5px 10px}.scope{margin-top:auto;padding:11px 12px;border:1px solid var(--line);border-radius:12px;background:rgba(20,20,25,.025)}.scope b{display:block;font-size:10.5px}.scope span{display:block;margin-top:3px;color:var(--muted);font-size:10px;line-height:1.4}
+    .settings{grid-row:2;min-width:0;display:grid;grid-template-columns:270px minmax(0,1fr);background:#fff}.settings-directory{background:var(--subsidebar);border-right:1px solid var(--line);padding:27px 14px 20px;overflow:auto}.settings-directory h1{margin:0 10px 5px;font-size:27px;letter-spacing:-.045em}.settings-directory>p{margin:0 10px 19px;color:var(--muted);font-size:11.5px;line-height:1.45}.settings-nav{display:grid;gap:4px}.settings-nav button{width:100%;min-height:58px;border:1px solid transparent;border-radius:12px;background:transparent;padding:8px 10px;display:grid;grid-template-columns:36px minmax(0,1fr);gap:10px;align-items:center;text-align:left;color:var(--text)}.settings-nav button:hover{background:rgba(0,0,0,.035)}.settings-nav button.active{background:#e6f1ff;border-color:#cfe5ff}.settings-icon{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;color:#fff;font-size:17px;font-weight:700;box-shadow:inset 0 0 0 1px rgba(255,255,255,.3),0 2px 7px rgba(25,35,50,.1)}.settings-icon.ai{background:linear-gradient(145deg,#7e69ee,#5e49d6)}.settings-icon.github{background:linear-gradient(145deg,#39393d,#19191c)}.settings-icon.storage{background:linear-gradient(145deg,#3aa5ff,#087af5)}.settings-icon.history{background:linear-gradient(145deg,#f3a84f,#e47c18)}.settings-icon.privacy{background:linear-gradient(145deg,#51c776,#269d52)}.settings-copy{min-width:0}.settings-copy b{display:block;font-size:13px}.settings-copy small{display:block;margin-top:3px;color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.settings-nav button.active .settings-copy small{color:#4e7397}
+    .settings-content{min-width:0;overflow:auto;background:#fff}.page{display:none;max-width:920px;margin:0 auto;padding:36px 40px 56px}.page.active{display:block}.page-head{display:flex;align-items:flex-start;gap:15px;margin-bottom:25px}.page-head .hero{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;color:#fff;font-size:22px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.35),0 5px 16px rgba(20,35,55,.12)}.page-head .hero.ai{background:linear-gradient(145deg,#7e69ee,#5e49d6)}.page-head .hero.github{background:linear-gradient(145deg,#39393d,#19191c)}.page-head .hero.storage{background:linear-gradient(145deg,#3aa5ff,#087af5)}.page-head .hero.history{background:linear-gradient(145deg,#f3a84f,#e47c18)}.page-head .hero.privacy{background:linear-gradient(145deg,#51c776,#269d52)}.page-head h2{margin:1px 0 6px;font-size:25px;letter-spacing:-.04em}.page-head p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.5}
+    .section{margin-top:22px}.section:first-of-type{margin-top:0}.section-title{display:flex;align-items:flex-end;justify-content:space-between;margin:0 3px 8px}.section-title b{font-size:12.5px}.section-title span{font-size:10px;color:var(--muted)}.card{border:1px solid var(--line);border-radius:14px;background:#fff;overflow:hidden}.row{min-height:64px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:center;padding:12px 14px;border-bottom:1px solid rgba(31,31,36,.07)}.row:last-child{border-bottom:0}.row-copy{min-width:0}.row-copy b{display:block;font-size:13px}.row-copy small{display:block;margin-top:4px;color:var(--muted);font-size:10.5px;line-height:1.4}.row-value{display:flex;align-items:center;gap:9px;font-size:11.5px;color:#3d3d42}.pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 8px;background:#eaf7ee;color:#218d4c;font-size:9.5px;font-weight:700}.pill.off{background:#f0f0f2;color:#77777d}.pill.blue{background:#e7f2ff;color:#006bdc}.dot{width:7px;height:7px;border-radius:50%;background:currentColor}.btn{border:1px solid var(--line);background:#f5f5f7;color:#333338;border-radius:9px;padding:7px 10px;font-size:10.5px;font-weight:650;white-space:nowrap}.btn:hover{background:#ededf0}.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}.btn.primary:hover{background:var(--blue2)}.btn.link{border-color:transparent;background:transparent;color:var(--blue)}.btn.danger{border-color:transparent;background:transparent;color:var(--red)}.toggle{width:38px;height:22px;border-radius:999px;background:#d2d2d7;padding:2px;display:flex;justify-content:flex-start}.toggle.on{background:var(--green);justify-content:flex-end}.toggle i{width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.22)}
+    .purpose-card{display:grid;grid-template-columns:1fr 1fr;gap:10px}.purpose{border:1px solid var(--line);border-radius:14px;padding:14px 15px;background:linear-gradient(145deg,#fbfbfc,#fff)}.purpose-top{display:flex;align-items:center;justify-content:space-between}.purpose-top b{font-size:12px}.purpose p{margin:9px 0 0;font-size:11.5px;line-height:1.5}.purpose small{display:block;margin-top:5px;color:var(--muted);font-size:10px}.provider{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:11px;align-items:center;min-height:67px;padding:10px 13px;border-bottom:1px solid rgba(31,31,36,.07)}.provider:last-child{border-bottom:0}.provider-mark{width:38px;height:38px;border-radius:11px;background:#f0eff8;display:grid;place-items:center;color:#6654d7;font-weight:750;font-size:13px}.provider-mark.deep{background:#edf3ff;color:#2864d7}.provider-mark.kimi{background:#f2f2f3;color:#222}.provider-mark.plus{background:#e8f3ff;color:var(--blue);font-size:19px}.provider b{font-size:12.5px}.provider small{display:block;margin-top:3px;color:var(--muted);font-size:10px}.provider-actions{display:flex;align-items:center;gap:8px}.note{margin-top:10px;padding:11px 13px;border-radius:11px;background:#f1f7ff;color:#4c6680;font-size:10.5px;line-height:1.5}.status-hero{display:flex;align-items:center;gap:13px;padding:17px;border:1px solid #d7ebdc;border-radius:15px;background:linear-gradient(145deg,#f4fbf6,#fff)}.status-hero .badge{width:42px;height:42px;border-radius:12px;background:#e2f5e8;color:var(--green);display:grid;place-items:center;font-size:20px}.status-hero-copy{flex:1}.status-hero b{font-size:14px}.status-hero p{margin:4px 0 0;color:var(--muted);font-size:10.5px;line-height:1.45}.repo{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:10px;align-items:center;padding:11px 14px;border-bottom:1px solid rgba(31,31,36,.07)}.repo:last-child{border-bottom:0}.repo-icon{width:28px;height:28px;border-radius:8px;background:#f1f1f3;display:grid;place-items:center}.repo b{font-size:12px}.repo small{display:block;margin-top:2px;color:var(--muted);font-size:9.5px}.path-box{display:flex;align-items:center;gap:12px;padding:15px}.path-icon{width:38px;height:38px;border-radius:11px;background:#e7f2ff;color:var(--blue);display:grid;place-items:center;font-size:17px}.path-copy{flex:1;min-width:0}.path-copy b{font-size:12.5px}.path-copy code{display:block;margin-top:4px;color:var(--muted);font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.record{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:11px;align-items:center;padding:11px 14px;border-bottom:1px solid rgba(31,31,36,.07)}.record:last-child{border-bottom:0}.record-icon{width:34px;height:34px;border-radius:10px;background:#fff3e7;color:var(--orange);display:grid;place-items:center}.record b{font-size:12px}.record small{display:block;margin-top:3px;color:var(--muted);font-size:9.5px}.record time{font-size:9.5px;color:var(--faint)}.safe-row{display:grid;grid-template-columns:34px minmax(0,1fr);gap:11px;align-items:start;padding:13px 14px;border-bottom:1px solid rgba(31,31,36,.07)}.safe-row:last-child{border-bottom:0}.safe-icon{width:34px;height:34px;border-radius:10px;background:#eaf7ee;color:var(--green);display:grid;place-items:center}.safe-row b{font-size:12px}.safe-row p{margin:4px 0 0;color:var(--muted);font-size:10.5px;line-height:1.5}.danger-zone{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:13px 14px}.danger-zone b{font-size:12px}.danger-zone small{display:block;margin-top:3px;color:var(--muted);font-size:9.5px}
+    @media(max-width:1180px){.window{grid-template-columns:210px 1fr}.traffic{width:210px}.settings{grid-template-columns:240px minmax(0,1fr)}.page{padding:32px 28px}.purpose-card{grid-template-columns:1fr}}
+    @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+  </style>
+</head>
+<body>
+<div class="desktop"><main class="window">
+  <header class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><b>SkillBox</b></header>
+  <aside class="sidebar">
+    <div class="brand"><img src="../brand/skillbox-app-icon-master.png" alt=""><span><strong>SkillBox</strong><small>统一管理全局 Skill</small></span></div>
+    <nav class="nav">
+      <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h6v14H4zM14 5h6v14h-6z"/></svg>我的 Skills</button>
+      <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><rect x="14" y="14" width="6" height="6"/></svg>安装到应用</button>
+      <div class="nav-separator"></div>
+      <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10" cy="10" r="5"/><path d="m14 14 6 6M18 3v4M16 5h4"/></svg>发现 Skills</button>
+      <button class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6V20h-4v-.09a1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1H4v-4h.09a1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6V4h4v.09a1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 .6 1H20v4h-.09a1.7 1.7 0 0 0-.51 1z"/></svg>设置</button>
+    </nav>
+    <div class="scope"><b>只管理全局 Skill</b><span>项目文件夹里的 Skill 不会进入这里。</span></div>
+  </aside>
+
+  <section class="settings">
+    <aside class="settings-directory">
+      <h1>设置</h1><p>管理连接、本机数据与恢复记录。</p>
+      <nav class="settings-nav">
+        <button class="active" data-page="ai"><span class="settings-icon ai">✦</span><span class="settings-copy"><b>AI 服务</b><small>已连接 2 个</small></span></button>
+        <button data-page="github"><span class="settings-icon github">⌘</span><span class="settings-copy"><b>GitHub</b><small>已连接 · 3 个仓库</small></span></button>
+        <button data-page="storage"><span class="settings-icon storage">▰</span><span class="settings-copy"><b>存储与记录</b><small>5 条寻找记录 · 1.4 MB</small></span></button>
+        <button data-page="history"><span class="settings-icon history">↶</span><span class="settings-copy"><b>操作记录与恢复</b><small>最近操作：今天 12:36</small></span></button>
+        <button data-page="privacy"><span class="settings-icon privacy">✓</span><span class="settings-copy"><b>隐私与安全</b><small>仅在主动操作时联网</small></span></button>
+      </nav>
+    </aside>
+
+    <div class="settings-content">
+      <section class="page active" data-panel="ai">
+        <header class="page-head"><div class="hero ai">✦</div><div><h2>AI 服务</h2><p>决定哪些功能使用 AI，并分别管理每家服务的连接信息。</p></div></header>
+        <div class="section"><div class="section-title"><b>使用位置</b><span>先说清用在哪里，再管理服务商</span></div><div class="purpose-card">
+          <article class="purpose"><div class="purpose-top"><b>Skill 介绍</b><span class="pill"><i class="dot"></i>已连接</span></div><p>当前使用 Agnes，只有你点击“获取 Skill 介绍”时才会发送。</p><small>模型：agnes-2.5-flash</small></article>
+          <article class="purpose"><div class="purpose-top"><b>发现 Skills</b><span class="toggle on"><i></i></span></div><p>使用 DeepSeek 帮你整理需求和比较候选，关闭后仍可搜索。</p><small>当前服务：DeepSeek</small></article>
+        </div></div>
+        <div class="section"><div class="section-title"><b>已添加的 AI 服务</b><span>Key 分别保存在 Mac 钥匙串</span></div><div class="card">
+          <div class="provider"><span class="provider-mark">A</span><span><b>Agnes</b><small>agnes-2.5-flash · 用于 Skill 介绍</small></span><span class="provider-actions"><span class="pill"><i class="dot"></i>已连接</span><button class="btn">管理</button></span></div>
+          <div class="provider"><span class="provider-mark deep">D</span><span><b>DeepSeek</b><small>deepseek-chat · 用于发现 Skills</small></span><span class="provider-actions"><span class="pill"><i class="dot"></i>已连接</span><button class="btn">管理</button></span></div>
+          <div class="provider"><span class="provider-mark kimi">K</span><span><b>Kimi</b><small>尚未保存 API Key</small></span><span class="provider-actions"><span class="pill off">未连接</span><button class="btn">连接</button></span></div>
+          <div class="provider"><span class="provider-mark plus">＋</span><span><b>其他兼容服务</b><small>MiniMax、GLM 或自定义 OpenAI 兼容接口</small></span><span class="provider-actions"><button class="btn">查看全部</button></span></div>
+        </div><div class="note">系统若询问钥匙串权限，请选择“始终允许”。SkillBox 不会把 API Key 写入设置文件或操作记录。</div></div>
+      </section>
+
+      <section class="page" data-panel="github">
+        <header class="page-head"><div class="hero github">⌘</div><div><h2>GitHub</h2><p>连接私人仓库并管理 SkillBox 可以读取的仓库范围。</p></div></header>
+        <div class="status-hero"><div class="badge">✓</div><div class="status-hero-copy"><b>GitHub 已连接</b><p>公开仓库不依赖登录；私人仓库只读取你明确选择的范围。</p></div><button class="btn primary">管理可访问仓库</button></div>
+        <div class="section"><div class="section-title"><b>可访问仓库</b><span>3 个</span></div><div class="card">
+          <div class="repo"><span class="repo-icon">◉</span><span><b>AidenXu-1/vibe-project-foundation-skill</b><small>私人仓库</small></span><button class="btn link">在 GitHub 查看</button></div>
+          <div class="repo"><span class="repo-icon">◎</span><span><b>AidenXu-1/agent-team</b><small>公开仓库</small></span><button class="btn link">在 GitHub 查看</button></div>
+          <div class="repo"><span class="repo-icon">◉</span><span><b>AidenXu-1/zhaoji-writing</b><small>私人仓库</small></span><button class="btn link">在 GitHub 查看</button></div>
+        </div></div>
+        <div class="section"><div class="section-title"><b>连接管理</b></div><div class="card"><div class="danger-zone"><span><b>断开这台 Mac 的 GitHub 连接</b><small>不会删除已经加入的 Skill 或已安装副本。</small></span><button class="btn">断开连接</button></div><div class="danger-zone"><span><b>清除 GitHub 信息</b><small>同时删除登录、来源地址和更新记录。</small></span><button class="btn danger">清除信息</button></div></div></div>
+      </section>
+
+      <section class="page" data-panel="storage">
+        <header class="page-head"><div class="hero storage">▰</div><div><h2>存储与记录</h2><p>查看 SkillBox 在这台 Mac 上保存了什么，并清理不再需要的寻找记录。</p></div></header>
+        <div class="section"><div class="section-title"><b>SkillBox 保存位置</b></div><div class="card"><div class="path-box"><span class="path-icon">▰</span><span class="path-copy"><b>Skill 库与恢复数据</b><code>~/Library/Application Support/SkillBox/</code></span><button class="btn">在 Finder 中显示</button></div></div></div>
+        <div class="section"><div class="section-title"><b>寻找记录</b><span>5 条 · 1.4 MB</span></div><div class="card">
+          <div class="record"><span class="record-icon">⌕</span><span><b>找一个能整理访谈录音的 Skill</b><small>6 个候选 · 保留供以后继续</small></span><time>今天 11:20</time></div>
+          <div class="record"><span class="record-icon">⌕</span><span><b>自动生成产品演示视频</b><small>4 个候选 · 已加入 1 个</small></span><time>昨天</time></div>
+          <div class="record"><span class="record-icon">⌕</span><span><b>检查 Skill 安全风险</b><small>3 个候选</small></span><time>8 月 29 日</time></div>
+          <div class="danger-zone"><span><b>管理全部寻找记录</b><small>可以单条删除，也可以一次清空。</small></span><span><button class="btn">查看全部</button><button class="btn danger">清空记录</button></span></div>
+        </div></div>
+      </section>
+
+      <section class="page" data-panel="history">
+        <header class="page-head"><div class="hero history">↶</div><div><h2>操作记录与恢复</h2><p>安装、更新和卸载都留下恢复点，需要时可以回到操作前。</p></div></header>
+        <div class="section"><div class="section-title"><b>最近操作</b><span>共 12 条</span></div><div class="card">
+          <div class="record"><span class="record-icon">↻</span><span><b>更新 vibe-project-foundation</b><small>GPT、Claude · 已完成</small></span><span><time>今天 12:36</time> <button class="btn">查看并恢复</button></span></div>
+          <div class="record"><span class="record-icon">＋</span><span><b>安装 agent-team</b><small>WorkBuddy、ZCode · 已完成</small></span><span><time>今天 10:12</time> <button class="btn">查看并恢复</button></span></div>
+          <div class="record"><span class="record-icon">−</span><span><b>从 HanaAgent 卸载 html-deck-studio</b><small>来源和当前版本仍保留</small></span><span><time>昨天</time> <button class="btn">查看并恢复</button></span></div>
+        </div></div><div class="note">恢复前会先比较当前文件。其他软件已经改过的内容不会被 SkillBox 覆盖。</div>
+      </section>
+
+      <section class="page" data-panel="privacy">
+        <header class="page-head"><div class="hero privacy">✓</div><div><h2>隐私与安全</h2><p>用普通话说明 SkillBox 会读取什么、什么时候联网、哪些事绝不会偷偷做。</p></div></header>
+        <div class="section"><div class="section-title"><b>安全边界</b></div><div class="card">
+          <div class="safe-row"><span class="safe-icon">✓</span><span><b>查看 Skill 时不会运行里面的文件</b><p>SkillBox 只读取文件结构和文字说明，不执行脚本、安装依赖或启动程序。</p></span></div>
+          <div class="safe-row"><span class="safe-icon">✓</span><span><b>已有文件不会被悄悄替换</b><p>安装和更新前先展示清单，内容被其他软件改过时会停下来提醒你。</p></span></div>
+          <div class="safe-row"><span class="safe-icon">✓</span><span><b>只有你主动操作时才发送内容</b><p>添加 GitHub 来源、检查更新、寻找 Skill 或获取 AI 介绍时才联网。</p></span></div>
+          <div class="safe-row"><span class="safe-icon">✓</span><span><b>API Key 只保存在 Mac 钥匙串</b><p>不会进入设置文件、日志、操作记录或 AI 请求预览。</p></span></div>
+        </div></div>
+        <div class="section"><div class="section-title"><b>帮助</b></div><div class="card"><div class="row"><span class="row-copy"><b>重新查看欢迎说明</b><small>重新了解 SkillBox 管理哪些 Skill，以及哪些内容不在范围内。</small></span><button class="btn">打开欢迎说明</button></div></div></div>
+      </section>
+    </div>
+  </section>
+</main></div>
+<script>
+  const query=new URLSearchParams(location.search);const buttons=[...document.querySelectorAll('.settings-nav button')];const pages=[...document.querySelectorAll('.page')];
+  function show(name){buttons.forEach(button=>button.classList.toggle('active',button.dataset.page===name));pages.forEach(page=>page.classList.toggle('active',page.dataset.panel===name));}
+  buttons.forEach(button=>button.addEventListener('click',()=>show(button.dataset.page)));show(query.get('page')||'ai');
+</script>
+</body>
+</html>

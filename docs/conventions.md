@@ -22,10 +22,10 @@
 > 技术栈定了之后,先把下面四个槽位定下来再写代码。
 > 定下后,所有代码和测试按此归位,AI 不要随手另起目录乱放。
 
-- **源码放哪**：`app/SkillBox/` 放应用入口与 SwiftUI；`app/Packages/SkillBoxCore/` 放可独立测试的纯 Swift 核心。
-- **测试放哪**：应用测试随 Xcode target 放置；核心测试放 `app/Packages/SkillBoxCore/Tests/`。
+- **源码放哪**：`app/Sources/SkillBoxApp/` 放应用入口与 SwiftUI；`app/Sources/SkillBoxCore/` 放可独立测试的纯 Swift 核心。
+- **测试放哪**：应用与核心的行为测试放 `app/Tests/SkillBoxCoreTests/`；包态检查放 `app/Tests/Packaging/`。
 - **配置 / 环境变量放哪**：构建配置放 `app/Config/`；若未来启用签名、公证，凭据只存在开发者钥匙串或 CI Secrets，不进仓库。当前 GitHub 发行使用 ad-hoc 签名且不公证。
-- **怎么算“验证过了”**：核心 `swift test`、应用 `xcodebuild test`、静态检查与对应功能的前台体验验收均通过。
+- **怎么算“验证过了”**：通过 `app/Scripts/test-all.sh`、对应构建与包态检查、`git diff --check`，并完成相关功能的真实前台体验验收；公开发行另按 Spec 执行发布门槛。
 
 > 注:这里管的是**自动化测试(代码)**。审核层出具的**把关报告**不在 `app/`,见 `docs/collaboration/部门/<审核部门>/把关报告/`(若已启用多会话协作层)。
 

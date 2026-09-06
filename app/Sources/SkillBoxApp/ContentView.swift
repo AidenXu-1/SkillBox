@@ -2,29 +2,272 @@ import AppKit
 import SkillBoxCore
 import SwiftUI
 
-private enum SidebarItem: String, CaseIterable, Identifiable {
-    case overview = "总览"
+enum SidebarItem: String, CaseIterable, Identifiable {
     case library = "我的 Skills"
-    case discover = "发现 Skills"
     case agents = "安装到应用"
-    case history = "最近操作"
+    case discover = "发现 Skills"
     case settings = "设置"
     var id: String { rawValue }
     var icon: String {
         switch self {
-        case .overview: "rectangle.3.group"
         case .library: "books.vertical"
-        case .discover: "sparkle.magnifyingglass"
         case .agents: "square.grid.2x2"
-        case .history: "clock.arrow.circlepath"
+        case .discover: "sparkle.magnifyingglass"
         case .settings: "gearshape"
         }
     }
 }
 
+enum SkillDetailLayout {
+    static let metaTitles = ["来源", "当前安装版本", "版本情况"]
+    static let tabTitles = ["Skill 介绍", "文件详情"]
+    static let guideTitles = ["作用", "适用场景", "使用流程", "启动提示词"]
+    static let aiGuideLabel = "AI 介绍"
+    static let connectAIButtonTitle = "连接 AI"
+    static let tabMinimumHitHeight: CGFloat = 46
+}
+
+enum SidebarLayout {
+    static let rowMinimumHitHeight: CGFloat = 46
+}
+
+enum SettingsLayout {
+    static let pageTitles = ["AI 服务", "GitHub", "存储与记录", "操作记录与恢复", "隐私与安全"]
+    static let aiServiceSymbol = "brain.head.profile"
+    static let githubUsesOfficialMark = true
+    static let rowMinimumHitHeight: CGFloat = 62
+    static let navigationWidth: CGFloat = 268
+    static let contentMaxWidth: CGFloat = 860
+}
+
+struct AgentColumnDragSession: Equatable {
+    private(set) var movingTargetID: UUID?
+    private(set) var originOrder: [UUID] = []
+    private(set) var previewOrder: [UUID] = []
+    private(set) var ghostCenterX: CGFloat = 0
+    private(set) var grabOffsetX: CGFloat = 0
+
+    var isActive: Bool { movingTargetID != nil }
+
+    mutating func begin(
+        targetID: UUID,
+        orderedTargetIDs: [UUID],
+        frame: CGRect,
+        pointerX: CGFloat
+    ) {
+        movingTargetID = targetID
+        originOrder = orderedTargetIDs
+        previewOrder = orderedTargetIDs
+        ghostCenterX = frame.midX
+        grabOffsetX = pointerX - frame.midX
+    }
+
+    @discardableResult
+    mutating func update(pointerX: CGFloat, frames: [UUID: CGRect]) -> Bool {
+        guard let movingTargetID else { return false }
+        ghostCenterX = pointerX - grabOffsetX
+        let stationary = previewOrder.filter { $0 != movingTargetID }
+        let orderedFrames = stationary.compactMap { id -> (UUID, CGRect)? in
+            guard let frame = frames[id] else { return nil }
+            return (id, frame)
+        }.sorted { $0.1.midX < $1.1.midX }
+        guard orderedFrames.count == stationary.count else { return false }
+
+        var reordered = orderedFrames.map(\.0)
+        let insertionIndex = orderedFrames.firstIndex { ghostCenterX < $0.1.midX } ?? reordered.endIndex
+        reordered.insert(movingTargetID, at: insertionIndex)
+        guard reordered != previewOrder else { return false }
+        previewOrder = reordered
+        return true
+    }
+
+    mutating func finish(commit: Bool) -> [UUID]? {
+        let result = commit && previewOrder != originOrder ? previewOrder : nil
+        cancel()
+        return result
+    }
+
+    mutating func cancel() {
+        movingTargetID = nil
+        originOrder = []
+        previewOrder = []
+        ghostCenterX = 0
+        grabOffsetX = 0
+    }
+}
+
+enum AgentIconCatalog {
+    static func resourceFilename(for kind: AgentKind) -> String? {
+        switch kind {
+        case .codex: "gpt.png"
+        case .claudeCode: "claude-code.png"
+        case .workBuddy: "workbuddy.png"
+        case .zcode: "zcode.png"
+        case .kimiCode: "kimi-code.png"
+        case .cursor: "cursor.png"
+        case .hanaAgent: "hanaagent.png"
+        case .pi: "pi.svg"
+        case .deepSeekHarness: "deepseek-harness.svg"
+        case .trae: "trae.png"
+        case .geminiCLI: "gemini-cli.png"
+        case .openCode, .custom: nil
+        }
+    }
+}
+
+private struct AgentProductIcon: View {
+    let target: AgentTarget
+    var size: CGFloat = 28
+
+    var body: some View {
+        Group {
+            if target.isCustom {
+                Image(systemName: "app.dashed")
+                    .resizable()
+                    .scaledToFit()
+                    .padding(size * 0.2)
+                    .foregroundStyle(.blue)
+                    .background(.blue.opacity(0.09))
+            } else if let image = bundledImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Image(systemName: "app")
+                    .resizable()
+                    .scaledToFit()
+                    .padding(size * 0.2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.24))
+        .accessibilityHidden(true)
+    }
+
+    private var bundledImage: NSImage? {
+        guard let filename = AgentIconCatalog.resourceFilename(for: target.kind),
+              let resourceURL = Bundle.main.resourceURL
+        else { return nil }
+        return NSImage(contentsOf: resourceURL
+            .appendingPathComponent("AgentIcons", isDirectory: true)
+            .appendingPathComponent(filename))
+    }
+}
+
+private struct SkillBoxSidebar: View {
+    @Binding var selection: SidebarItem?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 11) {
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 36, height: 36)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("SkillBox")
+                        .font(.headline)
+                    Text("统一管理全局 Skill")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 16)
+
+            VStack(spacing: 5) {
+                ForEach([SidebarItem.library, .agents]) { item in
+                    SidebarNavigationButton(item: item, selection: $selection)
+                }
+
+                Divider()
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+
+                ForEach([SidebarItem.discover, .settings]) { item in
+                    SidebarNavigationButton(item: item, selection: $selection)
+                }
+            }
+            .padding(7)
+            .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 13))
+            .overlay(RoundedRectangle(cornerRadius: 13).stroke(.separator.opacity(0.35)))
+            .padding(.horizontal, 10)
+
+            Spacer(minLength: 18)
+
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "scope")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.blue)
+                    .frame(width: 24, height: 24)
+                    .background(.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 7))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("管理范围")
+                        .font(.caption.weight(.semibold))
+                    Text("只管理跨项目使用的全局 Skill")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(11)
+            .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.3)))
+            .padding(10)
+        }
+    }
+}
+
+private struct SidebarNavigationButton: View {
+    let item: SidebarItem
+    @Binding var selection: SidebarItem?
+    @State private var isHovering = false
+
+    private var isSelected: Bool { selection == item }
+
+    var body: some View {
+        Button {
+            selection = item
+        } label: {
+            HStack(spacing: 11) {
+                Image(systemName: item.icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .frame(width: 23)
+                Text(item.rawValue)
+                    .font(.callout.weight(isSelected ? .semibold : .medium))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: SidebarLayout.rowMinimumHitHeight, alignment: .leading)
+            .contentShape(Rectangle())
+            .foregroundStyle(isSelected ? Color.white : Color.primary)
+            .background(
+                isSelected
+                    ? Color.accentColor
+                    : Color.primary.opacity(isHovering ? 0.065 : 0.018),
+                in: RoundedRectangle(cornerRadius: 10)
+            )
+            .overlay {
+                if !isSelected {
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(.separator.opacity(isHovering ? 0.5 : 0.22))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .accessibilityValue(isSelected ? "当前页面" : "")
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var model: AppModel
-    @State private var selection: SidebarItem? = .overview
+    @State private var selection: SidebarItem? = .library
     @State private var selectedSkillID: UUID?
     @State private var showGitHub = false
     @State private var showImportPreview = false
@@ -33,37 +276,18 @@ struct ContentView: View {
     @State private var showCustomTarget = false
     @State private var customTargetName = "其他应用"
     @State private var editingCustomTarget: AgentTarget?
+    @State private var selectedSettingsPage: SettingsPage = .ai
     @State private var visibleStatusMessage: String?
     @State private var statusDismissTask: Task<Void, Never>?
 
     var body: some View {
         NavigationSplitView {
-            List(SidebarItem.allCases, selection: $selection) { item in
-                Label(item.rawValue, systemImage: item.icon).tag(item)
-            }
+            SkillBoxSidebar(selection: $selection)
             .navigationTitle("SkillBox")
-            .navigationSplitViewColumnWidth(min: 190, ideal: 220)
-            .safeAreaInset(edge: .bottom) {
-                Text("已找到 \(model.snapshot.targets.filter { $0.detectionStatus == .available }.count) 个应用位置")
-                    .font(.caption2).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading).padding(12)
-            }
+            .navigationSplitViewColumnWidth(min: 210, ideal: 236)
         } detail: {
             Group {
-                switch selection ?? .overview {
-                case .overview:
-                    OverviewView(
-                        model: model,
-                        goTo: { selection = $0 },
-                        reviewConflict: { conflict in
-                            model.prepareConflictImport(conflict)
-                            showImportPreview = true
-                        },
-                        reviewAllConflicts: {
-                            model.prepareScanImport()
-                            showImportPreview = true
-                        }
-                    )
+                switch selection ?? .library {
                 case .library:
                     LibraryView(
                         model: model,
@@ -72,13 +296,20 @@ struct ContentView: View {
                         importLocal: chooseLocalFolder,
                         importGitHub: { showGitHub = true },
                         openSettings: { selection = .settings },
+                        openAISettings: {
+                            selectedSettingsPage = .ai
+                            selection = .settings
+                        },
                         connectGitHub: {
                             selection = .settings
                             if model.isGitHubConfigured { Task { await model.connectPrivateGitHub() } }
                         }
                     )
                 case .discover:
-                    DiscoverSkillsView(model: model, openAISettings: { selection = .settings })
+                    DiscoverSkillsView(model: model, openAISettings: {
+                        selectedSettingsPage = .ai
+                        selection = .settings
+                    })
                 case .agents:
                     AgentsView(
                         model: model,
@@ -86,8 +317,7 @@ struct ContentView: View {
                         addSkill: { selection = .library },
                         editCustom: { editingCustomTarget = $0 }
                     )
-                case .history: HistoryView(model: model)
-                case .settings: SettingsView(model: model)
+                case .settings: SettingsView(model: model, selectedSettingsPage: $selectedSettingsPage)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -134,13 +364,18 @@ struct ContentView: View {
                 set: { if !$0 { editingCustomTarget = nil } }
             ))
         }
-        .alert("操作未完成", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
+        .alert("操作未完成", isPresented: Binding(
+            get: { model.errorMessage != nil },
+            set: { if !$0 { model.dismissCurrentError() } }
+        )) {
             if model.canRetryGitHubWithDefaultBranch {
                 Button("改用默认分支继续") { model.retryGitHubUsingDefaultBranch() }
             }
+            if model.canRetryGitHubConnection {
+                Button("重试") { model.retryGitHubConnection() }
+            }
             Button("取消", role: .cancel) {
-                model.canRetryGitHubWithDefaultBranch = false
-                model.errorMessage = nil
+                model.dismissCurrentError()
             }
         } message: { Text(model.errorMessage ?? "") }
         .alert("提示", isPresented: Binding(get: { model.noticeMessage != nil }, set: { if !$0 { model.noticeMessage = nil } })) { Button("知道了") { model.noticeMessage = nil } } message: { Text(model.noticeMessage ?? "") }
@@ -187,7 +422,13 @@ struct ContentView: View {
 
     private func presentStatusToast(_ message: String) {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else {
+            statusDismissTask?.cancel()
+            withAnimation(.easeIn(duration: 0.12)) {
+                visibleStatusMessage = nil
+            }
+            return
+        }
 
         statusDismissTask?.cancel()
         withAnimation(.easeOut(duration: 0.18)) {
@@ -203,19 +444,34 @@ struct ContentView: View {
     }
 }
 
+enum StatusToastTone: Equatable {
+    case success
+    case attention
+    case neutral
+
+    static func forMessage(_ message: String) -> StatusToastTone {
+        let needsAttention = [
+            "无法", "找不到", "需要", "请确认", "请选择", "限制", "未完成",
+            "暂时没有", "没有正式 Release", "没有独立安装包",
+        ].contains { message.contains($0) }
+        if needsAttention { return .attention }
+        if message.contains("取消") || message.contains("停止") { return .neutral }
+        return .success
+    }
+}
+
 private struct StatusToast: View {
     let message: String
 
     private var appearance: (icon: String, color: Color) {
-        let needsAttention = ["无法", "找不到", "需要", "请确认", "请选择", "限制", "没有正式 Release", "没有独立安装包"]
-            .contains { message.contains($0) }
-        if needsAttention {
+        switch StatusToastTone.forMessage(message) {
+        case .attention:
             return ("exclamationmark.circle.fill", .orange)
-        }
-        if message.contains("取消") {
+        case .neutral:
             return ("xmark.circle.fill", .secondary)
+        case .success:
+            return ("checkmark.circle.fill", .green)
         }
-        return ("checkmark.circle.fill", .green)
     }
 
     var body: some View {
@@ -393,7 +649,20 @@ private struct DiscoveryConversationPane: View {
 
             Group {
                 if let session = model.selectedDiscoverySession {
-                    ScrollView {
+                  VStack(spacing: 0) {
+                    if let summary = DiscoveryConversation.taskSummary(session) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("当前任务").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            Text(summary).font(.caption).lineLimit(3).help(summary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                        .padding(.horizontal, 14)
+                        .padding(.top, 10)
+                    }
+                    ScrollViewReader { reader in
+                      ScrollView {
                         LazyVStack(alignment: .leading, spacing: 18) {
                             HStack(alignment: .top) {
                                 VStack(alignment: .leading, spacing: 3) {
@@ -417,6 +686,11 @@ private struct DiscoveryConversationPane: View {
                                     DiscoverySystemNoticeView(notice: notice)
                                 }
                             }
+                            if !model.isSelectedDiscoverySearching,
+                               let presentation = DiscoveryResultPresentation(session: session)
+                            {
+                                DiscoveryResultSummaryView(presentation: presentation)
+                            }
                             if model.isSelectedDiscoverySearching,
                                let state = model.discoveryRunState
                             {
@@ -424,7 +698,13 @@ private struct DiscoveryConversationPane: View {
                             }
                         }
                         .padding(18)
+                        .id("discovery-timeline")
+                      }
+                      .onChange(of: session.messages.count) { _, _ in
+                          reader.scrollTo("discovery-timeline", anchor: .bottom)
+                      }
                     }
+                  }
                 } else {
                     ContentUnavailableView(
                         "你想解决什么？",
@@ -443,7 +723,7 @@ private struct DiscoveryConversationPane: View {
     }
 }
 
-private struct DiscoveryTimelineItem: Identifiable {
+struct DiscoveryTimelineItem: Identifiable {
     enum Content {
         case message(DiscoveryMessage)
         case notice(DiscoverySystemNotice)
@@ -454,16 +734,19 @@ private struct DiscoveryTimelineItem: Identifiable {
     var content: Content
 
     static func items(for session: DiscoverySession) -> [Self] {
+        let latestRunID = session.runs.last?.id
         let messages = session.messages.map {
             Self(id: "message-\($0.id.uuidString)", createdAt: $0.createdAt, content: .message($0))
         }
-        let notices = session.notices.map {
+        let notices = session.notices.filter {
+            !($0.kind == .partialResult && $0.runID == latestRunID)
+        }.map {
             Self(id: "notice-\($0.id.uuidString)", createdAt: $0.createdAt, content: .notice($0))
         }
-        return (messages + notices).sorted { first, second in
-            if first.createdAt == second.createdAt { return first.id < second.id }
-            return first.createdAt < second.createdAt
-        }
+        return (messages + notices).enumerated().sorted { first, second in
+            if first.element.createdAt == second.element.createdAt { return first.offset < second.offset }
+            return first.element.createdAt < second.element.createdAt
+        }.map(\.element)
     }
 }
 
@@ -488,11 +771,25 @@ private struct DiscoveryMessageView: View {
                     .foregroundStyle(Color.blue)
                     .frame(width: 22, height: 22)
                     .background(Color.blue.opacity(0.10), in: Circle())
-                Text(message.text)
-                    .font(.callout)
-                    .lineSpacing(3)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(message.text)
+                        .font(.callout)
+                        .lineSpacing(3)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if let references = message.references, !references.isEmpty {
+                        DisclosureGroup("依据：\(references.map(\.name).joined(separator: "、"))") {
+                            ForEach(Array(references.enumerated()), id: \.offset) { _, reference in
+                                Text("\(reference.name) · \(reference.repository)\n\(reference.summary)")
+                                    .font(.caption2).textSelection(.enabled)
+                            }
+                        }
+                        .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    if message.origin == "conversation-evidence-v1" {
+                        Text("AI 根据引用资料整理，请核对作者说明").font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
             }
         }
     }
@@ -515,19 +812,81 @@ private struct DiscoveryProgressView: View {
 private struct DiscoverySystemNoticeView: View {
     let notice: DiscoverySystemNotice
 
+    @ViewBuilder
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: notice.kind == .failure ? "exclamationmark.circle" : "info.circle")
-                .foregroundStyle(notice.kind == .failure ? Color.orange : Color.secondary)
-            Text(notice.text)
+        if notice.kind == .partialResult {
+            DisclosureGroup("查看这轮的覆盖情况") {
+                Text(notice.text)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(2)
+                    .textSelection(.enabled)
+                    .padding(.top, 6)
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(10)
+            .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+        } else {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: notice.kind == .failure ? "exclamationmark.circle" : "info.circle")
+                    .foregroundStyle(notice.kind == .failure ? Color.orange : Color.secondary)
+                Text(notice.text)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(2)
+                    .textSelection(.enabled)
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+}
+
+private struct DiscoveryResultSummaryView: View {
+    let presentation: DiscoveryResultPresentation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                Image(systemName: presentation.hasRecommendations ? "checkmark.circle.fill" : "magnifyingglass.circle")
+                    .foregroundStyle(presentation.hasRecommendations ? Color.green : Color.secondary)
+                Text(presentation.title)
+                    .font(.callout.bold())
+            }
+            Text(presentation.explanation)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineSpacing(2)
-                .textSelection(.enabled)
-            Spacer(minLength: 0)
+                .padding(.leading, 25)
+            if !presentation.coverageDetails.isEmpty {
+                DisclosureGroup(presentation.coverageTitle) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(presentation.coverageDetails.enumerated()), id: \.offset) { _, detail in
+                            Text(detail)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineSpacing(2)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 25)
+            }
         }
-        .padding(10)
-        .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+        .padding(12)
+        .background(
+            presentation.hasRecommendations ? Color.green.opacity(0.06) : Color.secondary.opacity(0.07),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(presentation.hasRecommendations ? Color.green.opacity(0.18) : Color.clear)
+        }
     }
 }
 
@@ -552,8 +911,25 @@ private struct DiscoveryInput: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let session = model.selectedDiscoverySession, !session.queuedMessages.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(model.isSelectedDiscoverySearching && !model.discoveryQueuePaused
+                        ? "待处理补充 · 本轮结束后合并处理"
+                        : "补充已保留 · 等你继续")
+                        .font(.caption.weight(.semibold))
+                    ForEach(session.queuedMessages) { message in
+                        Text(message.text).font(.caption).lineLimit(2).help(message.text)
+                    }
+                    if !model.isDiscoverySearching {
+                        Button("继续处理补充") { model.resumeDiscoveryQueue() }.font(.caption)
+                    }
+                }
+                .padding(9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+            }
             TextField(
-                "搜索你想要的 Skill 功能",
+                "继续问、补充条件，或告诉我换个方向…",
                 text: $model.discoveryDraft,
                 axis: .vertical
             )
@@ -596,19 +972,17 @@ private struct DiscoveryInput: View {
 
                 Spacer()
 
-                Button {
-                    if model.isDiscoverySearching { model.cancelDiscoverySearch() }
-                    else { model.startDiscoverySearch() }
-                } label: {
-                    if model.isDiscoverySearching {
-                        Image(systemName: "stop.fill").frame(width: 18, height: 18)
-                    } else {
-                        Image(systemName: "arrow.up")
+                if model.isDiscoverySearching {
+                    Button { model.cancelDiscoverySearch() } label: {
+                        Image(systemName: "stop.fill")
                     }
+                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                    .help("停止当前处理，保留待处理补充")
                 }
+                Button { model.startDiscoverySearch() } label: { Image(systemName: "arrow.up") }
                 .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
-                .disabled(!model.isDiscoverySearching && model.discoveryDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .help(model.isDiscoverySearching ? "停止寻找" : "开始寻找")
+                .disabled(model.discoveryDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .help(model.isDiscoverySearching ? "发送补充，完成本轮后处理" : "发送消息")
             }
         }
         .padding(12)
@@ -624,7 +998,18 @@ private struct DiscoveryCandidateList: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("候选 Skills").font(.title2.bold())
+                if let session = model.selectedDiscoverySession,
+                   let presentation = DiscoveryResultPresentation(session: session)
+                {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(presentation.candidateListTitle).font(.title2.bold())
+                        Text("达到质量门槛的全部保留，不凑数")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("候选 Skills").font(.title2.bold())
+                }
                 Spacer()
                 if model.isSelectedDiscoverySearching {
                     HStack(spacing: 7) {
@@ -633,9 +1018,7 @@ private struct DiscoveryCandidateList: View {
                             Text(state.progressTitle).font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                } else if let state = model.selectedDiscoverySession?.runs.last?.state,
-                          state == .partiallyCompleted || state == .failed
-                {
+                } else if model.canContinueSelectedDiscoverySearch {
                     Button("继续深挖") { model.continueDiscoverySearch() }
                         .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                 }
@@ -661,11 +1044,27 @@ private struct DiscoveryCandidateList: View {
                     .padding(12)
                 }
             } else {
-                ContentUnavailableView(
-                    "选择一个候选",
-                    systemImage: "magnifyingglass",
-                    description: Text(model.isSelectedDiscoverySearching ? (model.discoveryRunState?.progressTitle ?? "正在寻找…") : "搜索结果会显示在这里")
-                )
+                if model.isSelectedDiscoverySearching {
+                    ContentUnavailableView(
+                        "正在寻找",
+                        systemImage: "magnifyingglass",
+                        description: Text(model.discoveryRunState?.progressTitle ?? "正在寻找…")
+                    )
+                } else if let session = model.selectedDiscoverySession,
+                          let presentation = DiscoveryResultPresentation(session: session)
+                {
+                    ContentUnavailableView(
+                        presentation.title,
+                        systemImage: "magnifyingglass",
+                        description: Text("不会为了凑数量放入证据不足的候选")
+                    )
+                } else {
+                    ContentUnavailableView(
+                        "选择一个候选",
+                        systemImage: "magnifyingglass",
+                        description: Text("搜索结果会显示在这里")
+                    )
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -712,11 +1111,6 @@ private struct DiscoveryCandidateRow: View {
         .onHover { isHovered = $0 }
     }
 
-    static func compact(_ value: Int) -> String {
-        if value >= 1_000_000 { return String(format: "%.1fM", Double(value) / 1_000_000) }
-        if value >= 1_000 { return String(format: "%.1fK", Double(value) / 1_000) }
-        return String(value)
-    }
 }
 
 private struct DiscoveryCandidateDetail: View {
@@ -749,19 +1143,11 @@ private struct DiscoveryCandidateDetail: View {
                         VStack(alignment: .leading, spacing: 5) {
                             Text(candidate.name).font(.title.bold())
                             Text(candidate.repositoryFullName).font(.callout).foregroundStyle(.secondary)
-                            HStack(spacing: 10) {
-                                if let installs = candidate.installCount {
-                                    Text("↓ \(DiscoveryCandidateRow.compact(installs)) 安装")
-                                }
-                                if let stars = candidate.repositoryStars {
-                                    Text("☆ \(DiscoveryCandidateRow.compact(stars)) Stars")
-                                }
-                                if let updatedAt = candidate.repositoryUpdatedAt {
-                                    Text("更新 \(updatedAt.formatted(date: .abbreviated, time: .omitted))")
-                                }
+                            if let updatedAt = candidate.repositoryUpdatedAt {
+                                Text("仓库更新于 \(updatedAt.formatted(date: .abbreviated, time: .omitted))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
-                            .font(.caption).foregroundStyle(.secondary)
-                            .lineLimit(1).minimumScaleFactor(0.82)
                         }
                         Spacer()
                         if let url = candidate.repositoryURL {
@@ -770,19 +1156,20 @@ private struct DiscoveryCandidateDetail: View {
                         }
                     }
 
-                    if model.isGeneratingSelectedDiscoveryUsageGuide {
-                        HStack(spacing: 10) {
-                            ProgressView().controlSize(.small)
-                            Text("正在整理这个 Skill 的使用说明…")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button("停止") { model.cancelDiscoveryUsageGuide() }
-                                .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                        }
-                        .padding(12)
-                        .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                    let popularity = DiscoveryPopularityPresentation(candidate: candidate)
+                    HStack(spacing: 10) {
+                        DiscoveryPopularityMetric(
+                            label: popularity.skillUsageLabel,
+                            value: popularity.skillUsageValue
+                        )
+                        DiscoveryPopularityMetric(
+                            label: popularity.repositoryStarsLabel,
+                            value: popularity.repositoryStarsValue
+                        )
                     }
+                    Text("使用量属于这个 Skill；Star 属于整个 GitHub 仓库，仅作辅助参考。")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
 
                     let guide = displayGuide(for: candidate)
                     if guide.origin == .aiAssisted {
@@ -795,14 +1182,21 @@ private struct DiscoveryCandidateDetail: View {
                                 .foregroundStyle(.tertiary)
                         }
                     }
-                    DiscoveryDetailSection(title: "Skill 简要说明（特色、技巧）", text: guide.purpose)
+                    DiscoveryDetailSection(title: SkillDetailLayout.guideTitles[0], text: guide.purpose)
+                    if let documentURL = candidate.evidence.skillDocumentURL,
+                       documentURL.scheme == "https",
+                       ["github.com", "raw.githubusercontent.com", "api.github.com"].contains(documentURL.host ?? "")
+                    {
+                        Link("查看作者的完整说明", destination: documentURL)
+                            .font(.callout)
+                    }
                     if let useWhen = guide.useWhen, !useWhen.isEmpty {
                         DiscoveryDetailSection(title: "适用场景", text: useWhen)
                     }
 
                     if !guide.experienceSteps.isEmpty {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("体验流程").font(.headline)
+                            Text(SkillDetailLayout.guideTitles[2]).font(.headline)
                             ForEach(Array(guide.experienceSteps.enumerated()), id: \.offset) { index, step in
                                 HStack(alignment: .top, spacing: 10) {
                                     Text("\(index + 1)")
@@ -818,7 +1212,7 @@ private struct DiscoveryCandidateDetail: View {
 
                     if let prompt = guide.starterPrompt, !prompt.isEmpty {
                         VStack(alignment: .leading, spacing: 9) {
-                            Text("提示词参考").font(.headline)
+                            Text(SkillDetailLayout.guideTitles[3]).font(.headline)
                             HStack(alignment: .top) {
                                 Text(prompt)
                                     .font(.callout).textSelection(.enabled)
@@ -856,19 +1250,45 @@ private struct DiscoveryCandidateDetail: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             } else {
-                ContentUnavailableView("选择一个候选", systemImage: "rectangle.and.text.magnifyingglass", description: Text("这里会显示用途、适用场景和使用方式"))
+                if let session = model.selectedDiscoverySession,
+                   let presentation = DiscoveryResultPresentation(session: session),
+                   session.recommendedCandidates.isEmpty
+                {
+                    ContentUnavailableView(
+                        "没有可查看的推荐",
+                        systemImage: "rectangle.and.text.magnifyingglass",
+                        description: Text(presentation.explanation)
+                    )
+                } else {
+                    ContentUnavailableView("选择一个候选", systemImage: "rectangle.and.text.magnifyingglass", description: Text("这里会显示用途、适用场景和使用方式"))
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func displayGuide(for candidate: DiscoveryCandidate) -> SkillUsageGuide {
-        if let guide = candidate.usageGuide { return guide }
-        return .init(
-            purpose: candidate.userFacingSummary ?? "",
-            origin: .authorMaterial,
-            sourceDocuments: candidate.evidence.skillContentVerified ? ["SKILL.md"] : nil
-        )
+        DiscoveryCandidateUsage.guide(for: candidate)
+    }
+}
+
+private struct DiscoveryPopularityMetric: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.callout.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -901,89 +1321,6 @@ private struct DiscoveryFact: View {
     }
 }
 
-private struct MetricCard: View {
-    let title: String; let value: String; let note: String; let color: Color
-    var body: some View { VStack(alignment: .leading, spacing: 7) { HStack { Text(title).font(.caption).foregroundStyle(.secondary); Spacer(); Circle().fill(color).frame(width: 8, height: 8) }; Text(value).font(.title.bold()); Text(note).font(.caption2).foregroundStyle(.tertiary) }.padding().frame(maxWidth: .infinity, alignment: .leading).background(.background, in: RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.4))) }
-}
-
-private struct OverviewView: View {
-    @ObservedObject var model: AppModel
-    let goTo: (SidebarItem) -> Void
-    let reviewConflict: (ConflictGroup) -> Void
-    let reviewAllConflicts: () -> Void
-    private var updateCount: Int {
-        model.snapshot.sourceStates.count { $0.status == .updateAvailable || $0.status == .releasePackageAvailable } +
-            model.snapshot.localSourceStates.count { $0.status == .updateAvailable }
-    }
-    private var sourceAttentionCount: Int {
-        model.snapshot.sourceStates.count {
-            $0.lastCheckIssue != nil || $0.status == .authenticationRequired || $0.status == .unavailable
-        } + model.snapshot.localSourceStates.count {
-            $0.status == .packageReviewRequired || $0.status == .sourceUnavailable
-        }
-    }
-    var body: some View {
-        ScrollView { VStack(alignment: .leading, spacing: 20) {
-            HStack(alignment: .top) { PageHeader(eyebrow: "当前情况", title: "你的 Skills 一目了然", subtitle: "本机查看到 \(model.scanResult?.candidates.count ?? 0) 份内容；这里优先显示需要你处理的事情。") ; Spacer(); Button("把找到的 Skills 加入管理", action: reviewAllConflicts).disabled(model.scanResult?.candidates.isEmpty != false); if updateCount > 0 { Button("查看 \(updateCount) 个更新") { goTo(.library) } }; Button("选择安装位置") { goTo(.agents) }.buttonStyle(.borderedProminent) }
-            HStack(spacing: 12) {
-                MetricCard(title: "已加入 SkillBox", value: "\(model.snapshot.skills.count)", note: "集中保存在本机", color: .blue)
-                MetricCard(title: "可以更新", value: "\(updateCount)", note: "由你确认后才下载", color: updateCount > 0 ? .blue : .green)
-                MetricCard(title: "需要处理", value: "\((model.scanResult?.conflicts.count ?? 0) + sourceAttentionCount)", note: "内容冲突或来源失效", color: (model.scanResult?.conflicts.isEmpty != false && sourceAttentionCount == 0) ? .green : .orange)
-                MetricCard(title: "已找到的应用", value: "\(model.snapshot.targets.filter { $0.detectionStatus == .available }.count)", note: "共支持 9 款应用", color: .green)
-            }
-            GroupBox("需要你选择") { VStack(alignment: .leading, spacing: 0) {
-                if let conflicts = model.scanResult?.conflicts, !conflicts.isEmpty {
-                    ForEach(conflicts.prefix(5)) { conflict in
-                        ConflictRow(conflict: conflict) { reviewConflict(conflict) }
-                    }
-                    if conflicts.count > 5 {
-                        Divider()
-                        Button("整理全部 \(conflicts.count) 组") { reviewAllConflicts() }
-                            .padding(.top, 10)
-                    }
-                } else { ContentUnavailableView("没有需要处理的同名内容", systemImage: "checkmark.circle", description: Text("以后发现同名但内容不同的 Skill，会在这里请你选择")) }
-            }.padding(.vertical, 4) }
-            GroupBox("应用位置") { LazyVGrid(columns: [GridItem(.adaptive(minimum: 220))], spacing: 10) { ForEach(model.snapshot.targets) { target in HStack { Image(systemName: target.detectionStatus == .available ? "checkmark.circle.fill" : "circle.dashed").foregroundStyle(target.detectionStatus == .available ? .green : .secondary); VStack(alignment: .leading) { Text(target.displayName).font(.callout.weight(.medium)); Text(target.detectionStatus == .available ? "已找到" : "尚未在本机使用").font(.caption2).foregroundStyle(.secondary) }; Spacer() }.padding(10).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 9)).help(target.path) } }.padding(.vertical, 5) }
-        }.frame(maxWidth: .infinity, alignment: .leading).padding(28) }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-}
-
-private struct ConflictRow: View {
-    let conflict: ConflictGroup
-    let action: () -> Void
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                    .frame(width: 24)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("\(conflict.canonicalName) 有 \(conflict.versions.count) 份不同内容")
-                        .font(.callout.weight(.medium))
-                    Text("点击查看来源并选择保留哪一份")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
-            .contentShape(Rectangle())
-            .background(isHovering ? Color.accentColor.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
-        .accessibilityHint("查看这些版本并选择一份加入 SkillBox")
-    }
-}
-
 private struct LibraryView: View {
     @ObservedObject var model: AppModel
     @Binding var selectedSkillID: UUID?
@@ -991,67 +1328,25 @@ private struct LibraryView: View {
     let importLocal: () -> Void
     let importGitHub: () -> Void
     let openSettings: () -> Void
+    let openAISettings: () -> Void
     let connectGitHub: () -> Void
     @State private var searchText = ""
     @State private var filter: SkillListFilter = .all
     @State private var isAddMenuHovered = false
     var selected: SkillRecord? { model.snapshot.skills.first { $0.id == selectedSkillID } ?? model.snapshot.skills.first }
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .top) {
-                PageHeader(eyebrow: "集中管理", title: "我的 Skills", subtitle: "每个 Skill 在这里保留一份，再由你决定安装到哪些应用。")
-                Spacer()
-                if !model.snapshot.skills.isEmpty {
-                    HStack(spacing: 10) {
-                        if !model.snapshot.sourceStates.isEmpty {
-                            Button {
-                                model.startGitHubUpdateCheck()
-                            } label: {
-                                Label("检查更新", systemImage: "arrow.triangle.2.circlepath")
-                            }
-                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                            .disabled(model.isBusy)
-                            .help("检查 GitHub 来源是否有新版本")
-                        }
-                        if !model.isGitHubConnected {
-                            Button(action: model.isGitHubConfigured ? connectGitHub : openSettings) {
-                                Label(model.isGitHubConfigured ? "连接 GitHub" : "GitHub 登录暂不可用", systemImage: "person.crop.circle.badge.plus")
-                            }
-                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                            .help(model.isGitHubConfigured ? "连接后可以添加和跟踪你选中的私人仓库；公开仓库无需连接" : "查看 GitHub 登录状态")
-                        }
-                        Menu {
-                            Button("从电脑文件夹添加", action: importLocal)
-                            Button("从 GitHub 仓库添加", action: importGitHub)
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "plus")
-                                Text("添加 Skill")
-                                Image(systemName: "chevron.down")
-                                    .font(.caption2.weight(.bold))
-                            }
-                            .font(.callout.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                Color.accentColor.opacity(isAddMenuHovered ? 0.86 : 1),
-                                in: RoundedRectangle(cornerRadius: 8)
-                            )
-                            .contentShape(RoundedRectangle(cornerRadius: 8))
-                        }
-                        .menuStyle(.borderlessButton)
-                        .menuIndicator(.hidden)
-                        .fixedSize()
-                        .onHover { isAddMenuHovered = $0 }
-                        .help("从电脑文件夹或 GitHub 仓库添加 Skill")
-                        .accessibilityLabel("添加 Skill")
-                    }
-                    .padding(.top, 1)
-                }
-            }
-            .padding(28)
+        Group {
             if model.snapshot.skills.isEmpty {
+                VStack(spacing: 0) {
+                    HStack(alignment: .top) {
+                        PageHeader(
+                            eyebrow: "全局 Skill",
+                            title: "我的 Skills",
+                            subtitle: "在这里集中管理来自电脑文件夹和 GitHub 的 Skills。"
+                        )
+                        Spacer()
+                    }
+                    .padding(28)
                 ContentUnavailableView {
                     Label("还没有添加 Skill", systemImage: "shippingbox")
                 } description: {
@@ -1068,22 +1363,28 @@ private struct LibraryView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.bottom, 72)
+                }
             } else {
                 HSplitView {
-                    SkillOrganizerSidebar(
-                        model: model,
-                        selectedSkillID: $selectedSkillID,
-                        showSyncPreview: $showSyncPreview,
-                        searchText: $searchText,
-                        filter: $filter
-                    )
-                        .frame(minWidth: 280, idealWidth: 330)
+                    VStack(spacing: 0) {
+                        libraryPaneHeader
+                        Divider()
+                        SkillOrganizerSidebar(
+                            model: model,
+                            selectedSkillID: $selectedSkillID,
+                            showSyncPreview: $showSyncPreview,
+                            searchText: $searchText,
+                            filter: $filter
+                        )
+                    }
+                    .frame(minWidth: 290, idealWidth: 350, maxWidth: 410)
                     if let selected {
                         SkillDetailView(
                             model: model,
                             skill: selected,
                             showSyncPreview: $showSyncPreview,
-                            openSettings: openSettings
+                            openSettings: openSettings,
+                            openAISettings: openAISettings
                         ) {
                             selectedSkillID = model.snapshot.skills.first?.id
                         }
@@ -1096,6 +1397,70 @@ private struct LibraryView: View {
         .onAppear {
             if selectedSkillID == nil { selectedSkillID = model.snapshot.skills.first?.id }
         }
+    }
+
+    private var libraryPaneHeader: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("我的 Skills")
+                    .font(.title3.bold())
+                Text("\(model.snapshot.skills.count) 份全局 Skill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            if !model.snapshot.sourceStates.isEmpty || !model.isGitHubConnected {
+                Menu {
+                    if !model.snapshot.sourceStates.isEmpty {
+                        Button {
+                            model.startGitHubUpdateCheck()
+                        } label: {
+                            Label("检查 GitHub 更新", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .disabled(model.isBusy)
+                    }
+                    if !model.isGitHubConnected {
+                        Button(action: model.isGitHubConfigured ? connectGitHub : openSettings) {
+                            Label(model.isGitHubConfigured ? "连接 GitHub" : "GitHub 登录状态", systemImage: "person.crop.circle.badge.plus")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .help("来源检查与 GitHub 设置")
+            }
+
+            Menu {
+                Button("从电脑文件夹添加", action: importLocal)
+                Button("从 GitHub 仓库添加", action: importGitHub)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "plus")
+                    Text("添加")
+                }
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 7)
+                .background(
+                    Color.accentColor.opacity(isAddMenuHovered ? 0.86 : 1),
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .onHover { isAddMenuHovered = $0 }
+            .help("从电脑文件夹或 GitHub 仓库添加 Skill")
+            .accessibilityLabel("添加 Skill")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
     }
 }
 
@@ -1422,12 +1787,14 @@ private struct SkillOrganizerSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("我的分类").font(.headline)
-                    Text("拖动 Skill 可整理和排序").font(.caption2).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                TextField("搜索 Skills", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+                Picker("筛选", selection: $filter) {
+                    ForEach(SkillListFilter.allCases) { Text($0.rawValue).tag($0) }
                 }
-                Spacer()
+                .labelsHidden()
+                .frame(width: 96)
                 Button {
                     newFolderName = ""
                     showNewFolder = true
@@ -1438,19 +1805,8 @@ private struct SkillOrganizerSidebar: View {
                 .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                 .help("新建文件夹")
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 11)
-            HStack(spacing: 8) {
-                TextField("搜索 Skills", text: $searchText)
-                    .textFieldStyle(.roundedBorder)
-                Picker("筛选", selection: $filter) {
-                    ForEach(SkillListFilter.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .labelsHidden()
-                .frame(width: 96)
-            }
             .padding(.horizontal, 10)
-            .padding(.bottom, 10)
+            .padding(.vertical, 10)
             Divider()
             ScrollView {
                 if hasResults {
@@ -1804,6 +2160,7 @@ private struct SkillOrganizerRow: View {
     }
 
     @ObservedObject var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let skill: SkillRecord
     let folderID: UUID?
     @Binding var selectedSkillID: UUID?
@@ -2610,19 +2967,26 @@ private struct SkillDetailView: View {
         var id: String { rawValue }
     }
 
+    private enum DetailSection: String, CaseIterable, Identifiable {
+        case introduction = "Skill 介绍"
+        case files = "文件详情"
+        var id: String { rawValue }
+    }
+
     @ObservedObject var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let skill: SkillRecord
     @Binding var showSyncPreview: Bool
     let openSettings: () -> Void
+    let openAISettings: () -> Void
     let onDeleted: () -> Void
     @State private var showRawSource = false
-    @State private var showDetails = true
+    @State private var showInstallManager = false
     @State private var showSafetyDetails = false
     @State private var directoryEntries: [SkillDirectoryEntry] = []
     @State private var usageGuide: SkillUsageGuide?
     @State private var isLoadingDirectory = true
-    @State private var isDetailsHeaderHovered = false
+    @State private var detailSection: DetailSection = .introduction
     @State private var confirmation: Confirmation?
     @State private var showRemovalOptions = false
     @State private var showSyncPreviewAfterRemovalOptions = false
@@ -2643,230 +3007,70 @@ private struct SkillDetailView: View {
     private var mainMarkdown: SkillDirectoryEntry? {
         directoryEntries.first { $0.relativePath.caseInsensitiveCompare("SKILL.md") == .orderedSame }
     }
+    private var githubState: GitHubSourceState? {
+        model.snapshot.sourceStates.first { $0.skillID == skill.id }
+    }
+    private var localState: LocalSourceState? {
+        model.snapshot.localSourceStates.first { $0.skillID == skill.id }
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 17) {
-                HStack(alignment: .top, spacing: 14) {
-                    Text(String(skill.displayName.prefix(1)).uppercased())
-                        .font(.title3.bold())
-                        .foregroundStyle(.blue)
-                        .frame(width: 48, height: 48)
-                        .background(.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(skill.displayName)
-                            .font(.title2.bold())
-                        Text(skill.description)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(3)
-                    }
-                    Spacer()
-                    Button("在 Finder 中显示") { Task { model.reveal(await model.contentURL(for: skill)) } }
-                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                }
-                HStack(spacing: 8) {
-                    Label(skill.source.displayName, systemImage: "tray.full")
-                    Text("·")
-                    Label("\(skill.riskReport.scannedFileCount) 个文件", systemImage: "doc.on.doc")
-                    Text("·")
-                    Text(skill.importedAt, format: .dateTime.year().month().day())
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 20) {
+                detailHeader
+                detailMetaGrid
 
-                if skill.source.kind == .github {
-                    GitHubSourceCard(model: model, skill: skill, openSettings: openSettings)
-                } else if model.snapshot.localSourceStates.contains(where: { $0.skillID == skill.id }) {
-                    LocalSourceCard(model: model, skill: skill)
+                if sourceNeedsAttention {
+                    sourceAttentionCard
                 }
-                Divider()
 
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .top, spacing: 14) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("安装到你的 AI 应用")
-                                .font(.headline)
-                            Text(installationAvailabilityMessage)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Text("\(availableTargets.count) 个可用")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(availableTargets.isEmpty ? Color.secondary : Color.accentColor)
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 5)
-                            .background(
-                                (availableTargets.isEmpty ? Color.secondary : Color.accentColor).opacity(0.09),
-                                in: Capsule()
-                            )
-                    }
-                    HStack(spacing: 8) {
-                        Button {
-                            if model.needsRiskAcknowledgement(for: skill) {
-                                continueInstallAfterRiskConfirmation = true
-                                showRiskConfirmation = true
+                installSummaryCard
+                detailTabs
+
+                Group {
+                    if detailSection == .introduction {
+                        VStack(alignment: .leading, spacing: 16) {
+                            usageGuideActionBar
+
+                            if let usageGuide {
+                                SkillUsageGuideCard(guide: usageGuide)
+                            } else if model.generatingUsageGuideSkillIDs.contains(skill.id) {
+                                SkillUsageGuideLoadingCard()
                             } else {
-                                confirmation = .installEverywhere
+                                ContentUnavailableView(
+                                    "还没有生成使用说明",
+                                    systemImage: "text.bubble",
+                                    description: Text("点击上方按钮，让 AI 把这份 Skill 讲清楚。")
+                                )
+                                .frame(minHeight: 150)
                             }
-                        } label: {
-                            Label("安装到全部应用", systemImage: "square.and.arrow.down")
-                        }
-                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
-                        .fixedSize(horizontal: true, vertical: false)
-                        .disabled(availableTargets.isEmpty || skill.riskReport.isBlocked)
-                        .help(installButtonHelp)
-                        Button {
-                            confirmation = .uninstallEverywhere
-                        } label: {
-                            Label("卸载全部", systemImage: "square.and.arrow.up")
-                        }
-                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                        .fixedSize(horizontal: true, vertical: false)
-                        .disabled(!hasInstallations && !hasDesiredAssignments)
-                        Spacer()
-                    }
-                    Divider().opacity(0.55)
-                    HStack {
-                        Text(installedTargets.isEmpty ? "尚未通过 SkillBox 安装" : "已安装到 \(installedTargets.count) 个应用")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("删除这份 Skill", role: .destructive) {
-                            if hasInstallations {
-                                showRemovalOptions = true
-                            } else {
-                                confirmation = .delete
+
+                            if model.shouldShowRiskAttention(for: skill) {
+                                riskSummary
+                            } else if model.isRiskAcknowledged(for: skill) {
+                                riskAcknowledgedSummary
                             }
                         }
-                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .destructiveText))
+                    } else {
+                        fileDetails
                     }
                 }
-                .padding(16)
-                .background(.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
-                .overlay(RoundedRectangle(cornerRadius: 13).stroke(.blue.opacity(0.15)))
-
-                if !installedTargets.isEmpty {
-                    VStack(alignment: .leading, spacing: 9) {
-                        Text("已安装到")
-                            .font(.headline)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 7) {
-                                ForEach(installedTargets) { target in
-                                    Label(target.displayName, systemImage: "checkmark.circle.fill")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .padding(.horizontal, 9)
-                                        .padding(.vertical, 6)
-                                        .background(.quaternary.opacity(0.4), in: Capsule())
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if let usageGuide {
-                    SkillUsageGuideCard(guide: usageGuide)
-                }
-
-                if model.shouldShowRiskAttention(for: skill) {
-                    riskSummary
-                } else if model.isRiskAcknowledged(for: skill) {
-                    riskAcknowledgedSummary
-                }
-
-                VStack(spacing: 0) {
-                    Button {
-                        if reduceMotion { showDetails.toggle() }
-                        else {
-                            withAnimation(.easeOut(duration: 0.14)) { showDetails.toggle() }
-                        }
-                    } label: {
-                        HStack(spacing: 9) {
-                            Image(systemName: "chevron.right")
-                                .font(.caption.weight(.semibold))
-                                .rotationEffect(.degrees(showDetails ? 90 : 0))
-                                .foregroundStyle(isDetailsHeaderHovered ? Color.blue : Color.secondary)
-                            Text("查看 Skill 详情").font(.headline)
-                            Spacer()
-                            Text("\(skill.riskReport.scannedFileCount) 个文件")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(14)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .background(isDetailsHeaderHovered ? Color.blue.opacity(0.07) : .clear)
-                    .onHover { isDetailsHeaderHovered = $0 }
-                    .help(showDetails ? "收起 Skill 详情" : "展开 Skill 详情")
-
-                    if showDetails {
-                        Divider()
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack(spacing: 11) {
-                            Image(systemName: "doc.richtext.fill")
-                                .font(.title3)
-                                .foregroundStyle(.blue)
-                                .frame(width: 34, height: 34)
-                                .background(.background, in: RoundedRectangle(cornerRadius: 9))
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("SKILL.md").font(.callout.weight(.semibold))
-                                Text(mainMarkdownSubtitle).font(.caption2).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button("预览") { showRawSource = true }
-                                .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                        }
-                        .padding(11)
-                        .background(.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 11))
-
-                        HStack {
-                            Text("完整目录").font(.callout.weight(.semibold))
-                            Spacer()
-                            Text("文件只读展示").font(.caption2).foregroundStyle(.tertiary)
-                        }
-                        if isLoadingDirectory {
-                            ProgressView("正在读取目录…")
-                                .frame(maxWidth: .infinity, minHeight: 120)
-                        } else if directoryEntries.isEmpty {
-                            ContentUnavailableView("无法读取目录", systemImage: "folder.badge.questionmark")
-                                .frame(minHeight: 140)
-                        } else {
-                            ScrollView {
-                                LazyVStack(alignment: .leading, spacing: 1) {
-                                    Label(skill.canonicalName, systemImage: "folder.fill")
-                                        .font(.caption.weight(.semibold))
-                                        .padding(.horizontal, 9)
-                                        .padding(.vertical, 6)
-                                    ForEach(directoryEntries) { entry in
-                                        SkillDirectoryRow(entry: entry)
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(5)
-                            }
-                            .frame(maxHeight: 240)
-                            .background(.quaternary.opacity(0.24), in: RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.separator.opacity(0.45)))
-                        }
-                        Text("内容校验码 \(String(skill.fingerprint.prefix(12)))… · 用于发现文件是否被改过")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(14)
-                    .transition(.opacity)
-                    }
-                }
-                .background(.background, in: RoundedRectangle(cornerRadius: 13))
-                .overlay(RoundedRectangle(cornerRadius: 13).stroke(.separator.opacity(0.55)))
+                .id(detailSection)
+                .transition(.opacity)
             }
-            .padding(26)
+            .frame(maxWidth: 940, alignment: .leading)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 24)
         }
         .sheet(isPresented: $showRawSource) {
             SkillRawSourceView(model: model, skill: skill, isPresented: $showRawSource)
+        }
+        .sheet(isPresented: $showInstallManager) {
+            SkillInstallManagerView(
+                model: model,
+                skill: skill,
+                isPresented: $showInstallManager
+            )
         }
         .sheet(isPresented: $showRiskConfirmation, onDismiss: {
             continueInstallAfterRiskConfirmation = false
@@ -2900,6 +3104,9 @@ private struct SkillDetailView: View {
             directoryEntries = await entries
             usageGuide = await guide
             isLoadingDirectory = false
+        }
+        .onChange(of: model.usageGuideRevision) { _, _ in
+            Task { usageGuide = await model.skillUsageGuide(skill) }
         }
         .confirmationDialog(
             confirmationTitle,
@@ -2941,9 +3148,457 @@ private struct SkillDetailView: View {
         }
     }
 
-    private var mainMarkdownSubtitle: String {
-        guard let fileSize = mainMarkdown?.fileSize else { return "主说明文件" }
-        return "主说明文件 · \(ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file))"
+    private var usageGuideActionBar: some View {
+        HStack(spacing: 12) {
+            Label(SkillDetailLayout.aiGuideLabel, systemImage: "sparkles")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            if model.generatingUsageGuideSkillIDs.contains(skill.id) {
+                HStack(spacing: 7) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("正在获取…")
+                }
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(minHeight: 32)
+            } else {
+                Button(model.isAgnesUsageGuideConfigured
+                       ? (usageGuide?.origin == .aiAssisted ? "重新获取" : "获取 Skill 介绍")
+                       : SkillDetailLayout.connectAIButtonTitle) {
+                    guard model.isAgnesUsageGuideConfigured else {
+                        model.noticeMessage = "请在“设置 → AI”中连接用于生成 Skill 介绍的 AI 服务。"
+                        openAISettings()
+                        return
+                    }
+                    Task {
+                        if let generated = await model.generateSkillUsageGuide(skill) {
+                            usageGuide = generated
+                        }
+                    }
+                }
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                .help(model.isAgnesUsageGuideConfigured
+                      ? "点击后才会把当前 Skill 的说明文件发给你已连接的 AI 服务"
+                      : "先连接你的 AI 服务")
+            }
+        }
+        .padding(.horizontal, 2)
+        .frame(minHeight: 36)
+    }
+
+    private var detailHeader: some View {
+        HStack(alignment: .top, spacing: 15) {
+            Text(String(skill.displayName.prefix(1)).uppercased())
+                .font(.title2.bold())
+                .foregroundStyle(.blue)
+                .frame(width: 54, height: 54)
+                .background(.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 15))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(skill.displayName)
+                    .font(.title2.bold())
+                Text(skill.description)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 16)
+            Button("管理安装") { showInstallManager = true }
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                .fixedSize()
+            Menu {
+                Button("在 Finder 中显示") {
+                    Task { model.reveal(await model.contentURL(for: skill)) }
+                }
+                if skill.source.kind == .github {
+                    Button("在 GitHub 打开") { model.openGitHubSource(skill) }
+                }
+                Divider()
+                Button("删除这份 Skill", role: .destructive) {
+                    requestRemoval()
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .help("更多操作")
+            .accessibilityLabel("更多操作")
+        }
+    }
+
+    private var detailMetaGrid: some View {
+        HStack(alignment: .top, spacing: 11) {
+            detailMetaCard(
+                title: SkillDetailLayout.metaTitles[0],
+                value: sourceKindTitle,
+                detail: sourceDetail,
+                tint: .blue
+            ) {
+                SkillOrganizerSourceIconView(sourceKind: skill.source.kind)
+                    .frame(width: 19, height: 19)
+            }
+            .frame(maxWidth: .infinity)
+
+            detailMetaCard(
+                title: SkillDetailLayout.metaTitles[1],
+                value: currentVersionText,
+                detail: "内容校验码 \(String(skill.fingerprint.prefix(8)))",
+                tint: .secondary
+            ) {
+                Image(systemName: "shippingbox.fill")
+            }
+            .frame(maxWidth: .infinity)
+
+            detailMetaCard(
+                title: SkillDetailLayout.metaTitles[2],
+                value: versionStatusText,
+                detail: versionStatusDetail,
+                tint: versionStatusTint
+            ) {
+                Image(systemName: versionStatusIcon)
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func detailMetaCard<Icon: View>(
+        title: String,
+        value: String,
+        detail: String,
+        tint: Color,
+        @ViewBuilder icon: () -> Icon
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                icon()
+                    .foregroundStyle(tint)
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text(value)
+                .font(.callout.weight(.semibold))
+                .lineLimit(1)
+            Text(detail)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .help(detail)
+        }
+        .padding(13)
+        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
+        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.42)))
+    }
+
+    @ViewBuilder
+    private var sourceAttentionCard: some View {
+        if skill.source.kind == .github {
+            GitHubSourceCard(model: model, skill: skill, openSettings: openSettings)
+        } else if localState != nil {
+            LocalSourceCard(model: model, skill: skill)
+        }
+    }
+
+    private var installSummaryCard: some View {
+        HStack(spacing: 16) {
+            HStack(spacing: -7) {
+                ForEach(Array(installedTargets.prefix(4))) { target in
+                    AgentProductIcon(target: target, size: 28)
+                        .padding(3)
+                        .background(.background, in: Circle())
+                        .overlay(Circle().stroke(.background, lineWidth: 2))
+                }
+                if installedTargets.isEmpty {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.title3)
+                        .foregroundStyle(.blue)
+                        .frame(width: 36, height: 36)
+                        .background(.background, in: Circle())
+                }
+            }
+            .frame(minWidth: 42, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("安装情况")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(installationSummaryTitle)
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(2)
+                Text(installationAvailabilityMessage)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 12)
+            Button("全部安装") {
+                requestInstallEverywhere()
+            }
+            .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+            .fixedSize()
+            .disabled(availableTargets.isEmpty || skill.riskReport.isBlocked)
+            .help(installButtonHelp)
+            Button("全部卸载") {
+                confirmation = .uninstallEverywhere
+            }
+            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+            .fixedSize()
+            .disabled(!hasInstallations && !hasDesiredAssignments)
+        }
+        .padding(16)
+        .background(.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(.blue.opacity(0.14)))
+    }
+
+    private var detailTabs: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(DetailSection.allCases) { section in
+                    Button {
+                        if reduceMotion {
+                            detailSection = section
+                        } else {
+                            withAnimation(.easeOut(duration: 0.16)) {
+                                detailSection = section
+                            }
+                        }
+                    } label: {
+                        VStack(spacing: 0) {
+                            Text(section.rawValue)
+                                .font(.callout.weight(detailSection == section ? .semibold : .regular))
+                                .foregroundStyle(detailSection == section ? Color.primary : Color.secondary)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            Rectangle()
+                                .fill(detailSection == section ? Color.accentColor : Color.clear)
+                                .frame(height: 2)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: SkillDetailLayout.tabMinimumHitHeight)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(SkillDetailTabButtonStyle())
+                    .accessibilityValue(detailSection == section ? "已选中" : "")
+                }
+            }
+
+            if detailSection == .introduction, model.generatingUsageGuideSkillIDs.contains(skill.id) {
+                Label("AI 正在补充这份介绍", systemImage: "sparkles")
+                    .font(.caption2)
+                    .foregroundStyle(.blue)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.top, 7)
+            } else if detailSection == .introduction, let usageGuide {
+                Label(guideSourceNote(usageGuide), systemImage: usageGuide.origin == .aiAssisted ? "sparkles" : "doc.text")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.top, 7)
+            } else {
+                Text("\(skill.riskReport.scannedFileCount) 个文件")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.top, 7)
+            }
+        }
+        .overlay(alignment: .top) {
+            Divider()
+                .offset(y: SkillDetailLayout.tabMinimumHitHeight - 0.5)
+                .zIndex(-1)
+        }
+    }
+
+    private var sourceNeedsAttention: Bool {
+        if let githubState {
+            return githubState.lastCheckIssue != nil || githubState.status != .current
+        }
+        if let localState {
+            return localState.status != .current
+        }
+        return false
+    }
+
+    private var sourceKindTitle: String {
+        switch skill.source.kind {
+        case .github: "GitHub 仓库"
+        case .localFolder: "本地开发文件夹"
+        case .agentDirectory: "应用目录导入"
+        }
+    }
+
+    private var sourceDetail: String {
+        if let githubState { return githubState.repositoryFullName }
+        if let localState {
+            return URL(fileURLWithPath: localState.projectRootPath).lastPathComponent
+        }
+        return skill.source.displayName
+    }
+
+    private var currentVersionText: String {
+        if let githubState {
+            if let name = githubState.currentVersionName, !name.isEmpty { return name }
+            if let commit = githubState.currentCommitSHA, !commit.isEmpty {
+                return "提交 \(String(commit.prefix(7)))"
+            }
+        }
+        if let localState {
+            return "本地快照 \(String(localState.currentPackageFingerprint.prefix(7)))"
+        }
+        return "当前内容"
+    }
+
+    private var versionStatusText: String {
+        if let githubState {
+            if githubState.lastCheckIssue != nil { return "暂时无法检查" }
+            return switch githubState.status {
+            case .current: "已是最新"
+            case .updateAvailable: "有新版本"
+            case .releasePackageAvailable: "安装包可更新"
+            case .packageReviewRequired: "更新前需确认"
+            case .ignored: "已忽略本次更新"
+            case .checkingStopped: "已停止检查"
+            case .authenticationRequired: "需要连接 GitHub"
+            case .unavailable: "来源暂不可用"
+            case .needsInitialCheck: "等待首次检查"
+            }
+        }
+        if let localState {
+            return switch localState.status {
+            case .current: "与开发文件夹一致"
+            case .updateAvailable: "开发内容有更新"
+            case .packageReviewRequired: "更新前需确认"
+            case .sourceUnavailable: "找不到开发文件夹"
+            }
+        }
+        return "当前内容"
+    }
+
+    private var versionStatusDetail: String {
+        if let checkedAt = githubState?.lastCheckedAt ?? localState?.lastCheckedAt {
+            return "检查于 \(checkedAt.formatted(date: .abbreviated, time: .shortened))"
+        }
+        return sourceNeedsAttention ? "点击下方提示继续处理" : "尚未检查来源变化"
+    }
+
+    private var versionStatusTint: Color {
+        guard sourceNeedsAttention else { return .green }
+        if githubState?.status == .updateAvailable ||
+            githubState?.status == .releasePackageAvailable ||
+            localState?.status == .updateAvailable {
+            return .blue
+        }
+        return .orange
+    }
+
+    private var versionStatusIcon: String {
+        guard sourceNeedsAttention else { return "checkmark.circle.fill" }
+        if githubState?.status == .updateAvailable ||
+            githubState?.status == .releasePackageAvailable ||
+            localState?.status == .updateAvailable {
+            return "arrow.down.circle.fill"
+        }
+        return "exclamationmark.circle.fill"
+    }
+
+    private var installationSummaryTitle: String {
+        guard !installedTargets.isEmpty else { return "还没有安装到任何 Agent" }
+        let shownNames = installedTargets.prefix(3).map(\.displayName).joined(separator: "、")
+        if installedTargets.count > 3 {
+            return "已安装到 \(shownNames) 等 \(installedTargets.count) 个 Agent"
+        }
+        return "已安装到 \(shownNames)"
+    }
+
+    private func guideSourceNote(_ guide: SkillUsageGuide) -> String {
+        if guide.origin == .aiAssisted { return "AI 已整理 · 依据当前版本" }
+        return "依据当前版本的作者资料"
+    }
+
+    private func requestInstallEverywhere() {
+        if model.needsRiskAcknowledgement(for: skill) {
+            continueInstallAfterRiskConfirmation = true
+            showRiskConfirmation = true
+        } else {
+            confirmation = .installEverywhere
+        }
+    }
+
+    private func requestRemoval() {
+        if hasInstallations {
+            showRemovalOptions = true
+        } else {
+            confirmation = .delete
+        }
+    }
+
+    private var fileDetails: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text(fileSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if mainMarkdown != nil {
+                    Button("查看 SKILL.md") { showRawSource = true }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                }
+                Button("在 Finder 中显示") {
+                    Task { model.reveal(await model.contentURL(for: skill)) }
+                }
+                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+            }
+            if isLoadingDirectory {
+                ProgressView("正在读取目录…")
+                    .frame(maxWidth: .infinity, minHeight: 150)
+            } else if directoryEntries.isEmpty {
+                ContentUnavailableView("无法读取目录", systemImage: "folder.badge.questionmark")
+                    .frame(minHeight: 170)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        HStack {
+                            Label(skill.canonicalName, systemImage: "folder.fill")
+                                .font(.caption.weight(.semibold))
+                            Spacer()
+                            Text(fileTreeSizeText)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .overlay(alignment: .bottom) { Divider().opacity(0.55) }
+                        ForEach(directoryEntries) { entry in
+                            SkillDirectoryRow(entry: entry)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 430)
+                .background(.background, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.55)))
+            }
+            Text("内容校验码 \(String(skill.fingerprint.prefix(12)))… · 用来确认文件有没有被改过")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private var fileSummary: String {
+        "当前安装版本共 \(fileCount) 个文件 · \(fileTreeSizeText)"
+    }
+
+    private var fileCount: Int {
+        directoryEntries.filter { $0.kind != .directory }.count
+    }
+
+    private var fileTreeSizeText: String {
+        let bytes = directoryEntries.compactMap(\.fileSize).reduce(0, +)
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     @ViewBuilder
@@ -3267,44 +3922,43 @@ private struct SkillDetailView: View {
     }
 }
 
+private struct SkillDetailTabButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                configuration.isPressed ? Color.primary.opacity(0.055) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+    }
+}
+
 private struct SkillUsageGuideCard: View {
     let guide: SkillUsageGuide
     @State private var copiedPrompt = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if guide.origin == .aiAssisted {
-                VStack(alignment: .leading, spacing: 3) {
-                    Label("AI 辅助说明", systemImage: "sparkles")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.blue)
-                    if let sources = guide.sourceDocuments, !sources.isEmpty {
-                        Text("依据：\(sources.joined(separator: "、"))")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-            }
-
-            guideSection(title: "Skill 简要说明（特色、技巧）", icon: "wand.and.stars") {
+        VStack(alignment: .leading, spacing: 12) {
+            guideSectionCard(title: SkillDetailLayout.guideTitles[0], icon: "wand.and.stars") {
                 Text(guide.purpose)
                     .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             if let useWhen = guide.useWhen, !useWhen.isEmpty {
-                Divider()
-                guideSection(title: "适用场景", icon: "checkmark.circle") {
+                guideSectionCard(title: SkillDetailLayout.guideTitles[1], icon: "checkmark.circle") {
                     Text(useWhen)
                         .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
             if !guide.experienceSteps.isEmpty {
-                Divider()
-                guideSection(title: "体验流程", icon: "point.3.connected.trianglepath.dotted") {
-                    VStack(alignment: .leading, spacing: 10) {
+                guideSectionCard(title: SkillDetailLayout.guideTitles[2], icon: "point.3.connected.trianglepath.dotted") {
+                    VStack(alignment: .leading, spacing: 11) {
                         ForEach(Array(guide.experienceSteps.enumerated()), id: \.offset) { index, step in
                             HStack(alignment: .top, spacing: 10) {
                                 Text("\(index + 1)")
@@ -3314,6 +3968,8 @@ private struct SkillUsageGuideCard: View {
                                     .background(.blue.opacity(0.09), in: Circle())
                                 Text(step)
                                     .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .lineSpacing(2)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -3322,11 +3978,11 @@ private struct SkillUsageGuideCard: View {
             }
 
             if let starterPrompt = guide.starterPrompt, !starterPrompt.isEmpty {
-                Divider()
-                guideSection(title: "提示词参考", icon: "quote.bubble") {
+                guideSectionCard(title: SkillDetailLayout.guideTitles[3], icon: "quote.bubble") {
                     HStack(alignment: .center, spacing: 12) {
                         Text(starterPrompt)
                             .font(.callout)
+                            .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 8)
                         Button(copiedPrompt ? "已复制" : "复制") {
@@ -3341,19 +3997,14 @@ private struct SkillUsageGuideCard: View {
                         .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                         .accessibilityHint("复制这句话，可以粘贴给 AI 应用")
                     }
-                    .padding(11)
-                    .background(.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(15)
-        .background(.blue.opacity(0.045), in: RoundedRectangle(cornerRadius: 13))
-        .overlay(RoundedRectangle(cornerRadius: 13).stroke(.blue.opacity(0.13)))
     }
 
     @ViewBuilder
-    private func guideSection<Content: View>(
+    private func guideSectionCard<Content: View>(
         title: String,
         icon: String,
         @ViewBuilder content: () -> Content
@@ -3370,6 +4021,31 @@ private struct SkillUsageGuideCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(15)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(.separator.opacity(0.42)))
+    }
+}
+
+private struct SkillUsageGuideLoadingCard: View {
+    var body: some View {
+        HStack(spacing: 13) {
+            ProgressView()
+                .controlSize(.small)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("正在补齐这份 Skill 介绍")
+                    .font(.callout.weight(.semibold))
+                Text("你可以继续查看文件或管理安装，完成后会在这里自动显示。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
+        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(.separator.opacity(0.42)))
     }
 }
 
@@ -3395,6 +4071,9 @@ private struct SkillDirectoryRow: View {
         .padding(.vertical, 5)
         .foregroundStyle(isMainMarkdown ? Color.blue : Color.primary)
         .contentShape(Rectangle())
+        .overlay(alignment: .bottom) {
+            Divider().opacity(0.38)
+        }
     }
 
     private var isMainMarkdown: Bool {
@@ -3491,21 +4170,183 @@ private struct ReadOnlyTextView: NSViewRepresentable {
     }
 }
 
-private struct AgentsView: View {
+private struct SkillInstallManagerView: View {
     @ObservedObject var model: AppModel
-    let addCustom: () -> Void
-    let addSkill: () -> Void
-    let editCustom: (AgentTarget) -> Void
-    @State private var targetToRemove: AgentTarget?
-    @State private var assignmentProposal: AssignmentProposal?
+    let skill: SkillRecord
+    @Binding var isPresented: Bool
+    @State private var proposal: AssignmentProposal?
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top) {
-                PageHeader(eyebrow: "按需调整", title: "安装到应用", subtitle: "点击一个状态，就会立即让你确认这一项安装或卸载；批量操作仍在 Skill 详情中。")
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("管理安装").font(.title2.bold())
+                    Text("选择把“\(skill.displayName)”安装到哪些应用。每次点击都会先让你确认。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
-                Button("添加其他应用", action: addCustom)
+                Button("完成") { isPresented = false }
+                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+            }
+            .padding(24)
+
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(model.visibleTargets()) { target in
+                        Button {
+                            Task { proposal = await model.prepareAssignmentProposal(skill: skill, target: target) }
+                        } label: {
+                            HStack(spacing: 12) {
+                                AgentProductIcon(target: target, size: 38)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(target.displayName).font(.callout.weight(.semibold))
+                                    Text(target.path)
+                                        .font(.system(.caption2, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Label(statusText(target), systemImage: statusSymbol(target))
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(statusColor(target))
+                            }
+                            .padding(11)
+                            .contentShape(Rectangle())
+                            .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 12))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
+            }
+        }
+        .frame(width: 620, height: 620)
+        .sheet(item: $proposal) { proposal in
+            AgentAssignmentSheet(model: model, proposal: proposal)
+        }
+    }
+
+    private func action(for target: AgentTarget) -> SyncAction? {
+        model.syncPlan?.actions.first { $0.skillID == skill.id && $0.targetID == target.id }
+    }
+
+    private func isDesired(_ target: AgentTarget) -> Bool {
+        model.snapshot.assignments.first { $0.skillID == skill.id && $0.targetID == target.id }?.isDesired == true
+    }
+
+    private func statusText(_ target: AgentTarget) -> String {
+        if action(for: target)?.kind == .blocked || model.hasUnmanagedSameName(skill: skill, target: target) {
+            return "已有同名"
+        }
+        if target.detectionStatus != .available || target.writeStatus != .writable { return "应用不可用" }
+        if action(for: target)?.kind == .update { return "可更新" }
+        return isDesired(target) ? "已安装" : "安装"
+    }
+
+    private func statusSymbol(_ target: AgentTarget) -> String {
+        switch statusText(target) {
+        case "已有同名": "square.stack.3d.up.fill"
+        case "应用不可用": "nosign"
+        case "可更新": "arrow.triangle.2.circlepath"
+        case "已安装": "checkmark.circle.fill"
+        default: "plus.circle.fill"
+        }
+    }
+
+    private func statusColor(_ target: AgentTarget) -> Color {
+        switch statusText(target) {
+        case "已有同名": .orange
+        case "应用不可用": .secondary
+        case "已安装": .green
+        default: .blue
+        }
+    }
+}
+
+private enum MatrixSkillFilter: Hashable {
+    case all
+    case folder(UUID)
+    case uncategorized
+}
+
+private enum AgentMatrixCoordinateSpace {
+    static let name = "agent-installation-matrix"
+}
+
+private struct AgentColumnFramesPreferenceKey: PreferenceKey {
+    static let defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+    }
+}
+
+private struct AgentMatrixBoundsPreferenceKey: PreferenceKey {
+    static let defaultValue = CGRect.zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if !next.isEmpty { value = next }
+    }
+}
+
+private struct AgentsView: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let addCustom: () -> Void
+    let addSkill: () -> Void
+    let editCustom: (AgentTarget) -> Void
+    @State private var assignmentProposal: AssignmentProposal?
+    @State private var searchText = ""
+    @State private var filter: MatrixSkillFilter = .all
+    @State private var showApplicationManager = false
+    @State private var columnDrag = AgentColumnDragSession()
+    @State private var columnFrames: [UUID: CGRect] = [:]
+    @State private var matrixBounds = CGRect.zero
+
+    private var liveTargets: [AgentTarget] { model.visibleTargets() }
+    private var targets: [AgentTarget] {
+        guard columnDrag.isActive else { return liveTargets }
+        let byID = Dictionary(uniqueKeysWithValues: liveTargets.map { ($0.id, $0) })
+        let ordered = columnDrag.previewOrder.compactMap { byID[$0] }
+        let orderedIDs = Set(ordered.map(\.id))
+        return ordered + liveTargets.filter { !orderedIDs.contains($0.id) }
+    }
+
+    private var filteredSkills: [SkillRecord] {
+        let source: [SkillRecord]
+        switch filter {
+        case .all:
+            source = model.snapshot.skills
+        case let .folder(id):
+            source = model.orderedSkills(in: id)
+        case .uncategorized:
+            source = model.orderedSkills(in: nil)
+        }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return source }
+        return source.filter {
+            $0.displayName.localizedCaseInsensitiveContains(query) ||
+                $0.canonicalName.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                PageHeader(
+                    eyebrow: "统一安装",
+                    title: "安装到应用",
+                    subtitle: "查看每个 Skill 安装在哪些应用里，点击一个状态即可安装、更新或卸载。"
+                )
+                Spacer()
+                Button("管理应用") { showApplicationManager = true }
+                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
             }
             .padding(28)
+
             if model.snapshot.skills.isEmpty {
                 ContentUnavailableView {
                     Label("先添加一个 Skill", systemImage: "square.grid.2x2")
@@ -3519,72 +4360,290 @@ private struct AgentsView: View {
                 .padding(.bottom, 72)
             } else {
                 HStack(spacing: 14) {
-                    AssignmentLegend(symbol: "plus", color: .secondary, text: "点击安装")
+                    TextField("搜索当前列表", text: $searchText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 240)
+                    AssignmentLegend(symbol: "plus", color: .blue, text: "安装")
                     AssignmentLegend(symbol: "checkmark", color: .green, text: "已安装")
-                    AssignmentLegend(symbol: "square.stack.3d.up.fill", color: .orange, text: "已有同名，点击比较")
-                    AssignmentLegend(symbol: "link", color: .purple, text: "间接可用")
+                    AssignmentLegend(symbol: "arrow.triangle.2.circlepath", color: .blue, text: "可更新")
+                    AssignmentLegend(symbol: "square.stack.3d.up.fill", color: .orange, text: "已有同名")
                     AssignmentLegend(symbol: "nosign", color: .secondary, text: "应用不可用")
-                    AssignmentLegend(symbol: "exclamationmark", color: .orange, text: "需要处理")
                     Spacer()
+                    Text(columnDrag.isActive ? "松手保存 · 拖出表格或按 Esc 取消" : "拖动表头调整常用顺序")
+                        .font(.caption2)
+                        .foregroundStyle(columnDrag.isActive ? Color.blue : Color.secondary)
+                    Button("恢复默认顺序") {
+                        Task { await model.restoreDefaultTargetOrder() }
+                    }
+                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                    .controlSize(.small)
                 }
                 .padding(.horizontal, 28)
                 .padding(.bottom, 10)
-                ScrollView([.horizontal, .vertical]) {
-                    Grid(horizontalSpacing: 10, verticalSpacing: 8) {
-                        GridRow {
-                            Text("我的 Skills").font(.caption.weight(.semibold)).frame(width: 210, alignment: .leading)
-                            ForEach(model.snapshot.targets) { target in
-                                TargetColumnHeader(
-                                    target: target,
-                                    edit: { editCustom(target) },
-                                    remove: { targetToRemove = target }
-                                )
-                                .frame(width: 84)
-                            }
-                        }
-                        Divider().gridCellColumns(model.snapshot.targets.count + 1)
-                        ForEach(model.snapshot.skills) { skill in
+
+                ScrollViewReader { scrollProxy in
+                    ScrollView([.horizontal, .vertical]) {
+                        Grid(horizontalSpacing: 12, verticalSpacing: 8) {
                             GridRow {
-                                Text(skill.displayName)
-                                    .font(.callout.weight(.medium))
-                                    .frame(width: 210, alignment: .leading)
-                                ForEach(model.snapshot.targets) { target in
-                                    AssignmentButton(model: model, skill: skill, target: target) {
-                                        Task {
-                                            assignmentProposal = await model.prepareAssignmentProposal(skill: skill, target: target)
+                                matrixSkillFilter
+                                    .frame(width: 220, alignment: .leading)
+                                ForEach(targets) { target in
+                                    agentColumnHeader(target)
+                                        .id(target.id)
+                                }
+                            }
+                            Divider().gridCellColumns(targets.count + 1)
+                            ForEach(filteredSkills) { skill in
+                                GridRow {
+                                    HStack(spacing: 9) {
+                                        SkillOrganizerSourceIconView(sourceKind: skill.source.kind)
+                                            .frame(width: 20, height: 20)
+                                        Text(skill.displayName)
+                                            .font(.callout.weight(.medium))
+                                            .lineLimit(1)
+                                        Spacer(minLength: 4)
+                                        if sourceHasUpdate(skill) {
+                                            Text("有新版本")
+                                                .font(.caption2.weight(.semibold))
+                                                .foregroundStyle(.blue)
                                         }
                                     }
-                                    .frame(width: 84)
+                                    .frame(width: 220, alignment: .leading)
+                                    ForEach(targets) { target in
+                                        AssignmentButton(model: model, skill: skill, target: target) {
+                                            Task {
+                                                assignmentProposal = await model.prepareAssignmentProposal(skill: skill, target: target)
+                                            }
+                                        }
+                                        .frame(width: 102)
+                                        .padding(.vertical, 3)
+                                        .background(
+                                            columnDrag.movingTargetID == target.id
+                                                ? Color.blue.opacity(0.055)
+                                                : Color.clear,
+                                            in: RoundedRectangle(cornerRadius: 9)
+                                        )
+                                    }
                                 }
                             }
                         }
+                        .animation(
+                            reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.92),
+                            value: targets.map(\.id)
+                        )
+                        .padding()
+                        .background(.background, in: RoundedRectangle(cornerRadius: 14))
+                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(.separator.opacity(0.45)))
+                        .padding(.horizontal, 28)
+                        .padding(.bottom, 28)
                     }
-                    .padding()
-                    .background(.background, in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.45)))
-                    .padding(.horizontal, 28)
-                    .padding(.bottom, 28)
+                    .background {
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: AgentMatrixBoundsPreferenceKey.self,
+                                value: proxy.frame(in: .named(AgentMatrixCoordinateSpace.name))
+                            )
+                        }
+                    }
+                    .coordinateSpace(name: AgentMatrixCoordinateSpace.name)
+                    .onPreferenceChange(AgentColumnFramesPreferenceKey.self) { columnFrames = $0 }
+                    .onPreferenceChange(AgentMatrixBoundsPreferenceKey.self) { matrixBounds = $0 }
+                    .onChange(of: columnDrag.ghostCenterX) { _, _ in
+                        autoScrollIfNeeded(scrollProxy)
+                    }
+                    .defaultScrollAnchor(.topLeading)
                 }
-                .defaultScrollAnchor(.topLeading)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .confirmationDialog(
-            "移除“\(targetToRemove?.displayName ?? "")”的安装位置？",
-            isPresented: Binding(get: { targetToRemove != nil }, set: { if !$0 { targetToRemove = nil } })
-        ) {
-            if let targetToRemove {
-                Button("移除安装位置", role: .destructive) {
-                    Task { await model.removeCustomTarget(targetToRemove) }
-                    self.targetToRemove = nil
-                }
-            }
-            Button("取消", role: .cancel) { targetToRemove = nil }
-        } message: {
-            Text("这不会删除应用文件夹。若这里仍有 Skill 由 SkillBox 管理，会为了安全阻止移除。")
-        }
         .sheet(item: $assignmentProposal) { proposal in
             AgentAssignmentSheet(model: model, proposal: proposal)
+        }
+        .sheet(isPresented: $showApplicationManager) {
+            ManageApplicationsView(
+                model: model,
+                addCustom: addCustom,
+                editCustom: editCustom
+            )
+        }
+        .onExitCommand { cancelColumnDrag() }
+        .onDisappear { cancelColumnDrag() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
+            cancelColumnDrag()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            cancelColumnDrag()
+        }
+        .onChange(of: liveTargets.map(\.id)) { _, ids in
+            guard let movingTargetID = columnDrag.movingTargetID, !ids.contains(movingTargetID) else { return }
+            cancelColumnDrag()
+        }
+    }
+
+    private func agentColumnHeader(_ target: AgentTarget) -> some View {
+        let isDragging = columnDrag.movingTargetID == target.id
+        let currentFrame = columnFrames[target.id]
+        let ghostOffset = isDragging
+            ? columnDrag.ghostCenterX - (currentFrame?.midX ?? columnDrag.ghostCenterX)
+            : 0
+        let currentIndex = targets.firstIndex(where: { $0.id == target.id }) ?? 0
+
+        return ZStack {
+            TargetColumnHeader(target: target, showsDragHandle: true)
+                .opacity(isDragging ? 0.18 : 1)
+                .background(
+                    isDragging ? Color.blue.opacity(0.07) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 11)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11)
+                        .stroke(isDragging ? Color.blue.opacity(0.9) : Color.clear, lineWidth: 2)
+                )
+
+            if isDragging {
+                TargetColumnHeader(target: target, showsDragHandle: true)
+                    .padding(.horizontal, 5)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.blue.opacity(0.55)))
+                    .shadow(color: .black.opacity(0.18), radius: 13, y: 7)
+                    .offset(x: ghostOffset)
+                    .allowsHitTesting(false)
+                    .zIndex(20)
+            }
+        }
+        .frame(width: 102)
+        .contentShape(RoundedRectangle(cornerRadius: 11))
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: AgentColumnFramesPreferenceKey.self,
+                    value: [target.id: proxy.frame(in: .named(AgentMatrixCoordinateSpace.name))]
+                )
+            }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 7, coordinateSpace: .named(AgentMatrixCoordinateSpace.name))
+                .onChanged { updateColumnDrag(target, value: $0) }
+                .onEnded { finishColumnDrag(target, value: $0) }
+        )
+        .contextMenu {
+            Button("向左移动") { moveColumn(target, offset: -1) }
+                .disabled(currentIndex == 0)
+            Button("向右移动") { moveColumn(target, offset: 1) }
+                .disabled(currentIndex >= targets.count - 1)
+        }
+        .accessibilityAction(named: Text("向左移动")) { moveColumn(target, offset: -1) }
+        .accessibilityAction(named: Text("向右移动")) { moveColumn(target, offset: 1) }
+        .zIndex(isDragging ? 50 : 0)
+    }
+
+    private func updateColumnDrag(_ target: AgentTarget, value: DragGesture.Value) {
+        if !columnDrag.isActive {
+            guard let frame = columnFrames[target.id] else { return }
+            columnDrag.begin(
+                targetID: target.id,
+                orderedTargetIDs: liveTargets.map(\.id),
+                frame: frame,
+                pointerX: value.startLocation.x
+            )
+        }
+        guard columnDrag.movingTargetID == target.id else { return }
+        var next = columnDrag
+        let changed = next.update(pointerX: value.location.x, frames: columnFrames)
+        if changed, !reduceMotion {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            withAnimation(.spring(response: 0.26, dampingFraction: 0.92)) { columnDrag = next }
+        } else {
+            columnDrag = next
+        }
+    }
+
+    private func finishColumnDrag(_ target: AgentTarget, value: DragGesture.Value) {
+        updateColumnDrag(target, value: value)
+        let commit = matrixBounds.insetBy(dx: -18, dy: -28).contains(value.location)
+        let order = columnDrag.finish(commit: commit)
+        guard let order else { return }
+        Task { await model.saveVisibleTargetOrder(order) }
+    }
+
+    private func cancelColumnDrag() {
+        guard columnDrag.isActive else { return }
+        if reduceMotion { columnDrag.cancel() }
+        else { withAnimation(.easeOut(duration: 0.14)) { columnDrag.cancel() } }
+    }
+
+    private func moveColumn(_ target: AgentTarget, offset: Int) {
+        var ids = liveTargets.map(\.id)
+        guard let index = ids.firstIndex(of: target.id) else { return }
+        let destination = index + offset
+        guard ids.indices.contains(destination) else { return }
+        ids.swapAt(index, destination)
+        Task { await model.saveVisibleTargetOrder(ids) }
+    }
+
+    private func autoScrollIfNeeded(_ proxy: ScrollViewProxy) {
+        guard columnDrag.isActive,
+              let movingTargetID = columnDrag.movingTargetID,
+              let index = targets.firstIndex(where: { $0.id == movingTargetID }),
+              !matrixBounds.isEmpty
+        else { return }
+
+        let edgeZone: CGFloat = 72
+        if columnDrag.ghostCenterX > matrixBounds.maxX - edgeZone,
+           targets.indices.contains(index + 1) {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+                proxy.scrollTo(targets[index + 1].id, anchor: .trailing)
+            }
+        } else if columnDrag.ghostCenterX < matrixBounds.minX + edgeZone,
+                  targets.indices.contains(index - 1) {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+                proxy.scrollTo(targets[index - 1].id, anchor: .leading)
+            }
+        }
+    }
+
+    private var matrixSkillFilter: some View {
+        Menu {
+            Button("全部 Skills") { filter = .all }
+            Divider()
+            ForEach(model.orderedFolders()) { folder in
+                Button(folder.name) { filter = .folder(folder.id) }
+            }
+            Button("未分类") { filter = .uncategorized }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "folder")
+                Text(filterName)
+                    .lineLimit(1)
+                Spacer()
+                Text("\(filteredSkills.count)")
+                    .foregroundStyle(.secondary)
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+    }
+
+    private var filterName: String {
+        switch filter {
+        case .all: "全部 Skills"
+        case let .folder(id): model.orderedFolders().first { $0.id == id }?.name ?? "全部 Skills"
+        case .uncategorized: "未分类"
+        }
+    }
+
+    private func sourceHasUpdate(_ skill: SkillRecord) -> Bool {
+        model.snapshot.sourceStates.contains {
+            $0.skillID == skill.id && ($0.status == .updateAvailable || $0.status == .releasePackageAvailable)
+        } || model.snapshot.localSourceStates.contains {
+            $0.skillID == skill.id && $0.status == .updateAvailable
         }
     }
 }
@@ -3608,29 +4667,217 @@ private struct AssignmentLegend: View {
 
 private struct TargetColumnHeader: View {
     let target: AgentTarget
-    let edit: () -> Void
-    let remove: () -> Void
+    var showsDragHandle = false
 
     var body: some View {
-        VStack(spacing: 3) {
-            Text(target.displayName)
-                .font(.caption2.weight(.medium))
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-            if target.isCustom {
-                Menu {
-                    Button("编辑名称或位置", action: edit)
-                    Button("移除安装位置", role: .destructive, action: remove)
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .help("管理这个安装位置")
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 5) {
+                AgentProductIcon(target: target, size: 28)
+                Text(target.displayName)
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                Text(target.detectionStatus == .available ? "已找到" : "未找到")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(target.detectionStatus == .available ? Color.green : Color.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            if showsDragHandle {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .rotationEffect(.degrees(90))
+                    .padding(5)
+                    .accessibilityHidden(true)
             }
         }
+        .frame(minHeight: 65)
+        .contentShape(Rectangle())
+        .help("\(target.displayName) · \(target.path) · 按住拖动可调整顺序")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(target.displayName)，\(target.detectionStatus == .available ? "已找到" : "未找到")，可调整顺序")
+    }
+}
+
+private struct ManageApplicationsView: View {
+    @ObservedObject var model: AppModel
+    let addCustom: () -> Void
+    let editCustom: (AgentTarget) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var pendingRemoval: AgentTarget?
+
+    private var hidden: [AgentTarget] { model.hiddenBuiltinTargets() }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("管理应用").font(.title2.bold())
+                    Text("决定哪些应用出现在安装表中。移出列表不会删除电脑上的应用、文件夹或 Skill 文件。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("完成") { dismiss() }
+                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+            }
+            .padding(24)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    applicationSection(title: "安装表中的应用", count: model.visibleTargets().count) {
+                        ForEach(model.visibleTargets()) { target in
+                            applicationRow(target) {
+                                if target.isCustom { editCustom(target) }
+                            } trailing: {
+                                Button(target.isCustom ? "删除" : "移出") { pendingRemoval = target }
+                                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .destructiveText))
+                            }
+                        }
+                    }
+
+                    applicationSection(title: "已从列表移除", count: hidden.count) {
+                        if hidden.isEmpty {
+                            Text("没有被移出的预设应用")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 8)
+                        } else {
+                            ForEach(hidden) { target in
+                                applicationRow(target) {} trailing: {
+                                    Button("加回来") {
+                                        Task { _ = await model.setTargetVisibility(target, isVisible: true) }
+                                    }
+                                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                                }
+                            }
+                        }
+                        HStack {
+                            Text("预设应用随时可以恢复，自定义应用不会受影响。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("恢复全部预设应用") { Task { await model.restoreAllDefaultTargets() } }
+                                .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                                .disabled(hidden.isEmpty)
+                        }
+                        .padding(.top, 4)
+                    }
+
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("列表里没有我的应用").font(.headline)
+                            Text("填写产品名称，再选择它已经存在的全局 Skills 文件夹。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("添加自定义应用") { addCustom() }
+                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                    }
+                    .padding(16)
+                    .background(.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
+            }
+        }
+        .frame(width: 760, height: 680)
+        .confirmationDialog(
+            removalTitle,
+            isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } })
+        ) {
+            if let target = pendingRemoval {
+                if hasManagedCopies(target) {
+                    Button("保留文件并停止管理", role: .destructive) {
+                        Task {
+                            if target.isCustom {
+                                await model.removeCustomTarget(target, preservingManagedCopies: true)
+                            } else {
+                                _ = await model.setTargetVisibility(
+                                    target,
+                                    isVisible: false,
+                                    preservingManagedCopies: true
+                                )
+                            }
+                        }
+                        pendingRemoval = nil
+                    }
+                } else {
+                    Button(target.isCustom ? "删除自定义应用" : "从列表移出", role: .destructive) {
+                        Task {
+                            if target.isCustom { await model.removeCustomTarget(target) }
+                            else { _ = await model.setTargetVisibility(target, isVisible: false) }
+                        }
+                        pendingRemoval = nil
+                    }
+                }
+            }
+            Button("取消", role: .cancel) { pendingRemoval = nil }
+        } message: {
+            Text(removalMessage)
+        }
+    }
+
+    @ViewBuilder
+    private func applicationSection<Content: View>(
+        title: String,
+        count: Int,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Text(title).font(.headline)
+                Spacer()
+                Text("\(count) 个").font(.caption).foregroundStyle(.secondary)
+            }
+            content()
+        }
+    }
+
+    private func applicationRow<Trailing: View>(
+        _ target: AgentTarget,
+        action: @escaping () -> Void,
+        @ViewBuilder trailing: () -> Trailing
+    ) -> some View {
+        HStack(spacing: 12) {
+            AgentProductIcon(target: target, size: 38)
+            VStack(alignment: .leading, spacing: 3) {
+                Button(action: action) {
+                    Text(target.displayName).font(.callout.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .disabled(!target.isCustom)
+                Text(target.path)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Text(target.detectionStatus == .available ? "已找到" : "未找到")
+                .font(.caption)
+                .foregroundStyle(target.detectionStatus == .available ? Color.green : Color.secondary)
+            trailing()
+        }
+        .padding(11)
+        .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func hasManagedCopies(_ target: AgentTarget) -> Bool {
+        model.snapshot.installations.contains { $0.targetID == target.id }
+    }
+
+    private var removalTitle: String {
+        guard let target = pendingRemoval else { return "移出这个应用？" }
+        return target.isCustom ? "删除“\(target.displayName)”？" : "从安装表移出“\(target.displayName)”？"
+    }
+
+    private var removalMessage: String {
+        guard let target = pendingRemoval else { return "" }
+        if hasManagedCopies(target) {
+            return "这里仍有 SkillBox 安装的副本。保留文件并停止管理后，现有文件不会删除，SkillBox 也不会再更新或卸载它们。"
+        }
+        return "只会改变 SkillBox 的应用列表，不会删除电脑上的应用、文件夹或 Skill 文件。"
     }
 }
 
@@ -3647,12 +4894,6 @@ private struct AssignmentButton: View {
 
     private var action: SyncAction? {
         model.syncPlan?.actions.first { $0.skillID == skill.id && $0.targetID == target.id }
-    }
-
-    private var indirect: Bool {
-        target.kind == .kimiCode && model.scanResult?.candidates.contains(where: {
-            $0.fingerprint == skill.fingerprint && !$0.sourceURL.path.hasPrefix(target.path + "/")
-        }) == true
     }
 
     private var available: Bool {
@@ -3682,35 +4923,31 @@ private struct AssignmentButton: View {
     }
 
     private var symbol: String {
-        if action?.blockReason == .unmanagedConflict || hasUnmanagedSameName {
+        if action?.kind == .blocked || hasUnmanagedSameName {
             return "square.stack.3d.up.fill"
         }
-        if action?.kind == .blocked { return "exclamationmark" }
         if !available && !desired { return "nosign" }
-        if action?.kind == .create || action?.kind == .update { return "arrow.up" }
-        if indirect && !desired { return "link" }
+        if action?.kind == .update { return "arrow.triangle.2.circlepath" }
+        if action?.kind == .create { return "plus" }
         return desired ? "checkmark" : "plus"
     }
 
     private var color: Color {
-        if action?.blockReason == .unmanagedConflict || hasUnmanagedSameName { return .orange }
         if action?.kind == .blocked { return .orange }
+        if hasUnmanagedSameName { return .orange }
         if !available { return .secondary }
-        if indirect && !desired { return .purple }
-        return desired ? .green : .secondary
+        if action?.kind == .update { return .blue }
+        return desired ? .green : .blue
     }
 
     private var help: String {
-        if action?.blockReason == .unmanagedConflict || hasUnmanagedSameName {
-            return "这里已有同名 Skill，点击比较内容"
+        if action?.kind == .blocked || hasUnmanagedSameName {
+            return action?.summary ?? "这里已有一份不由 SkillBox 管理的同名 Skill，点击查看差异"
         }
         if !available && !desired {
             return "本机没有找到可用的安装位置"
         }
-        if indirect && !desired {
-            return "Kimi Code 已能通过其他位置使用这个 Skill"
-        }
-        if action?.kind == .blocked { return action?.summary ?? "这项需要处理" }
+        if action?.kind == .update { return "SkillBox 中已有新版本，点击更新" }
         return desired ? "已安装，点击卸载" : "点击安装到 \(target.displayName)"
     }
 }
@@ -3961,10 +5198,20 @@ private struct AgentAssignmentSheet: View {
 
 private struct HistoryView: View {
     @ObservedObject var model: AppModel
+    var embeddedInSettings = false
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                PageHeader(eyebrow: "可以反悔", title: "最近操作", subtitle: "安装、卸载和原件更新都会留在这里，需要时可以恢复。")
+                if embeddedInSettings {
+                    SettingsDetailHeader(page: .history)
+                } else {
+                    PageHeader(
+                        eyebrow: "可以反悔",
+                        title: "操作记录与恢复",
+                        subtitle: "安装、更新和卸载都会留下记录，需要时可以恢复到操作前。"
+                    )
+                }
                 if model.snapshot.transactions.isEmpty {
                     ContentUnavailableView("还没有操作记录", systemImage: "clock.arrow.circlepath", description: Text("第一次安装、更新或卸载完成后会出现在这里"))
                 } else {
@@ -3973,7 +5220,14 @@ private struct HistoryView: View {
                     }
                 }
             }
-            .padding(28)
+            .frame(
+                maxWidth: embeddedInSettings ? SettingsLayout.contentMaxWidth : .infinity,
+                alignment: .leading
+            )
+            .padding(.horizontal, embeddedInSettings ? 34 : 28)
+            .padding(.top, embeddedInSettings ? 34 : 28)
+            .padding(.bottom, embeddedInSettings ? 42 : 28)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
         .sheet(isPresented: Binding(
             get: { model.pendingUndoTransaction != nil },
@@ -4186,20 +5440,77 @@ private struct UndoPreviewView: View {
     }
 }
 
-private struct SettingsView: View {
-    private enum SettingsPage: String, CaseIterable, Identifiable {
-        case general = "通用"
-        case ai = "AI"
-        case github = "GitHub"
-        case data = "数据"
+private enum SettingsPage: String, CaseIterable, Identifiable {
+    case ai = "AI 服务"
+    case github = "GitHub"
+    case storage = "存储与记录"
+    case history = "操作记录与恢复"
+    case privacy = "隐私与安全"
 
-        var id: String { rawValue }
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .ai: SettingsLayout.aiServiceSymbol
+        case .github: "chevron.left.forwardslash.chevron.right"
+        case .storage: "externaldrive.fill"
+        case .history: "clock.arrow.circlepath"
+        case .privacy: "checkmark.shield.fill"
+        }
     }
 
+    var tint: Color {
+        switch self {
+        case .ai: .purple
+        case .github: .primary
+        case .storage: .blue
+        case .history: .orange
+        case .privacy: .green
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .ai: "决定哪些功能使用 AI，并分别管理每家服务的连接信息。"
+        case .github: "连接私人仓库，并管理 SkillBox 可以读取的仓库范围。"
+        case .storage: "查看 SkillBox 在这台 Mac 上保存了什么，并清理不再需要的寻找记录。"
+        case .history: "安装、更新和卸载都会留下记录，需要时可以恢复到操作前。"
+        case .privacy: "了解 SkillBox 什么时候读取文件、访问网络，以及如何保护你的内容。"
+        }
+    }
+}
+
+private struct SettingsPageIcon: View {
+    let page: SettingsPage
+    let size: CGFloat
+    var isSelected = false
+
+    var body: some View {
+        Group {
+            if page == .github, SettingsLayout.githubUsesOfficialMark {
+                GitHubSourceMark()
+                    .frame(width: size * 0.5, height: size * 0.5)
+            } else {
+                Image(systemName: page.icon)
+                    .font(.system(size: size * 0.42, weight: .semibold))
+            }
+        }
+        .foregroundStyle(isSelected ? Color.white : page.tint)
+        .frame(width: size, height: size)
+        .background(
+            isSelected ? Color.accentColor : page.tint.opacity(0.1),
+            in: RoundedRectangle(cornerRadius: size * 0.28)
+        )
+        .accessibilityHidden(true)
+    }
+}
+
+private struct SettingsView: View {
     @ObservedObject var model: AppModel
-    @State private var selectedSettingsPage: SettingsPage = .general
+    @Binding var selectedSettingsPage: SettingsPage
     @State private var selectedAIProviderID = "agnes"
     @State private var aiKeyDraft = ""
+    @State private var aiStatusProviderID: String?
     @State private var confirmDeleteAIKey = false
     @State private var confirmDisconnect = false
     @State private var confirmClearGitHub = false
@@ -4213,366 +5524,40 @@ private struct SettingsView: View {
             ?? AISettings.defaults.configurations[0]
     }
 
+    private var agnesConfiguration: AIProviderConfiguration {
+        model.aiSettings.configuration(id: "agnes")
+            ?? AISettings.defaults.configurations[0]
+    }
+
+    private var discoveryConfiguration: AIProviderConfiguration? {
+        model.aiSettings.selectedConfiguration
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("设置分类", selection: $selectedSettingsPage) {
-                ForEach(SettingsPage.allCases) { page in
-                    Text(page.rawValue).tag(page)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 440)
-            .padding(.horizontal, 24)
-            .padding(.top, 18)
-            .padding(.bottom, 8)
+        HStack(spacing: 0) {
+            SettingsNavigationPane(
+                model: model,
+                selection: $selectedSettingsPage
+            )
+            .frame(width: SettingsLayout.navigationWidth)
 
-            Form {
-            if selectedSettingsPage == .ai {
-            Section("AI 助手") {
-                Toggle("在「发现 Skills」中使用 AI 理解需求", isOn: Binding(
-                    get: { model.aiSettings.isEnabled },
-                    set: { model.setAIEnabled($0) }
-                ))
+            Divider()
 
-                Text("开启后，SkillBox 会先用你选择的模型把模糊需求整理成更合适的搜索词，再寻找公开 Skill。关闭后仍可直接搜索。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("接入模型")
-                        .font(.callout.weight(.semibold))
-
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
-                        ForEach(model.aiSettings.configurations) { configuration in
-                            let isSelected = selectedAIProviderID == configuration.id
-                            let isConnected = model.configuredAIProviderIDs.contains(configuration.id)
-                            Button {
-                                selectedAIProviderID = configuration.id
-                                aiKeyDraft = ""
-                                model.selectAIProvider(configuration.id)
-                            } label: {
-                                HStack(spacing: 10) {
-                                    Text(configuration.displayName == "自定义 API" ? "+" : String(configuration.displayName.prefix(1)))
-                                        .font(.callout.weight(.bold))
-                                        .foregroundStyle(.blue)
-                                        .frame(width: 34, height: 34)
-                                        .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(configuration.displayName)
-                                            .font(.callout.weight(.semibold))
-                                            .foregroundStyle(.primary)
-                                        Text(isConnected ? "连接记录已保存" : "未连接")
-                                            .font(.caption2)
-                                            .foregroundStyle(isConnected ? Color.blue : Color.secondary)
-                                    }
-                                    Spacer(minLength: 0)
-                                    if isSelected {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundStyle(.blue)
-                                    }
-                                }
-                                .padding(10)
-                                .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
-                                .background(
-                                    isSelected ? Color.blue.opacity(0.08) : Color(nsColor: .controlBackgroundColor),
-                                    in: RoundedRectangle(cornerRadius: 12)
-                                )
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(isSelected ? Color.blue.opacity(0.55) : Color.secondary.opacity(0.15), lineWidth: 1)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .help("接入 \(configuration.displayName)")
-                        }
-                    }
-                }
-
-                if selectedAIConfiguration.kind == .custom {
-                    TextField("https://example.com/v1", text: Binding(
-                        get: { selectedAIConfiguration.baseURL },
-                        set: { model.updateAIConfiguration(providerID: selectedAIProviderID, baseURL: $0) }
-                    ))
-                    .textFieldStyle(.roundedBorder)
-                    LabeledContent("接口地址") {
-                        Text("支持 OpenAI 兼容接口")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    TextField("模型名称", text: Binding(
-                        get: { selectedAIConfiguration.model },
-                        set: { model.updateAIConfiguration(providerID: selectedAIProviderID, model: $0) }
-                    ))
-                    .textFieldStyle(.roundedBorder)
-                } else {
-                    Picker("模型", selection: Binding(
-                        get: { selectedAIConfiguration.model },
-                        set: { model.selectAIModel(providerID: selectedAIProviderID, model: $0) }
-                    )) {
-                        ForEach(selectedAIConfiguration.recommendedModels, id: \.self) { modelName in
-                            Text(modelName).tag(modelName)
-                        }
-                    }
-                    Text("\(selectedAIConfiguration.displayName) 的接口地址已由 SkillBox 预设。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack(spacing: 10) {
-                    SecureField(
-                        model.configuredAIProviderIDs.contains(selectedAIProviderID)
-                            ? "连接记录已保存，留空可重新测试"
-                            : "粘贴 API Key",
-                        text: $aiKeyDraft
-                    )
-                    .textFieldStyle(.roundedBorder)
-
-                    Button(model.configuredAIProviderIDs.contains(selectedAIProviderID) ? "测试连接" : "保存并测试") {
-                        let key = aiKeyDraft
-                        Task {
-                            await model.saveAndTestAIKey(providerID: selectedAIProviderID, apiKey: key)
-                            if model.configuredAIProviderIDs.contains(selectedAIProviderID) { aiKeyDraft = "" }
-                        }
-                    }
-                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
-                    .disabled(
-                        model.isTestingAIConnection ||
-                            (!model.configuredAIProviderIDs.contains(selectedAIProviderID) && aiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    )
-                }
-
-                HStack {
-                    if !model.aiConnectionStatus.isEmpty {
-                        Label(
-                            model.aiConnectionStatus,
-                            systemImage: model.aiConnectionStatus.contains("成功") ? "checkmark.circle.fill" : "info.circle.fill"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(model.aiConnectionStatus.contains("成功") ? Color.green : Color.orange)
-                    } else {
-                        Text("API Key 只保存在这台 Mac 的钥匙串中。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if selectedAIConfiguration.apiKeyPage != nil {
-                        Button("获取 API Key") { model.openAIKeyPage(providerID: selectedAIProviderID) }
-                            .buttonStyle(.link)
-                    }
-                    if model.configuredAIProviderIDs.contains(selectedAIProviderID) {
-                        Button("删除密钥", role: .destructive) { confirmDeleteAIKey = true }
-                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .destructiveText))
-                    }
-                }
-
-                Toggle("允许 AI 整理本地和私人 Skill 的使用说明", isOn: Binding(
-                    get: { model.aiSettings.allowPrivateSkillContent },
-                    set: { model.setAllowPrivateSkillContent($0) }
-                ))
-
-                Label(
-                    model.aiSettings.allowPrivateSkillContent
-                        ? "只发送 SKILL.md、README 和 agents/references 中的文字说明，不发送脚本、密钥或整个 Skill 库。每个内容版本只分析一次。"
-                        : "公开 GitHub Skill 可直接整理；本地和私人 Skill 需要你在这里明确允许后才会发送说明文字。",
-                    systemImage: "lock.shield"
-                )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            }
-
-            if selectedSettingsPage == .github {
-            Section("GitHub 账号") {
-                if model.isGitHubConnected {
-                    HStack(spacing: 12) {
-                        Image(systemName: model.githubAuthorizedRepositories.isEmpty ? "person.crop.circle.badge.checkmark" : "checkmark.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(model.githubAuthorizedRepositories.isEmpty ? .blue : .green)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("GitHub 连接记录已保存").font(.headline)
-                            Text(model.githubAuthorizedRepositories.isEmpty
-                                 ? "上次已确认身份。使用私人仓库时会自动验证；如需读取，还要选择允许 SkillBox 访问的仓库。"
-                                 : "已保存你选择的仓库，读取时会自动验证连接；SkillBox 不能修改其中内容。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("管理可访问仓库") { model.manageGitHubRepositories() }
-                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                        Menu {
-                            Button("断开连接") { confirmDisconnect = true }
-                            Button("在 GitHub 撤销授权") { confirmOpenGitHubRevoke = true }
-                            Divider()
-                            Button("清除 GitHub 信息", role: .destructive) { confirmClearGitHub = true }
-                        } label: {
-                            Label("更多", systemImage: "ellipsis.circle")
-                        }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
-                    }
-
-                    if model.githubAuthorizedRepositories.isEmpty {
-                        HStack(spacing: 12) {
-                            if model.isWaitingForGitHubRepositorySelection {
-                                ProgressView().controlSize(.small).frame(width: 28, height: 28)
-                            } else {
-                                Image(systemName: "folder.badge.plus")
-                                    .foregroundStyle(.blue)
-                                    .frame(width: 28, height: 28)
-                            }
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(model.isWaitingForGitHubRepositorySelection ? "正在等待你选择仓库" : "还差一步：选择仓库")
-                                    .font(.callout.weight(.semibold))
-                                Text("在 GitHub 选好并安装后，直接回到 SkillBox，这里会自动完成。")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button(model.isWaitingForGitHubRepositorySelection ? "重新打开 GitHub" : "选择仓库") { model.manageGitHubRepositories() }
-                                .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
-                        }
-                        .padding(12)
-                        .background(.blue.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-                    } else {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("可访问仓库").font(.callout.weight(.semibold))
-                                Spacer()
-                                Text("\(model.githubAuthorizedRepositories.count) 个")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            ForEach(Array(model.githubAuthorizedRepositories.prefix(showAllRepositories ? model.githubAuthorizedRepositories.count : 6))) { repository in
-                                HStack(spacing: 9) {
-                                    Image(systemName: repository.isPrivate ? "lock.fill" : "globe")
-                                        .foregroundStyle(repository.isPrivate ? .orange : .blue)
-                                        .frame(width: 18)
-                                    Text(repository.fullName)
-                                    Spacer()
-                                    Text(repository.isPrivate ? "私人" : "公开")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(.vertical, 2)
-                            }
-                            if model.githubAuthorizedRepositories.count > 6 {
-                                Button(showAllRepositories ? "收起仓库列表" : "查看全部仓库") {
-                                    showAllRepositories.toggle()
-                                }
-                                .buttonStyle(.link)
-                            }
-                        }
-                        .padding(.top, 4)
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Label("连接 GitHub", systemImage: "person.crop.circle.badge.plus")
-                            .font(.headline)
-                        Text("只有添加私人仓库时才需要连接。公开仓库不登录也能添加和检查。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Label("你只需在 GitHub 页面确认身份和选择仓库，页面跳转和结果检查由 SkillBox 完成。", systemImage: "wand.and.stars")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        HStack(spacing: 10) {
-                            GitHubConnectionStep(number: 1, title: "确认身份", detail: "打开 GitHub")
-                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
-                            GitHubConnectionStep(number: 2, title: "选择仓库", detail: "只选需要的")
-                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
-                            GitHubConnectionStep(number: 3, title: "回到 SkillBox", detail: "开始检查更新")
-                        }
-
-                        if model.isGitHubConfigured {
-                            Button("开始连接") { Task { await model.connectPrivateGitHub() } }
-                                .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
-                                .disabled(model.isBusy)
-                        } else {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Label("当前版本尚未配置 GitHub 登录", systemImage: "exclamationmark.circle.fill")
-                                    .font(.callout.weight(.semibold))
-                                Text("这不是加载过程。公开仓库仍可以直接添加和检查。")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 11))
-                        }
-                    }
-                    if let authorization = model.githubAuthorization {
-                        GitHubDeviceAuthorizationCard(model: model, authorization: authorization)
-                    }
-                }
-                if !model.githubLoginStatus.isEmpty {
-                    Text(model.githubLoginStatus)
-                        .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-            }
-            }
-
-            if selectedSettingsPage == .general {
-            Section("数据与隐私") {
-                LabeledContent("SkillBox 保存位置", value: model.libraryRoot.path)
-                LabeledContent("联网", value: "只在添加 GitHub 来源、检查更新或主动寻找 Skill 时")
-            }
-            }
-
-            if selectedSettingsPage == .data {
-            Section("寻找记录") {
-                LabeledContent("已保存", value: "\(model.discoverySessions.count) 条")
-                LabeledContent("占用空间", value: ByteCountFormatter.string(fromByteCount: model.discoveryStorageBytes, countStyle: .file))
-                Text("开始新的寻找不会删除之前的结果。你可以继续任意一条记录，也可以在这里清理。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                ForEach(model.discoverySessions.prefix(5)) { session in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(session.title).lineLimit(1)
-                            Text("\(session.candidates.count) 个候选 · \(session.updatedAt.formatted(date: .abbreviated, time: .shortened))")
-                                .font(.caption2).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("删除", role: .destructive) { Task { await model.deleteDiscoverySession(session) } }
-                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .destructiveText))
-                    }
-                }
-                HStack {
-                    Button("在 Finder 中显示") { model.reveal(model.discoverySessionsDirectory) }
-                    Spacer()
-                    Button("清空寻找记录", role: .destructive) { confirmClearDiscoverySessions = true }
-                        .disabled(model.discoverySessions.isEmpty)
-                }
-            }
-            }
-
-            if selectedSettingsPage == .general {
-            Section("安全承诺") {
-                Label("查看 Skill 时不会运行里面的文件", systemImage: "checkmark.shield")
-                Label("已有文件不会被悄悄替换", systemImage: "hand.raised")
-                Label("如果其他软件改过文件，SkillBox 会先停下来提醒你", systemImage: "exclamationmark.triangle")
-            }
-            Section {
-                Button("重新查看欢迎说明") { model.showOnboarding = true }
-                Button("在访达中打开保存位置") { model.reveal(model.libraryRoot) }
-            }
-            }
-            }
+            detailContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 820)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .padding(.top, 12)
+        .background(Color(nsColor: .windowBackgroundColor))
         .task {
             selectedAIProviderID = model.aiSettings.selectedProviderID
-            if model.isGitHubConnected && model.githubAuthorizedRepositories.isEmpty {
-                await model.refreshGitHubRepositories()
-            }
+            await refreshGitHubIfNeeded()
+        }
+        .onChange(of: selectedSettingsPage) { _, page in
+            guard page == .github else { return }
+            Task { await refreshGitHubIfNeeded() }
         }
         .confirmationDialog("删除这个 API Key？", isPresented: $confirmDeleteAIKey) {
             Button("删除密钥", role: .destructive) {
+                aiStatusProviderID = selectedAIProviderID
                 Task { await model.deleteAIKey(providerID: selectedAIProviderID) }
             }
             Button("取消", role: .cancel) {}
@@ -4589,23 +5574,1134 @@ private struct SettingsView: View {
             Button("清除 GitHub 信息", role: .destructive) { Task { await model.clearGitHubInformation() } }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("SkillBox 会删除登录信息、仓库地址和更新记录。现有 Skills 会保留为本地副本，之后不会再从 GitHub 检查更新。")
+            Text("SkillBox 会删除登录信息和仓库跟踪记录。已经保存在“我的 Skills”中的内容不会删除。")
         }
         .confirmationDialog("前往 GitHub 撤销授权？", isPresented: $confirmOpenGitHubRevoke) {
             Button("打开 GitHub") { model.openGitHubAuthorizationSettings() }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("GitHub 端的访问许可需要在 GitHub 设置中撤销。完成后也可以回到这里清除本机信息。")
+            Text("GitHub 端的访问许可需要在 GitHub 设置中撤销。完成后也可以回到这里断开本机连接。")
         }
         .confirmationDialog("清空所有寻找记录？", isPresented: $confirmClearDiscoverySessions) {
             Button("清空记录", role: .destructive) { Task { await model.deleteAllDiscoverySessions() } }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("会删除本机保存的需求、补充条件和候选列表。已加入「我的 Skills」的内容不会删除。")
+            Text("会删除本机保存的需求、补充条件和候选列表。已加入“我的 Skills”的内容不会删除。")
+        }
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        switch selectedSettingsPage {
+        case .ai:
+            SettingsDetailPage(page: .ai) { aiContent }
+        case .github:
+            SettingsDetailPage(page: .github) { githubContent }
+        case .storage:
+            SettingsDetailPage(page: .storage) { storageContent }
+        case .history:
+            HistoryView(model: model, embeddedInSettings: true)
+        case .privacy:
+            SettingsDetailPage(page: .privacy) { privacyContent }
+        }
+    }
+
+    @ViewBuilder
+    private var aiContent: some View {
+        SettingsSectionHeading(
+            title: "使用位置",
+            trailing: "先决定用在哪里，再管理服务"
+        )
+
+        HStack(alignment: .top, spacing: 12) {
+            SettingsCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top, spacing: 10) {
+                        AIServiceSymbol(kind: .agnes, size: 34)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Skill 介绍")
+                                .font(.callout.weight(.semibold))
+                            Text("固定使用 Agnes")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 4)
+                        SettingsBadge(
+                            title: model.configuredAIProviderIDs.contains("agnes") ? "已连接" : "未连接",
+                            color: model.configuredAIProviderIDs.contains("agnes") ? .green : .secondary
+                        )
+                    }
+
+                    Text("只有你在某份 Skill 中点击“获取 Skill 介绍”时，才会把经过隐藏处理的说明文字发送给 Agnes。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Divider()
+
+                    HStack {
+                        Text(agnesConfiguration.model)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Button("管理 Agnes") {
+                            selectedAIProviderID = "agnes"
+                            aiKeyDraft = ""
+                        }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+
+            SettingsCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "sparkle.magnifyingglass")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.blue)
+                            .frame(width: 34, height: 34)
+                            .background(.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("发现 Skills")
+                                .font(.callout.weight(.semibold))
+                            Text(discoveryConfiguration?.displayName ?? "还未选择服务")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 4)
+                        Toggle("", isOn: Binding(
+                            get: { model.aiSettings.isEnabled },
+                            set: { model.setAIEnabled($0) }
+                        ))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .help("决定“发现 Skills”是否使用 AI 帮你整理需求和比较候选")
+                    }
+
+                    Text("开启后，AI 会帮你整理搜索需求和比较候选；关闭后仍然可以搜索。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Divider()
+
+                    HStack {
+                        Text("使用服务")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Picker("发现 Skills 使用的 AI 服务", selection: Binding(
+                            get: { model.aiSettings.selectedProviderID },
+                            set: { model.selectAIProvider($0) }
+                        )) {
+                            ForEach(model.aiSettings.configurations) { configuration in
+                                Text(configuration.displayName)
+                                    .tag(configuration.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+
+        SettingsSectionHeading(
+            title: "AI 服务",
+            trailing: "\(model.configuredAIProviderIDs.count) 个已连接"
+        )
+
+        SettingsCard(padding: 0) {
+            VStack(spacing: 0) {
+                ForEach(Array(model.aiSettings.configurations.enumerated()), id: \.element.id) { index, configuration in
+                    AIServiceSelectionRow(
+                        configuration: configuration,
+                        isSelected: selectedAIProviderID == configuration.id,
+                        isConnected: model.configuredAIProviderIDs.contains(configuration.id)
+                    ) {
+                        selectedAIProviderID = configuration.id
+                        aiKeyDraft = ""
+                    }
+
+                    if index < model.aiSettings.configurations.count - 1 {
+                        Divider().padding(.leading, 62)
+                    }
+                }
+            }
+        }
+
+        aiManagementCard
+    }
+
+    private var aiManagementCard: some View {
+        let configuration = selectedAIConfiguration
+        let isConnected = model.configuredAIProviderIDs.contains(configuration.id)
+
+        return SettingsCard {
+            VStack(alignment: .leading, spacing: 15) {
+                HStack(spacing: 11) {
+                    AIServiceSymbol(kind: configuration.kind, size: 38)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("管理 \(configuration.displayName)")
+                            .font(.headline)
+                        Text(isConnected ? "连接已经过测试" : "填写自己的 API Key 后测试连接")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    SettingsBadge(
+                        title: isConnected ? "已连接" : "未连接",
+                        color: isConnected ? .green : .secondary
+                    )
+                }
+
+                Divider()
+
+                if configuration.kind == .custom {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("接口地址")
+                            .font(.caption.weight(.semibold))
+                        TextField("https://example.com/v1", text: Binding(
+                            get: { configuration.baseURL },
+                            set: { model.updateAIConfiguration(providerID: configuration.id, baseURL: $0) }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                        Text("支持 OpenAI 兼容接口；公网地址必须使用 HTTPS。")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("模型名称")
+                            .font(.caption.weight(.semibold))
+                        TextField("例如 model-name", text: Binding(
+                            get: { configuration.model },
+                            set: { model.updateAIConfiguration(providerID: configuration.id, model: $0) }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                    }
+                } else {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("模型")
+                                .font(.callout.weight(.semibold))
+                            Text(configuration.kind == .agnes
+                                 ? "Agnes 用于生成 Skill 介绍"
+                                 : "SkillBox 已预设官方接口地址")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Picker("模型", selection: Binding(
+                            get: { configuration.model },
+                            set: {
+                                model.updateAIConfiguration(
+                                    providerID: configuration.id,
+                                    model: $0
+                                )
+                            }
+                        )) {
+                            ForEach(configuration.recommendedModels, id: \.self) { modelName in
+                                Text(modelName).tag(modelName)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: 260)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("API Key")
+                        .font(.caption.weight(.semibold))
+
+                    HStack(spacing: 10) {
+                        SecureField(
+                            isConnected ? "已经保存，留空可重新测试" : "粘贴 API Key",
+                            text: $aiKeyDraft
+                        )
+                        .textFieldStyle(.roundedBorder)
+
+                        Button {
+                            let providerID = configuration.id
+                            let key = aiKeyDraft
+                            aiStatusProviderID = providerID
+                            Task {
+                                await model.saveAndTestAIKey(providerID: providerID, apiKey: key)
+                                if model.configuredAIProviderIDs.contains(providerID) {
+                                    aiKeyDraft = ""
+                                }
+                            }
+                        } label: {
+                            if model.isTestingAIConnection && aiStatusProviderID == configuration.id {
+                                HStack(spacing: 7) {
+                                    ProgressView().controlSize(.small)
+                                    Text("正在测试")
+                                }
+                            } else {
+                                Text(isConnected ? "测试连接" : "保存并测试")
+                            }
+                        }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                        .disabled(
+                            model.isTestingAIConnection ||
+                                (!isConnected && aiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        )
+                    }
+                }
+
+                HStack(alignment: .center, spacing: 10) {
+                    if aiStatusProviderID == configuration.id,
+                       !model.aiConnectionStatus.isEmpty
+                    {
+                        Label(
+                            model.aiConnectionStatus,
+                            systemImage: model.aiConnectionStatus.contains("成功")
+                                ? "checkmark.circle.fill"
+                                : "info.circle.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(
+                            model.aiConnectionStatus.contains("成功")
+                                ? Color.green
+                                : Color.orange
+                        )
+                        .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Label(
+                            "API Key 只保存在这台 Mac 的钥匙串中",
+                            systemImage: "key.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    if configuration.apiKeyPage != nil {
+                        Button("获取 API Key") {
+                            model.openAIKeyPage(providerID: configuration.id)
+                        }
+                        .buttonStyle(.link)
+                    }
+
+                    if isConnected {
+                        Button("删除密钥", role: .destructive) {
+                            confirmDeleteAIKey = true
+                        }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .destructiveText))
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var githubContent: some View {
+        if model.isGitHubConnected {
+            SettingsStatusBanner(
+                icon: "checkmark",
+                title: "GitHub 已连接",
+                detail: model.githubAuthorizedRepositories.isEmpty
+                    ? "身份连接已经保存。选择仓库后，SkillBox 才能读取对应的私人仓库。"
+                    : "SkillBox 可以读取你选中的仓库，但不能修改仓库内容。",
+                color: .green
+            ) {
+                Button("管理可访问仓库") {
+                    model.manageGitHubRepositories()
+                }
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+            }
+
+            SettingsSectionHeading(
+                title: "可访问仓库",
+                trailing: "\(model.githubAuthorizedRepositories.count) 个"
+            )
+
+            SettingsCard(padding: 0) {
+                VStack(spacing: 0) {
+                    if model.githubAuthorizedRepositories.isEmpty {
+                        HStack(spacing: 12) {
+                            if model.isWaitingForGitHubRepositorySelection {
+                                ProgressView().controlSize(.small)
+                                    .frame(width: 34, height: 34)
+                            } else {
+                                Image(systemName: "folder.badge.plus")
+                                    .foregroundStyle(.blue)
+                                    .frame(width: 34, height: 34)
+                                    .background(.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
+                            }
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(model.isWaitingForGitHubRepositorySelection ? "正在等待你选择仓库" : "还没有选择仓库")
+                                    .font(.callout.weight(.semibold))
+                                Text("前往 GitHub 选择 SkillBox 可以读取的仓库。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button(model.isWaitingForGitHubRepositorySelection ? "重新打开 GitHub" : "选择仓库") {
+                                model.manageGitHubRepositories()
+                            }
+                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                        }
+                        .padding(16)
+                    } else {
+                        ForEach(
+                            Array(model.githubAuthorizedRepositories.prefix(
+                                showAllRepositories ? model.githubAuthorizedRepositories.count : 6
+                            ).enumerated()),
+                            id: \.element.id
+                        ) { index, repository in
+                            HStack(spacing: 11) {
+                                Image(systemName: repository.isPrivate ? "lock.fill" : "globe")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(repository.isPrivate ? .orange : .blue)
+                                    .frame(width: 34, height: 34)
+                                    .background(
+                                        (repository.isPrivate ? Color.orange : Color.blue).opacity(0.09),
+                                        in: RoundedRectangle(cornerRadius: 10)
+                                    )
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(repository.fullName)
+                                        .font(.callout.weight(.medium))
+                                        .lineLimit(1)
+                                    Text(repository.isPrivate ? "私人仓库" : "公开仓库")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("在 GitHub 查看") {
+                                    openGitHubRepository(repository.fullName)
+                                }
+                                .buttonStyle(.link)
+                            }
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: 58)
+
+                            if index < min(
+                                model.githubAuthorizedRepositories.count,
+                                showAllRepositories ? model.githubAuthorizedRepositories.count : 6
+                            ) - 1 {
+                                Divider().padding(.leading, 62)
+                            }
+                        }
+
+                        if model.githubAuthorizedRepositories.count > 6 {
+                            Divider()
+                            Button(showAllRepositories ? "收起仓库列表" : "查看全部仓库") {
+                                showAllRepositories.toggle()
+                            }
+                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        }
+                    }
+                }
+            }
+
+            SettingsSectionHeading(title: "连接管理")
+
+            SettingsCard {
+                VStack(spacing: 0) {
+                    SettingsActionRow(
+                        icon: "person.crop.circle.badge.minus",
+                        title: "断开这台 Mac 的 GitHub 连接",
+                        detail: "只删除本机登录信息，公开仓库和已经保存的 Skills 不受影响。",
+                        buttonTitle: "断开连接"
+                    ) {
+                        confirmDisconnect = true
+                    }
+
+                    Divider().padding(.leading, 46)
+
+                    SettingsActionRow(
+                        icon: "rectangle.portrait.and.arrow.forward",
+                        title: "在 GitHub 撤销访问许可",
+                        detail: "打开 GitHub 官方设置，由你亲自撤销 SkillBox 的权限。",
+                        buttonTitle: "打开 GitHub"
+                    ) {
+                        confirmOpenGitHubRevoke = true
+                    }
+
+                    Divider().padding(.leading, 46)
+
+                    SettingsActionRow(
+                        icon: "trash",
+                        title: "清除 GitHub 信息",
+                        detail: "删除本机登录和仓库跟踪记录，已经保存的 Skill 内容会保留。",
+                        buttonTitle: "清除信息",
+                        isDestructive: true
+                    ) {
+                        confirmClearGitHub = true
+                    }
+                }
+            }
+        } else {
+            SettingsStatusBanner(
+                icon: "person.crop.circle.badge.plus",
+                title: "连接 GitHub",
+                detail: "只有读取私人仓库时才需要连接；公开仓库无需登录。",
+                color: .blue
+            ) {
+                EmptyView()
+            }
+
+            SettingsSectionHeading(title: "连接步骤")
+
+            SettingsCard {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 10) {
+                        GitHubConnectionStep(number: 1, title: "确认身份", detail: "打开 GitHub")
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                        GitHubConnectionStep(number: 2, title: "选择仓库", detail: "只选需要的")
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                        GitHubConnectionStep(number: 3, title: "回到 SkillBox", detail: "自动完成连接")
+                    }
+
+                    if model.isGitHubConfigured {
+                        Button("开始连接") {
+                            Task { await model.connectPrivateGitHub() }
+                        }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
+                        .disabled(model.isBusy)
+                    } else {
+                        Label(
+                            "当前版本尚未配置私人仓库登录，公开仓库仍然可以直接使用。",
+                            systemImage: "info.circle.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                    }
+                }
+            }
+        }
+
+        if let authorization = model.githubAuthorization {
+            GitHubDeviceAuthorizationCard(model: model, authorization: authorization)
+        }
+
+        if !model.githubLoginStatus.isEmpty {
+            Label(model.githubLoginStatus, systemImage: "info.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private var storageContent: some View {
+        SettingsSectionHeading(title: "SkillBox 保存位置")
+
+        SettingsCard {
+            HStack(spacing: 12) {
+                Image(systemName: "archivebox.fill")
+                    .foregroundStyle(.blue)
+                    .frame(width: 38, height: 38)
+                    .background(.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 11))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Skill 库与恢复数据")
+                        .font(.callout.weight(.semibold))
+                    Text(model.libraryRoot.path)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+                Spacer()
+                Button("在 Finder 中显示") {
+                    model.reveal(model.libraryRoot)
+                }
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+            }
+        }
+
+        SettingsSectionHeading(
+            title: "寻找记录",
+            trailing: "\(model.discoverySessions.count) 条 · \(formattedDiscoveryStorage)"
+        )
+
+        SettingsCard(padding: 0) {
+            VStack(spacing: 0) {
+                if model.discoverySessions.isEmpty {
+                    ContentUnavailableView(
+                        "还没有寻找记录",
+                        systemImage: "sparkle.magnifyingglass",
+                        description: Text("开始寻找 Skill 后，需求和候选会保存在这里。")
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 150)
+                } else {
+                    ForEach(Array(model.discoverySessions.prefix(5).enumerated()), id: \.element.id) { index, session in
+                        HStack(spacing: 12) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.orange)
+                                .frame(width: 34, height: 34)
+                                .background(.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(session.title)
+                                    .font(.callout.weight(.medium))
+                                    .lineLimit(1)
+                                Text("\(session.candidates.count) 个候选 · \(session.updatedAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("删除", role: .destructive) {
+                                Task { await model.deleteDiscoverySession(session) }
+                            }
+                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .destructiveText))
+                        }
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: 58)
+
+                        if index < min(model.discoverySessions.count, 5) - 1 {
+                            Divider().padding(.leading, 62)
+                        }
+                    }
+
+                    Divider()
+
+                    HStack(spacing: 10) {
+                        Text("开始新的寻找不会删除旧记录。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("在 Finder 中显示") {
+                            model.reveal(model.discoverySessionsDirectory)
+                        }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                        Button("清空记录", role: .destructive) {
+                            confirmClearDiscoverySessions = true
+                        }
+                        .buttonStyle(SkillBoxHoverButtonStyle(kind: .destructiveText))
+                    }
+                    .padding(14)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var privacyContent: some View {
+        SettingsSectionHeading(title: "SkillBox 的安全边界")
+
+        SettingsCard(padding: 0) {
+            VStack(spacing: 0) {
+                SettingsSafetyRow(
+                    icon: "eye.fill",
+                    title: "查看 Skill 时不会运行里面的文件",
+                    detail: "扫描、预览和风险检查只读取内容，不执行脚本、构建或安装命令。",
+                    color: .blue
+                )
+                Divider().padding(.leading, 62)
+                SettingsSafetyRow(
+                    icon: "hand.raised.fill",
+                    title: "不会悄悄替换已有文件",
+                    detail: "安装、更新和卸载前都会展示变化，需要你确认后才会写入。",
+                    color: .orange
+                )
+                Divider().padding(.leading, 62)
+                SettingsSafetyRow(
+                    icon: "arrow.uturn.backward.circle.fill",
+                    title: "每次写入都会留下恢复记录",
+                    detail: "如果目标文件后来又被其他软件修改，恢复会先停下来保护新内容。",
+                    color: .purple
+                )
+                Divider().padding(.leading, 62)
+                SettingsSafetyRow(
+                    icon: "network",
+                    title: "联网用途清楚可见",
+                    detail: "只用于 GitHub 来源和版本检查、发现 Skills，以及你主动获取 AI 介绍。",
+                    color: .green
+                )
+                Divider().padding(.leading, 62)
+                SettingsSafetyRow(
+                    icon: "key.fill",
+                    title: "API Key 保存在 macOS 钥匙串",
+                    detail: "SkillBox 的设置文件、操作记录和日志都不会保存你的完整 Key。",
+                    color: .blue
+                )
+            }
+        }
+
+        SettingsSectionHeading(title: "需要重新了解吗")
+
+        SettingsCard {
+            HStack(spacing: 12) {
+                Image(systemName: "questionmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.blue)
+                    .frame(width: 38, height: 38)
+                    .background(.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 11))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("欢迎说明")
+                        .font(.callout.weight(.semibold))
+                    Text("重新查看 SkillBox 的管理范围、写入确认和恢复规则。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("重新查看") {
+                    model.showOnboarding = true
+                }
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+            }
+        }
+    }
+
+    private var formattedDiscoveryStorage: String {
+        ByteCountFormatter.string(
+            fromByteCount: model.discoveryStorageBytes,
+            countStyle: .file
+        )
+    }
+
+    private func refreshGitHubIfNeeded() async {
+        guard selectedSettingsPage == .github,
+              model.isGitHubConnected,
+              model.githubAuthorizedRepositories.isEmpty
+        else { return }
+        await model.refreshGitHubRepositories()
+    }
+
+    private func openGitHubRepository(_ fullName: String) {
+        guard let url = URL(string: "https://github.com/\(fullName)") else { return }
+        NSWorkspace.shared.open(url)
+    }
+}
+
+private struct SettingsNavigationPane: View {
+    @ObservedObject var model: AppModel
+    @Binding var selection: SettingsPage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("设置")
+                    .font(.system(size: 28, weight: .bold))
+                Text("管理连接、本机数据与恢复记录。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 28)
+            .padding(.bottom, 18)
+
+            VStack(spacing: 5) {
+                ForEach(SettingsPage.allCases) { page in
+                    SettingsNavigationRow(
+                        page: page,
+                        summary: summary(for: page),
+                        isSelected: selection == page
+                    ) {
+                        selection = page
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+
+            Spacer(minLength: 20)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func summary(for page: SettingsPage) -> String {
+        switch page {
+        case .ai:
+            let count = model.configuredAIProviderIDs.count
+            return count == 0 ? "尚未连接服务" : "已连接 \(count) 个"
+        case .github:
+            guard model.isGitHubConnected else { return "尚未连接" }
+            let count = model.githubAuthorizedRepositories.count
+            return count == 0 ? "已连接，待选择仓库" : "已连接 · \(count) 个仓库"
+        case .storage:
+            return "\(model.discoverySessions.count) 条寻找记录 · \(ByteCountFormatter.string(fromByteCount: model.discoveryStorageBytes, countStyle: .file))"
+        case .history:
+            guard let latest = model.snapshot.transactions.first else { return "还没有操作记录" }
+            return "最近操作 · \(latest.createdAt.formatted(date: .omitted, time: .shortened))"
+        case .privacy:
+            return "读取、联网与密钥保护"
         }
     }
 }
 
+private struct SettingsNavigationRow: View {
+    let page: SettingsPage
+    let summary: String
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 11) {
+                SettingsPageIcon(page: page, size: 36, isSelected: isSelected)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(page.rawValue)
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(summary)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: SettingsLayout.rowMinimumHitHeight,
+                alignment: .leading
+            )
+            .contentShape(Rectangle())
+            .background(
+                isSelected
+                    ? Color.accentColor.opacity(0.10)
+                    : Color(nsColor: .controlBackgroundColor).opacity(isHovering ? 1 : 0.72),
+                in: RoundedRectangle(cornerRadius: 12)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(
+                        isSelected
+                            ? Color.accentColor.opacity(0.34)
+                            : Color.primary.opacity(isHovering ? 0.10 : 0.055),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: Color.black.opacity(isSelected ? 0.025 : 0.015),
+                radius: 1,
+                y: 1
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .accessibilityValue(isSelected ? "当前设置" : "")
+    }
+}
+
+private struct SettingsDetailPage<Content: View>: View {
+    let page: SettingsPage
+    let content: Content
+
+    init(page: SettingsPage, @ViewBuilder content: () -> Content) {
+        self.page = page
+        self.content = content()
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                SettingsDetailHeader(page: page)
+                content
+            }
+            .frame(maxWidth: SettingsLayout.contentMaxWidth, alignment: .leading)
+            .padding(.horizontal, 34)
+            .padding(.top, 34)
+            .padding(.bottom, 42)
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+        .scrollIndicators(.automatic)
+    }
+}
+
+private struct SettingsDetailHeader: View {
+    let page: SettingsPage
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            SettingsPageIcon(page: page, size: 48)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(page.rawValue)
+                    .font(.system(size: 27, weight: .bold))
+                Text(page.detail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.bottom, 4)
+    }
+}
+
+private struct SettingsSectionHeading: View {
+    let title: String
+    var trailing: String? = nil
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(.callout.weight(.semibold))
+            Spacer()
+            if let trailing {
+                Text(trailing)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 4)
+    }
+}
+
+private struct SettingsCard<Content: View>: View {
+    let padding: CGFloat
+    let content: Content
+
+    init(padding: CGFloat = 16, @ViewBuilder content: () -> Content) {
+        self.padding = padding
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .padding(padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(.separator.opacity(0.45))
+            )
+    }
+}
+
+private struct SettingsBadge: View {
+    let title: String
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+            Text(title)
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(color)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(color.opacity(0.09), in: Capsule())
+    }
+}
+
+private struct SettingsStatusBanner<Accessory: View>: View {
+    let icon: String
+    let title: String
+    let detail: String
+    let color: Color
+    let accessory: Accessory
+
+    init(
+        icon: String,
+        title: String,
+        detail: String,
+        color: Color,
+        @ViewBuilder accessory: () -> Accessory
+    ) {
+        self.icon = icon
+        self.title = title
+        self.detail = detail
+        self.color = color
+        self.accessory = accessory()
+    }
+
+    var body: some View {
+        HStack(spacing: 13) {
+            Image(systemName: icon)
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(color)
+                .frame(width: 42, height: 42)
+                .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.callout.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            accessory
+        }
+        .padding(16)
+        .background(color.opacity(0.055), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(color.opacity(0.22))
+        )
+    }
+}
+
+private struct AIServiceSymbol: View {
+    let kind: AIProviderKind
+    var size: CGFloat = 36
+
+    var body: some View {
+        Image(systemName: icon)
+            .font(.system(size: size * 0.42, weight: .semibold))
+            .foregroundStyle(color)
+            .frame(width: size, height: size)
+            .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: size * 0.28))
+            .accessibilityHidden(true)
+    }
+
+    private var icon: String {
+        switch kind {
+        case .agnes: "sparkles"
+        case .deepSeek: "brain.head.profile"
+        case .kimi: "moon.stars.fill"
+        case .miniMax: "waveform.path.ecg"
+        case .glm: "cube.transparent"
+        case .custom: "plus"
+        }
+    }
+
+    private var color: Color {
+        switch kind {
+        case .agnes: .purple
+        case .deepSeek: .blue
+        case .kimi: .indigo
+        case .miniMax: .orange
+        case .glm: .teal
+        case .custom: .blue
+        }
+    }
+}
+
+private struct AIServiceSelectionRow: View {
+    let configuration: AIProviderConfiguration
+    let isSelected: Bool
+    let isConnected: Bool
+    let action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                AIServiceSymbol(kind: configuration.kind, size: 36)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(configuration.displayName)
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(configuration.kind == .custom
+                         ? "OpenAI 兼容接口"
+                         : configuration.model)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                SettingsBadge(
+                    title: isConnected ? "已连接" : "未连接",
+                    color: isConnected ? .green : .secondary
+                )
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 15)
+            .frame(maxWidth: .infinity, minHeight: 58)
+            .contentShape(Rectangle())
+            .background(
+                isSelected
+                    ? Color.accentColor.opacity(0.08)
+                    : Color.primary.opacity(isHovering ? 0.035 : 0)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .accessibilityValue(isSelected ? "正在管理" : "")
+    }
+}
+
+private struct SettingsActionRow: View {
+    let icon: String
+    let title: String
+    let detail: String
+    let buttonTitle: String
+    var isDestructive = false
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(isDestructive ? Color.red : Color.secondary)
+                .frame(width: 34, height: 34)
+                .background(
+                    (isDestructive ? Color.red : Color.secondary).opacity(0.09),
+                    in: RoundedRectangle(cornerRadius: 9)
+                )
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.callout.weight(.medium))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            Button(buttonTitle, role: isDestructive ? .destructive : nil, action: action)
+                .buttonStyle(
+                    SkillBoxHoverButtonStyle(
+                        kind: isDestructive ? .destructiveText : .secondary
+                    )
+                )
+        }
+        .padding(.vertical, 12)
+    }
+}
+
+private struct SettingsSafetyRow: View {
+    let icon: String
+    let title: String
+    let detail: String
+    let color: Color
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(width: 36, height: 36)
+                .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.callout.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 15)
+        .frame(minHeight: 64)
+    }
+}
 private struct GitHubConnectionStep: View {
     let number: Int
     let title: String
@@ -5024,14 +7120,12 @@ private struct GitHubInstallContentChoiceView: View {
 private struct LocalSourceSetupView: View {
     @ObservedObject var model: AppModel
     let setup: LocalSourceSetup
-    @State private var trackChanges: Bool
     @State private var selectedCandidateIDs: Set<String>
     @State private var includePathsByCandidate: [String: Set<String>]
 
     init(model: AppModel, setup: LocalSourceSetup) {
         self.model = model
         self.setup = setup
-        _trackChanges = State(initialValue: true)
         _selectedCandidateIDs = State(initialValue: Set(setup.reviews.map { $0.candidate.id }))
         _includePathsByCandidate = State(initialValue: Dictionary(uniqueKeysWithValues: setup.reviews.map {
             ($0.candidate.id, Set($0.recommendedIncludePaths))
@@ -5053,23 +7147,6 @@ private struct LocalSourceSetupView: View {
                             Text(subtitle)
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    if setup.purpose == .importSkills {
-                        VStack(spacing: 9) {
-                            sourceModeChoice(
-                                selected: trackChanges,
-                                title: "持续跟踪这个开发源",
-                                detail: "以后迭代项目后，可以直接在 SkillBox 查看并确认更新。",
-                                badge: "推荐"
-                            ) { trackChanges = true }
-                            sourceModeChoice(
-                                selected: !trackChanges,
-                                title: "只导入这一次",
-                                detail: "复制当前可使用内容，以后不再检查这个项目的变化。",
-                                badge: nil
-                            ) { trackChanges = false }
                         }
                     }
 
@@ -5103,7 +7180,6 @@ private struct LocalSourceSetupView: View {
                     Task {
                         await model.confirmLocalSourceSetup(
                             setup,
-                            trackChanges: trackChanges,
                             includePathsByCandidate: paths
                         )
                     }
@@ -5116,40 +7192,6 @@ private struct LocalSourceSetupView: View {
         }
         .frame(minWidth: 680, idealWidth: 760, maxWidth: 860, minHeight: 600, idealHeight: 720, maxHeight: 860)
         .interactiveDismissDisabled()
-    }
-
-    private func sourceModeChoice(
-        selected: Bool,
-        title: String,
-        detail: String,
-        badge: String?,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? Color.accentColor : .secondary)
-                    .font(.title3)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.callout.weight(.semibold))
-                    Text(detail).font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if let badge {
-                    Text(badge)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.green)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(.green.opacity(0.09), in: Capsule())
-                }
-            }
-            .padding(13)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? Color.accentColor.opacity(0.07) : Color.primary.opacity(0.02), in: RoundedRectangle(cornerRadius: 11))
-            .overlay(RoundedRectangle(cornerRadius: 11).stroke(selected ? Color.accentColor.opacity(0.65) : Color.secondary.opacity(0.20), lineWidth: selected ? 1.5 : 1))
-        }
-        .buttonStyle(.plain)
     }
 
     private func localSkillReview(_ review: LocalPackageReview) -> some View {
@@ -5218,7 +7260,7 @@ private struct LocalSourceSetupView: View {
 
     private var title: String {
         switch setup.purpose {
-        case .importSkills: "把这个项目作为开发源？"
+        case .importSkills: "把这个文件夹作为开发源？"
         case .editSkill: "确认进入 SkillBox 的内容"
         case .relinkSkill: "重新关联本地开发源"
         }
@@ -5227,7 +7269,7 @@ private struct LocalSourceSetupView: View {
     private var subtitle: String {
         switch setup.purpose {
         case .importSkills:
-            "项目继续留在原来的位置。SkillBox 只读取确认过的可使用内容，保存纯净版本用于安装。"
+            "文件夹继续留在原位。SkillBox 只读取你确认的内容，保存一份纯净版本用于安装，以后可手动检查更新。"
         case .editSkill:
             "调整后先生成更新预览；确认更新前，SkillBox 主 Skill 和应用副本都不会变化。"
         case .relinkSkill:
@@ -5237,7 +7279,7 @@ private struct LocalSourceSetupView: View {
 
     private var primaryTitle: String {
         switch setup.purpose {
-        case .importSkills: trackChanges ? "持续跟踪并添加" : "只导入这一次"
+        case .importSkills: "添加并跟踪更新"
         case .editSkill: "继续查看变化"
         case .relinkSkill: "核对并重新关联"
         }
@@ -5245,7 +7287,7 @@ private struct LocalSourceSetupView: View {
 
     private var footerText: String {
         switch setup.purpose {
-        case .importSkills: trackChanges ? "以后手动检查更新，不会监听每次保存。" : "导入后按普通本地副本管理。"
+        case .importSkills: "以后手动检查更新，不会监听每次保存。"
         case .editSkill, .relinkSkill: "现有内容会一直保留到你确认更新。"
         }
     }
@@ -5955,6 +7997,29 @@ private struct SkillRemovalOptionsView: View {
     }
 }
 
+private struct ActionSummaryCard: View {
+    let title: String
+    let value: String
+    let note: String
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text(title).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Circle().fill(color).frame(width: 8, height: 8)
+            }
+            Text(value).font(.title.bold())
+            Text(note).font(.caption2).foregroundStyle(.tertiary)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.background, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.4)))
+    }
+}
+
 private struct SyncPreviewView: View {
     @ObservedObject var model: AppModel; @Binding var isPresented: Bool
     var body: some View {
@@ -5966,8 +8031,8 @@ private struct SyncPreviewView: View {
                 .foregroundStyle(.secondary)
             if let plan = model.syncPlan {
                 HStack {
-                    MetricCard(title: "准备改动", value: "\(plan.executableActions.count)", note: "开始前会留备份", color: .blue)
-                    MetricCard(title: "需要你处理", value: "\(plan.blockedActions.count)", note: "解决前不会改动", color: .orange)
+                    ActionSummaryCard(title: "准备改动", value: "\(plan.executableActions.count)", note: "开始前会留备份", color: .blue)
+                    ActionSummaryCard(title: "需要你处理", value: "\(plan.blockedActions.count)", note: "解决前不会改动", color: .orange)
                 }
                 List(plan.actions.filter { $0.kind != .noChange }) { action in
                     HStack {

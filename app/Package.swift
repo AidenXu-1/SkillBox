@@ -10,7 +10,7 @@ let package = Package(
         .executable(name: "SkillBoxDiagnostics", targets: ["SkillBoxDiagnostics"]),
     ],
     targets: [
-        .target(name: "SkillBoxCore"),
+        .target(name: "SkillBoxCore", exclude: ["Resources"]),
         .executableTarget(
             name: "SkillBoxApp",
             dependencies: ["SkillBoxCore"]

@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SkillBox v29 · 本机 Skill 介绍授权态</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --text:#1d1d1f;--muted:#6e6e73;--faint:#98989d;--line:rgba(30,30,35,.10);
+      --blue:#087af5;--blue-dark:#0068df;--blue-soft:#edf6ff;--green:#2caf62;
+      --panel:#fff;--canvas:#e6e9ef;--sidebar:#f7f7f9;--shadow:0 28px 78px rgba(36,41,51,.18)
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;width:100%;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","PingFang SC",sans-serif;color:var(--text);background:var(--canvas)}
+    button{font:inherit;cursor:default}
+    .desktop{width:100vw;height:100vh;padding:20px;background:radial-gradient(circle at 8% 5%,#fff 0,#f0f2f6 40%,#dfe3ea 100%)}
+    .window{height:100%;min-height:760px;display:grid;grid-template-columns:236px 350px minmax(620px,1fr);grid-template-rows:54px 1fr;overflow:hidden;border:1px solid rgba(255,255,255,.9);border-radius:23px;background:#fff;box-shadow:var(--shadow)}
+    .titlebar{grid-column:1/-1;display:flex;align-items:center;border-bottom:1px solid var(--line);background:rgba(251,251,252,.92);backdrop-filter:blur(24px);z-index:4}
+    .traffic{width:236px;display:flex;gap:9px;padding-left:18px}.traffic i{width:13px;height:13px;border-radius:50%;background:#ff5f57}.traffic i:nth-child(2){background:#febc2e}.traffic i:nth-child(3){background:#28c840}.window-title{font-size:14px;font-weight:650}
+    .sidebar{grid-row:2;padding:14px 10px 10px;background:var(--sidebar);border-right:1px solid var(--line);display:flex;flex-direction:column}
+    .brand{display:flex;align-items:center;gap:10px;padding:0 5px 16px}.brand img{width:36px;height:36px;border-radius:10px}.brand strong{display:block;font-size:15px}.brand small{display:block;margin-top:2px;color:var(--muted);font-size:10.5px}
+    .nav{padding:7px;display:grid;gap:5px;border:1px solid rgba(30,30,35,.08);border-radius:13px;background:rgba(20,20,25,.025)}
+    .nav button{min-height:46px;padding:0 12px;border:1px solid rgba(30,30,35,.055);border-radius:10px;background:rgba(20,20,25,.018);display:flex;align-items:center;gap:11px;color:#36363a;font-size:14px;font-weight:560;text-align:left}.nav button.active{border-color:var(--blue);background:var(--blue);color:white;font-weight:680}.nav svg{width:18px;height:18px}.divider{height:1px;margin:5px 10px;background:var(--line)}
+    .scope{margin-top:auto;padding:12px;border:1px solid rgba(30,30,35,.08);border-radius:12px;background:rgba(20,20,25,.025);display:grid;grid-template-columns:26px 1fr;gap:9px;font-size:10.5px;line-height:1.45}.scope i{width:24px;height:24px;border-radius:7px;background:#e4f0ff;color:var(--blue);font-style:normal;display:grid;place-items:center;font-weight:750}.scope b{display:block;margin-bottom:2px;color:#45454a}.scope span{color:var(--muted)}
+    .library{grid-row:2;background:#fbfbfc;border-right:1px solid var(--line);min-width:0}.library-head{padding:27px 18px 13px}.eyebrow{font-size:11px;font-weight:720;color:var(--blue);letter-spacing:.04em}.library-title{display:flex;align-items:flex-end;justify-content:space-between;margin:8px 0 14px}.library-title h1{margin:0;font-size:27px;letter-spacing:-.045em}.add{border:0;border-radius:9px;background:var(--blue);color:white;padding:7px 10px;font-size:11px;font-weight:700}.search{height:35px;border:1px solid var(--line);border-radius:9px;background:white;padding:0 11px;display:flex;align-items:center;gap:8px;color:var(--faint);font-size:12px}.filters{display:flex;gap:7px;margin-top:10px}.chip{border:0;border-radius:999px;background:#ececf0;color:#5e5e63;padding:5px 9px;font-size:10.5px}.chip.active{background:#dcecff;color:#0068d8;font-weight:650}
+    .list{padding:0 10px}.skill{display:grid;grid-template-columns:36px minmax(0,1fr) 25px;gap:10px;align-items:center;padding:11px 10px;border-radius:11px;margin-bottom:3px}.skill.selected{background:#e8f2ff}.skill-icon{width:36px;height:36px;border-radius:10px;background:linear-gradient(145deg,#dcecff,#f2f7ff);display:grid;place-items:center;color:var(--blue);font-weight:760}.skill b{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.skill small{display:block;margin-top:4px;color:var(--muted);font-size:10.5px}.source{width:24px;height:24px;border-radius:7px;display:grid;place-items:center}.source.local{background:#e1efff;color:var(--blue)}.source.github{background:#29292c;color:white}.source svg{width:15px;height:15px}
+    .detail{grid-row:2;overflow:auto;background:#fff}.detail-inner{max-width:920px;margin:0 auto;padding:30px 34px 48px}.detail-top{display:flex;align-items:flex-start;gap:15px}.hero{width:54px;height:54px;border-radius:15px;background:linear-gradient(145deg,#dcecff,#f7fbff);display:grid;place-items:center;color:var(--blue);font-size:22px;font-weight:800}.heading{flex:1;min-width:0}.heading h2{margin:0 0 6px;font-size:25px;letter-spacing:-.04em}.heading p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.5}.btn{min-height:34px;border:1px solid var(--line);border-radius:9px;background:#f6f6f8;color:#303034;padding:0 12px;font-size:11.5px;font-weight:650}.btn.primary{border-color:var(--blue);background:var(--blue);color:white}.btn.primary:hover{background:var(--blue-dark)}.btn:active{transform:scale(.97)}
+    .meta{display:grid;grid-template-columns:1.5fr .8fr .8fr;gap:9px;margin-top:20px}.meta-card{padding:13px 14px;border:1px solid var(--line);border-radius:12px;min-width:0}.meta-card small{display:block;margin-bottom:6px;color:var(--muted);font-size:10.5px}.meta-card strong{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.meta-source{display:flex;align-items:center;gap:8px}.meta-source .source{width:23px;height:23px;flex:none}.good{color:var(--green)}
+    .install{margin-top:10px;padding:15px 16px;border:1px solid #d9eaff;border-radius:14px;background:linear-gradient(135deg,#f2f8ff,#fafcff);display:flex;align-items:center;gap:12px}.agents{display:flex}.agent{width:32px;height:32px;margin-left:-6px;border:3px solid #f6faff;border-radius:9px;background:white;display:grid;place-items:center;font-size:10px;font-weight:750}.agent:first-child{margin-left:0}.install-copy{flex:1}.install-copy small{color:var(--muted);font-size:10.5px}.install-copy strong{display:block;margin-top:4px;font-size:15px}
+    .switch{margin-top:24px}.tabs{display:flex;border-bottom:1px solid var(--line)}.tab{flex:1;min-height:46px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);font-size:13px;font-weight:650}.tab:hover{background:rgba(20,20,25,.035)}.tab.active{border-bottom-color:var(--blue);color:var(--text)}.status-note{height:25px;padding-top:7px;text-align:right;color:var(--muted);font-size:10px}.status-note b{color:#7657d6}.status-note .private{color:#5d7790}
+    .panel{display:none;padding-top:4px}.panel.active{display:block}.intro-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.intro-card{padding:14px 15px;border-radius:13px;background:#f7f7f8;min-height:90px}.intro-card.full{grid-column:1/-1;min-height:auto}.intro-card label{display:block;margin-bottom:7px;color:var(--muted);font-size:10.5px}.intro-card strong{font-size:14px;line-height:1.5}.intro-card p{margin:0;font-size:12.5px;line-height:1.56}
+    .permission{grid-column:1/-1;position:relative;overflow:hidden;padding:18px;border:1px solid #c9e2ff;border-radius:15px;background:linear-gradient(135deg,#eef7ff,#f9fcff)}.permission:after{content:"";position:absolute;right:-48px;top:-62px;width:170px;height:170px;border-radius:50%;background:radial-gradient(circle,#d7ebff 0,rgba(215,235,255,0) 70%)}.permission-main{position:relative;z-index:1;display:grid;grid-template-columns:42px minmax(0,1fr) auto;gap:13px;align-items:start}.permission-icon{width:42px;height:42px;border-radius:12px;background:white;box-shadow:0 5px 16px rgba(40,97,155,.10);display:grid;place-items:center;color:var(--blue)}.permission-icon svg{width:22px;height:22px}.permission h3{margin:1px 0 6px;font-size:15px;letter-spacing:-.02em}.permission p{margin:0;color:#4f657a;font-size:11.5px;line-height:1.55;max-width:560px}.permission-actions{display:flex;gap:7px;align-self:center}.permission-actions .btn{background:white}.permission-actions .btn.primary{background:var(--blue)}.privacy-facts{position:relative;z-index:1;display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0 0 55px;padding-top:13px;border-top:1px solid rgba(8,122,245,.13)}.fact{display:grid;grid-template-columns:18px 1fr;gap:6px;color:#587086;font-size:10.5px;line-height:1.45}.fact i{font-style:normal;color:var(--green);font-weight:800}.fact.no i{color:#8593a0}.scope-note{position:relative;z-index:1;margin:10px 0 0 55px;color:#758595;font-size:9.8px;line-height:1.5}.scope-note b{color:#52687b}
+    .loading{display:none;grid-column:1/-1;padding:28px;border:1px solid #d9eaff;border-radius:15px;background:#f7fbff;text-align:center;color:#52687b;font-size:12px}.loading.show{display:block}.spinner{width:22px;height:22px;margin:0 auto 10px;border:2px solid #cfe4fb;border-top-color:var(--blue);border-radius:50%;animation:spin .75s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+    .generated{display:none}.generated.show{display:block}.generated.full.show{display:block}.flow{display:grid;gap:8px}.step{display:grid;grid-template-columns:23px 1fr;gap:9px;align-items:start}.step i{width:22px;height:22px;border-radius:50%;background:#e3efff;color:var(--blue);font-style:normal;font-size:10px;font-weight:750;display:grid;place-items:center}.prompt{display:flex;align-items:center;gap:10px}.prompt span{flex:1;font-size:12.5px;line-height:1.55}.copy{border:0;border-radius:8px;background:#e4efff;color:var(--blue);padding:7px 10px;font-size:10.5px;font-weight:700}
+    .file-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;color:var(--muted);font-size:11px}.tree{border:1px solid var(--line);border-radius:13px;overflow:hidden}.file{display:grid;grid-template-columns:23px minmax(0,1fr) auto;gap:8px;align-items:center;padding:10px 13px;border-bottom:1px solid rgba(30,30,35,.06);font-size:12px}.file:last-child{border-bottom:0}.file.indent{padding-left:34px}.file-icon{color:var(--blue)}.size{color:var(--muted);font-size:10px}
+    .toast{position:fixed;left:50%;bottom:38px;transform:translateX(-50%) translateY(14px);padding:10px 14px;border-radius:10px;background:rgba(32,32,35,.92);color:white;font-size:11px;opacity:0;pointer-events:none;transition:.2s}.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+    @media(max-width:1180px){.window{grid-template-columns:210px 315px minmax(570px,1fr)}.traffic{width:210px}.detail-inner{padding:27px 25px}.permission-main{grid-template-columns:42px 1fr}.permission-actions{grid-column:2;justify-self:start}.privacy-facts{grid-template-columns:1fr}.intro-grid{grid-template-columns:1fr}.intro-card.full,.permission,.loading{grid-column:1}}
+    @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+  </style>
+</head>
+<body>
+<div class="desktop"><main class="window">
+  <header class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="window-title">SkillBox</div></header>
+
+  <aside class="sidebar">
+    <div class="brand"><img src="../brand/skillbox-app-icon-master.png" alt="SkillBox"><span><strong>SkillBox</strong><small>统一管理全局 Skill</small></span></div>
+    <nav class="nav">
+      <button class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M4 5.5v16M8 7h8M8 11h6"/></svg>我的 Skills</button>
+      <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>安装到应用</button>
+      <div class="divider"></div>
+      <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4M11 8v6M8 11h6"/></svg>发现 Skills</button>
+      <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21H9.6v-.09a1.7 1.7 0 0 0-1.1-1.51 1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3V9.6h.09A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.35.27.57.66.6 1.1v3.8c-.03.44-.25.83-.6 1.1z"/></svg>设置</button>
+    </nav>
+    <div class="scope"><i>◎</i><span><b>管理范围</b>只管理跨项目使用的全局 Skill</span></div>
+  </aside>
+
+  <section class="library">
+    <div class="library-head"><div class="eyebrow">统一管理</div><div class="library-title"><h1>我的 Skills</h1><button class="add">＋ 添加</button></div><div class="search">⌕ <span>搜索 Skills</span></div><div class="filters"><button class="chip active">全部 5</button><button class="chip">产品开发 2</button><button class="chip">内容创作 2</button><button class="chip">未分类 1</button></div></div>
+    <div class="list">
+      <div class="skill"><div class="skill-icon">V</div><span><b>vibe-project-foundation</b><small>已安装到 2 个应用</small></span><span class="source github" title="GitHub 来源"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.8-1.6 6.8-7.4A5.8 5.8 0 0 0 19.3 3 5.4 5.4 0 0 0 19.1 0S17.9-.4 15 1.5a13.4 13.4 0 0 0-6 0C6.1-.4 4.9 0 4.9 0a5.4 5.4 0 0 0-.2 3A5.8 5.8 0 0 0 3.2 7.1c0 5.8 3.5 7 6.8 7.4A4.8 4.8 0 0 0 9 18v4"/></svg></span></div>
+      <div class="skill"><div class="skill-icon">A</div><span><b>agent-team</b><small>已安装到 GPT</small></span><span class="source github"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.8-1.6 6.8-7.4A5.8 5.8 0 0 0 19.3 3 5.4 5.4 0 0 0 19.1 0S17.9-.4 15 1.5a13.4 13.4 0 0 0-6 0C6.1-.4 4.9 0 4.9 0a5.4 5.4 0 0 0-.2 3A5.8 5.8 0 0 0 3.2 7.1c0 5.8 3.5 7 6.8 7.4A4.8 4.8 0 0 0 9 18v4"/></svg></span></div>
+      <div class="skill"><div class="skill-icon">Z</div><span><b>zhaoji-writing</b><small>有 1 个应用可更新</small></span><span class="source github"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.8-1.6 6.8-7.4A5.8 5.8 0 0 0 19.3 3 5.4 5.4 0 0 0 19.1 0S17.9-.4 15 1.5a13.4 13.4 0 0 0-6 0C6.1-.4 4.9 0 4.9 0a5.4 5.4 0 0 0-.2 3A5.8 5.8 0 0 0 3.2 7.1c0 5.8 3.5 7 6.8 7.4A4.8 4.8 0 0 0 9 18v4"/></svg></span></div>
+      <div class="skill selected"><div class="skill-icon">O</div><span><b>obsidian-feishu-sync</b><small>已安装到 2 个应用</small></span><span class="source local" title="本地开发文件夹"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6.5h6l2 2h10v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 9h18"/></svg></span></div>
+      <div class="skill"><div class="skill-icon">H</div><span><b>html-deck-studio</b><small>尚未安装</small></span><span class="source local"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6.5h6l2 2h10v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 9h18"/></svg></span></div>
+    </div>
+  </section>
+
+  <section class="detail"><div class="detail-inner">
+    <div class="detail-top"><div class="hero">O</div><div class="heading"><h2>obsidian-feishu-sync</h2><p>把 Obsidian 笔记、Markdown 或你粘贴的内容同步成飞书知识库文档。</p></div><button class="btn primary">管理安装</button></div>
+    <div class="meta"><div class="meta-card"><small>来源</small><div class="meta-source"><span class="source local"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6.5h6l2 2h10v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 9h18"/></svg></span><strong>本地开发文件夹</strong></div></div><div class="meta-card"><small>当前安装版本</small><strong>2026.09.01</strong></div><div class="meta-card"><small>版本情况</small><strong class="good">已是最新</strong></div></div>
+    <div class="install"><div class="agents"><span class="agent">GPT</span><span class="agent">H</span></div><div class="install-copy"><small>当前安装情况</small><strong>已安装到 GPT、HanaAgent</strong></div><button class="btn">全部卸载</button><button class="btn primary">全部安装</button></div>
+
+    <div class="switch"><div class="tabs"><button class="tab active" data-tab="intro">Skill 介绍</button><button class="tab" data-tab="files">文件详情</button></div><div class="status-note" id="statusNote"><span class="private">⌾ 本机内容尚未交给 AI</span></div></div>
+    <div class="panel active" id="introPanel"><div class="intro-grid" id="introGrid">
+      <div class="intro-card full" id="purpose" style="display:block"><label>作用</label><strong>把一份已经写好的本地内容安全同步到飞书，并尽量保证本地稿和飞书稿保持一致。</strong></div>
+
+      <section class="permission" id="permissionCard">
+        <div class="permission-main">
+          <div class="permission-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 5 6v5c0 4.5 2.7 8 7 10 4.3-2 7-5.5 7-10V6z"/><path d="m9.5 12 1.6 1.6 3.8-4"/></svg></div>
+          <div><h3>让 DeepSeek 补全这份本机 Skill 的介绍</h3><p>本机 Skill 默认不会发送给 AI，所以「适用场景、使用流程、启动提示词」还没有整理。允许后，DeepSeek 会读说明文字并把这几项补完整。</p></div>
+          <div class="permission-actions"><button class="btn" id="showFiles">先看文件详情</button><button class="btn primary" id="allowGuide">允许并整理</button></div>
+        </div>
+        <div class="privacy-facts"><div class="fact"><i>✓</i><span><b>会发送：</b>SKILL.md、README 和其他说明文字</span></div><div class="fact no"><i>○</i><span><b>不会发送：</b>脚本、密钥、图片和整个文件夹</span></div></div>
+        <div class="scope-note"><b>授权范围：</b>今后打开本机或私人 Skill 时，也可以用当前 DeepSeek 配置整理介绍；更换 AI、模型或接口后会重新询问。</div>
+      </section>
+
+      <div class="loading" id="loading"><div class="spinner"></div>正在阅读说明文字，并整理成小白也能看懂的介绍…</div>
+      <div class="intro-card generated" data-generated><label>适用场景</label><p>把 AI 日报、知识笔记或已有 Markdown 同步到飞书；想原样转过去、不重新改写；或者先在本地确认内容，再创建飞书版本。</p></div>
+      <div class="intro-card generated" data-generated><label>你最后会得到什么</label><p>一份已经写入飞书知识库的文档，并且正文与本地确认过的版本保持一致。</p></div>
+      <div class="intro-card full generated" data-generated><label>使用流程</label><div class="flow"><div class="step"><i>1</i><p>它先确认你要同步哪份内容，以及要原样转移还是先整理后再发布。</p></div><div class="step"><i>2</i><p>需要改写时，它会先让你选择只在本地查看，还是确认后同一次同步到飞书。</p></div><div class="step"><i>3</i><p>你确认正文后，它创建或更新飞书文档，再核对本地与飞书内容是否一致。</p></div></div></div>
+      <div class="intro-card full generated" data-generated><label>简要启动提示词</label><div class="prompt"><span>把这份 Obsidian 笔记同步成飞书知识库文档，先让我确认正文，再写入飞书。</span><button class="copy" id="copyPrompt">复制提示词</button></div></div>
+    </div></div>
+
+    <div class="panel" id="filesPanel"><div class="file-head"><span>本地开发文件夹共 18 个文件 · 61 KB</span><button class="btn">在 Finder 中显示</button></div><div class="tree"><div class="file"><span class="file-icon">▾</span><b>obsidian-feishu-sync</b><span class="size">61 KB</span></div><div class="file indent"><span class="file-icon">◆</span><span>SKILL.md</span><span class="size">12 KB</span></div><div class="file indent"><span class="file-icon">◇</span><span>README.md</span><span class="size">6 KB</span></div><div class="file indent"><span class="file-icon">▸</span><span>references</span><span class="size">8 个文件</span></div><div class="file indent"><span class="file-icon">▸</span><span>scripts</span><span class="size">6 个文件</span></div></div></div>
+  </section>
+</main></div>
+<div class="toast" id="toast">提示词已复制</div>
+<script>
+  const tabs=[...document.querySelectorAll('.tab')];
+  const introPanel=document.querySelector('#introPanel');
+  const filesPanel=document.querySelector('#filesPanel');
+  const statusNote=document.querySelector('#statusNote');
+  function switchTab(name){
+    tabs.forEach(tab=>tab.classList.toggle('active',tab.dataset.tab===name));
+    introPanel.classList.toggle('active',name==='intro');
+    filesPanel.classList.toggle('active',name==='files');
+  }
+  tabs.forEach(tab=>tab.addEventListener('click',()=>switchTab(tab.dataset.tab)));
+  document.querySelector('#showFiles').addEventListener('click',()=>switchTab('files'));
+  function completeGuide(){
+    document.querySelector('#permissionCard').style.display='none';
+    document.querySelector('#loading').classList.remove('show');
+    document.querySelectorAll('[data-generated]').forEach(card=>card.classList.add('show'));
+    statusNote.innerHTML='<b>✦ Agnes 已整理</b> · 依据当前本机版本';
+  }
+  function loadingGuide(){
+    document.querySelector('#permissionCard').style.display='none';
+    document.querySelectorAll('[data-generated]').forEach(card=>card.classList.remove('show'));
+    const loading=document.querySelector('#loading');
+    loading.innerHTML='<div class="spinner"></div>Agnes 正在整理 2 份本机 Skill · 完成后会自动填满这里';
+    loading.classList.add('show');
+    statusNote.innerHTML='<b>✦ Agnes 正在整理 1/2</b> · 可以继续使用其他功能';
+  }
+  function declinedGuide(){
+    document.querySelector('#permissionCard').style.display='none';
+    document.querySelector('#loading').classList.remove('show');
+    document.querySelectorAll('[data-generated]').forEach(card=>card.classList.remove('show'));
+    statusNote.innerHTML='<span class="private">⌾ 本机内容没有发送给 Agnes</span>';
+  }
+  document.querySelector('#allowGuide').addEventListener('click',()=>{
+    document.querySelector('#permissionCard').style.display='none';
+    document.querySelector('#loading').classList.add('show');
+    window.setTimeout(completeGuide,720);
+  });
+  document.querySelector('#copyPrompt').addEventListener('click',()=>{
+    const toast=document.querySelector('#toast');toast.classList.add('show');window.setTimeout(()=>toast.classList.remove('show'),1200);
+  });
+  const requestedState=new URLSearchParams(location.search).get('state');
+  if(requestedState==='complete') completeGuide();
+  if(requestedState==='loading') loadingGuide();
+  if(requestedState==='declined') declinedGuide();
+</script>
+</body>
+</html>

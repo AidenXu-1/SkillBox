@@ -3,13 +3,24 @@ import Foundation
 public enum DiscoveryStoreError: LocalizedError {
     case invalidSessionFolder
     case unsupportedSchema(Int)
+    case storageLimitReached(Int64)
+    case queueFull
 
     public var errorDescription: String? {
         switch self {
         case .invalidSessionFolder: "这条寻找记录的保存位置无效"
         case .unsupportedSchema: "这条寻找记录来自更新版本的 SkillBox，当前版本暂时无法读取"
+        case .queueFull: "待处理补充最多 4 条、合计 1,800 字。请等这轮完成后再发送；输入内容已保留。"
+        case let .storageLimitReached(maximumBytes):
+            "寻找记录已达到 \(ByteCountFormatter.string(fromByteCount: maximumBytes, countStyle: .file)) 的保存上限。请先在设置中删除不再需要的记录。"
         }
     }
+}
+
+public enum DiscoveryStorageLimits {
+    public static let maximumTotalBytes: Int64 = 64 * 1_024 * 1_024
+    public static let maximumDetailedCandidates = 96
+    public static let maximumDetailedExcerptCharacters = 8_000
 }
 
 public actor DiscoverySessionStore {
@@ -22,10 +33,16 @@ public actor DiscoverySessionStore {
     private let fileManager: FileManager
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let storageLimitBytes: Int64
 
-    public init(root: URL, fileManager: FileManager = .default) throws {
+    public init(
+        root: URL,
+        fileManager: FileManager = .default,
+        storageLimitBytes: Int64 = DiscoveryStorageLimits.maximumTotalBytes
+    ) throws {
         directory = root.appendingPathComponent("SearchSessions", isDirectory: true)
         self.fileManager = fileManager
+        self.storageLimitBytes = max(1, storageLimitBytes)
         encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
@@ -54,10 +71,10 @@ public actor DiscoverySessionStore {
             let file = folder.appendingPathComponent("session.json")
             guard let data = try? Data(contentsOf: file),
                   let envelope = try? decoder.decode(Envelope.self, from: data),
-                  (1...3).contains(envelope.schemaVersion)
+                  (1...4).contains(envelope.schemaVersion)
             else { return nil }
             var migrated = envelope.session
-            var needsWrite = envelope.schemaVersion < 3
+            var needsWrite = envelope.schemaVersion < 4
             if envelope.schemaVersion == 1, migrated.messages.isEmpty {
                 migrated.messages = migrated.turns.map {
                     DiscoveryMessage(id: $0.id, role: .user, text: $0.userText, createdAt: $0.createdAt)
@@ -66,32 +83,74 @@ public actor DiscoverySessionStore {
             if migrated.intent == nil, let goal = migrated.turns.last?.userText {
                 migrated.intent = DiscoveryIntent(goal: goal)
             }
-            let legacyAssistantPrefixes = [
-                "AI 暂时不可用", "上次寻找在完成前中断", "公开 Skill 目录暂时"
-            ]
-            let removedLegacyMessages = migrated.messages.filter { message in
-                message.role == .assistant && (
-                    legacyAssistantPrefixes.contains { message.text.hasPrefix($0) }
-                        || (envelope.schemaVersion < 3 && message.state != .complete)
-                )
+            // Earlier releases did not record whether assistant text was created
+            // before or after untrusted candidate documents were read. Preserve
+            // only the user's own words; the old assistant text cannot be safely
+            // distinguished after the fact.
+            let removedLegacyMessages = migrated.messages.filter {
+                $0.role == .assistant && !["conversation-local-v1", "conversation-evidence-v1"].contains($0.origin ?? "")
             }
             migrated.messages.removeAll { message in
                 removedLegacyMessages.contains(where: { $0.id == message.id })
             }
             if !removedLegacyMessages.isEmpty {
                 needsWrite = true
-                if !migrated.notices.contains(where: { $0.text.contains("旧版本的本地错误提示") }) {
+                if !migrated.notices.contains(where: { $0.text.contains("旧版本的 AI 回复") }) {
                     migrated.notices.append(.init(
-                        text: "旧版本的本地错误提示已从 AI 对话中移出，原有候选结果仍保留。",
+                        text: "旧版本的 AI 回复无法确认是否受候选正文影响，已从寻找记录中移除；用户原话和候选证据仍保留。",
                         createdAt: migrated.updatedAt,
                         kind: .information
                     ))
                 }
             }
+            var removedCandidateAIText = false
+            for index in migrated.candidates.indices {
+                let candidate = migrated.candidates[index]
+                let hadCandidateConditionedText = candidate.recommendationReason != nil
+                    || candidate.suitableWhen != nil
+                    || candidate.examplePrompt != nil
+                    || !candidate.experienceSteps.isEmpty
+                    || !candidate.limitations.isEmpty
+                    || candidate.usageGuide?.origin == .aiAssisted
+                guard hadCandidateConditionedText else { continue }
+                migrated.candidates[index].recommendationReason = nil
+                migrated.candidates[index].suitableWhen = nil
+                migrated.candidates[index].examplePrompt = nil
+                migrated.candidates[index].experienceSteps = []
+                migrated.candidates[index].limitations = []
+                if migrated.candidates[index].usageGuide?.origin == .aiAssisted {
+                    migrated.candidates[index].usageGuide = nil
+                    migrated.candidates[index].usageGuideSourceDigest = nil
+                }
+                removedCandidateAIText = true
+            }
+            if removedCandidateAIText {
+                needsWrite = true
+                if !migrated.notices.contains(where: { $0.text.contains("旧版本候选详情中的 AI 说明") }) {
+                    migrated.notices.append(.init(
+                        text: "旧版本候选详情中的 AI 说明已移除，当前只显示可核对的作者资料。",
+                        createdAt: migrated.updatedAt,
+                        kind: .information
+                    ))
+                }
+            }
+            let compacted = Self.compactedForPersistence(migrated)
+            if compacted != migrated {
+                migrated = compacted
+                needsWrite = true
+            }
             if needsWrite {
                 let backup = folder.appendingPathComponent("session-v\(envelope.schemaVersion).json")
-                if !fileManager.fileExists(atPath: backup.path) { try? data.write(to: backup, options: .atomic) }
-                if let upgraded = try? encoder.encode(Envelope(schemaVersion: 3, session: migrated)) {
+                // v4 only adds optional conversation fields. Keep the existing
+                // v3 compaction policy: do not duplicate a potentially huge log.
+                let shouldBackUpLegacySchema = envelope.schemaVersion < 3
+                    && !fileManager.fileExists(atPath: backup.path)
+                let backupAddition = shouldBackUpLegacySchema ? Int64(data.count) : 0
+                let existingSize = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+                if let upgraded = try? encoder.encode(Envelope(schemaVersion: 4, session: migrated)),
+                   storageSize() + backupAddition - existingSize + Int64(upgraded.count) <= storageLimitBytes
+                {
+                    if shouldBackUpLegacySchema { try? data.write(to: backup, options: .atomic) }
                     try? upgraded.write(to: file, options: .atomic)
                 }
             }
@@ -115,6 +174,7 @@ public actor DiscoverySessionStore {
             storageFolderName: incoming.storageFolderName
         ) else { return nil }
         var merged = incoming
+        merged.queuedMessages = current.queuedMessages
         if let selected = current.selectedCandidateID,
            merged.candidates.contains(where: { $0.id == selected })
         {
@@ -144,6 +204,37 @@ public actor DiscoverySessionStore {
         current = merged
         try writeExisting(current)
         return current
+    }
+
+    public func enqueue(_ text: String, sessionID: UUID, storageFolderName: String) throws {
+        guard var session = storedSession(id: sessionID, storageFolderName: storageFolderName) else { return }
+        guard session.queuedMessages.last?.text != text else { return }
+        guard session.queuedMessages.count < 4,
+              session.queuedMessages.reduce(text.count, { $0 + $1.text.count }) <= 1_800
+        else { throw DiscoveryStoreError.queueFull }
+        session.queuedMessages.append(.init(text: text))
+        try writeExisting(session)
+    }
+
+    /// Atomically moves pending inputs into history before execution, so a quit
+    /// cannot lose a message between removing the queue and saving the turn.
+    public func claimQueued(sessionID: UUID, storageFolderName: String) throws -> DiscoveryMessage? {
+        guard var session = storedSession(id: sessionID, storageFolderName: storageFolderName),
+              !session.queuedMessages.isEmpty else { return nil }
+        var count = 1
+        if DiscoveryRequestRouter.isRefinement(session.queuedMessages[0].text),
+           DiscoveryConversation.action(for: session.queuedMessages[0].text, session: session) == .search {
+            while count < session.queuedMessages.count,
+                  DiscoveryRequestRouter.isRefinement(session.queuedMessages[count].text),
+                  DiscoveryConversation.action(for: session.queuedMessages[count].text, session: session) == .search {
+                count += 1
+            }
+        }
+        let message = DiscoveryMessage(role: .user, text: session.queuedMessages.prefix(count).map(\.text).joined(separator: "\n"))
+        session.queuedMessages.removeFirst(count)
+        session.messages.append(message)
+        try writeExisting(session)
+        return message
     }
 
     public func selectCandidate(
@@ -245,7 +336,7 @@ public actor DiscoverySessionStore {
             .appendingPathComponent("session.json")
         guard let data = try? Data(contentsOf: file),
               let envelope = try? decoder.decode(Envelope.self, from: data),
-              (1...3).contains(envelope.schemaVersion),
+              (1...4).contains(envelope.schemaVersion),
               envelope.session.id == id
         else { return nil }
         return envelope.session
@@ -261,8 +352,39 @@ public actor DiscoverySessionStore {
     }
 
     private func write(_ session: DiscoverySession, to file: URL) throws {
-        let data = try encoder.encode(Envelope(schemaVersion: 3, session: session))
+        let compacted = Self.compactedForPersistence(session)
+        let data = try encoder.encode(Envelope(schemaVersion: 4, session: compacted))
+        let existingSize = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+        let projectedSize = storageSize() - existingSize + Int64(data.count)
+        guard projectedSize <= storageLimitBytes else {
+            throw DiscoveryStoreError.storageLimitReached(storageLimitBytes)
+        }
         try data.write(to: file, options: .atomic)
+    }
+
+    private static func compactedForPersistence(_ session: DiscoverySession) -> DiscoverySession {
+        var compacted = session
+        var detailedIDs: [String] = []
+        if let selectedCandidateID = session.selectedCandidateID { detailedIDs.append(selectedCandidateID) }
+        detailedIDs.append(contentsOf: session.recommendedCandidates.map(\.id))
+        detailedIDs.append(contentsOf: session.candidates.map(\.id))
+        let allowedDetailedIDs = Set(
+            detailedIDs.reduce(into: [String]()) { result, id in
+                if !result.contains(id) { result.append(id) }
+            }.prefix(DiscoveryStorageLimits.maximumDetailedCandidates)
+        )
+        for index in compacted.candidates.indices {
+            if allowedDetailedIDs.contains(compacted.candidates[index].id) {
+                if let excerpt = compacted.candidates[index].evidence.skillDocumentExcerpt {
+                    compacted.candidates[index].evidence.skillDocumentExcerpt = String(
+                        excerpt.prefix(DiscoveryStorageLimits.maximumDetailedExcerptCharacters)
+                    )
+                }
+            } else {
+                compacted.candidates[index].evidence.skillDocumentExcerpt = nil
+            }
+        }
+        return compacted
     }
 
     private static func safeName(_ value: String) -> String {

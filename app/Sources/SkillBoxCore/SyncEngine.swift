@@ -270,7 +270,7 @@ public actor TransactionalSyncExecutor: SyncExecutor {
             }
             transaction.completedAt = Date()
             try await store.recordTransaction(transaction)
-            throw transaction.status == .failed ? SyncExecutorError.stateChanged("自动恢复没有完成，请查看「最近操作」") : error
+            throw transaction.status == .failed ? SyncExecutorError.stateChanged("自动恢复没有完成，请查看「设置 → 操作记录与恢复」") : error
         }
     }
 

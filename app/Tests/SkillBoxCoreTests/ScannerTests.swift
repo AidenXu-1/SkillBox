@@ -355,7 +355,7 @@ struct SkillUsageGuideTests {
         #expect(guide.experienceSteps.isEmpty)
     }
 
-    @Test("Only an explicitly user-facing experience section becomes a flow")
+    @Test("A user-facing workflow keeps concrete choice labels and reply format")
     func extractsExplicitExperience() throws {
         let fixture = try TemporaryFixture()
         defer { fixture.remove() }
@@ -363,20 +363,25 @@ struct SkillUsageGuideTests {
         try """
         # Experience
 
-        ## 使用时会发生什么
+        ## 使用流程
 
-        1. AI 会先询问必要信息。
-        2. 根据回答完成工作。
-        3. 给出结果和下一步。
-        4. 这一条不应展示。
+        1. AI 会先询问你想处理哪类内容。
+        2. 请按“类型：A 改写 / B 缩写 / C 扩写”回复。
+        3. 再确认发布平台和必须保留的内容。
+        4. 根据回答完成工作。
+        5. 给出可直接使用的结果和仍需核对的地方。
+        6. 如果你调整选择，它会按新答案再生成一次。
         """.write(to: skill.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
 
         let guide = try #require(SkillUsageGuideExtractor().extract(from: skill))
 
         #expect(guide.experienceSteps == [
-            "AI 会先询问必要信息",
+            "AI 会先询问你想处理哪类内容",
+            "请按“类型：A 改写 / B 缩写 / C 扩写”回复",
+            "再确认发布平台和必须保留的内容",
             "根据回答完成工作",
-            "给出结果和下一步",
+            "给出可直接使用的结果和仍需核对的地方",
+            "如果你调整选择，它会按新答案再生成一次",
         ])
     }
 

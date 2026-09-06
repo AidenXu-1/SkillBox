@@ -311,7 +311,6 @@ struct LocalSourceTrackingTests {
 
         await model.confirmLocalSourceSetup(
             setup,
-            trackChanges: true,
             includePathsByCandidate: [review.candidate.id: review.recommendedIncludePaths]
         )
         #expect(model.pendingCandidates.count == 1)
@@ -325,6 +324,162 @@ struct LocalSourceTrackingTests {
         #expect(!FileManager.default.fileExists(atPath: temporaryPackageRoot.path))
         let content = await store.contentURL(for: try #require(model.snapshot.skills.first))
         #expect(!FileManager.default.fileExists(atPath: content.appendingPathComponent("tests").path))
+    }
+
+    @MainActor
+    @Test("A moderately large local Skill can be confirmed, imported, and checked again")
+    func appCompletesLargeTrackedSkillImport() async throws {
+        let fixture = try LocalSourceFixture()
+        defer { fixture.remove() }
+        try fixture.write("skills/demo/SKILL.md", fixture.skillMarkdown("Use scripts/runtime.bin."))
+        let dependency = fixture.skillRoot.appendingPathComponent("scripts/runtime.bin")
+        try FileManager.default.createDirectory(
+            at: dependency.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        #expect(FileManager.default.createFile(atPath: dependency.path, contents: nil))
+        let handle = try FileHandle(forWritingTo: dependency)
+        try handle.truncate(atOffset: 64 * 1_024 * 1_024)
+        try handle.close()
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let model = AppModel(
+            libraryRoot: fixture.storeRoot,
+            store: store,
+            homeDirectory: fixture.root,
+            startBootstrap: false
+        )
+
+        await model.previewLocalFolder(fixture.skillRoot)
+
+        let setup = try #require(model.pendingLocalSourceSetup)
+        #expect(setup.reviews.count == 1)
+        #expect(setup.reviews.first?.skillRelativePath == "")
+        #expect(model.noticeMessage == nil)
+        let review = try #require(setup.reviews.first)
+
+        await model.confirmLocalSourceSetup(
+            setup,
+            includePathsByCandidate: [review.candidate.id: review.recommendedIncludePaths]
+        )
+
+        #expect(model.errorMessage == nil)
+        #expect(model.pendingCandidates.count == 1)
+        await model.importSelectedCandidates(authorizingHighRisk: true)
+        let imported = try #require(model.snapshot.skills.first)
+        #expect(model.snapshot.localSourceStates.count == 1)
+
+        await model.checkLocalSource(imported)
+
+        #expect(model.errorMessage == nil)
+        #expect(model.snapshot.localSourceStates.first?.status == .current)
+    }
+
+    @MainActor
+    @Test("A tracked local source explains when later growth exceeds the manual limit")
+    func trackedSourceGrowthSurfacesTheScannerReason() async throws {
+        let fixture = try LocalSourceFixture()
+        defer { fixture.remove() }
+        try fixture.write("skills/demo/SKILL.md", fixture.skillMarkdown("Use scripts/runtime.bin."))
+        let dependency = fixture.skillRoot.appendingPathComponent("scripts/runtime.bin")
+        try FileManager.default.createDirectory(
+            at: dependency.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        #expect(FileManager.default.createFile(atPath: dependency.path, contents: nil))
+        let initialHandle = try FileHandle(forWritingTo: dependency)
+        try initialHandle.truncate(atOffset: 1 * 1_024 * 1_024)
+        try initialHandle.close()
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let model = AppModel(
+            libraryRoot: fixture.storeRoot,
+            store: store,
+            homeDirectory: fixture.root,
+            startBootstrap: false
+        )
+        await model.previewLocalFolder(fixture.skillRoot)
+        let setup = try #require(model.pendingLocalSourceSetup)
+        let review = try #require(setup.reviews.first)
+        await model.confirmLocalSourceSetup(
+            setup,
+            includePathsByCandidate: [review.candidate.id: review.recommendedIncludePaths]
+        )
+        await model.importSelectedCandidates(authorizingHighRisk: true)
+        let imported = try #require(model.snapshot.skills.first)
+
+        let grownHandle = try FileHandle(forWritingTo: dependency)
+        try grownHandle.truncate(atOffset: 129 * 1_024 * 1_024)
+        try grownHandle.close()
+        await model.checkLocalSource(imported)
+
+        #expect(model.errorMessage?.contains("文件总体积超过上限") == true)
+        #expect(model.snapshot.localSourceStates.first?.status == .current)
+    }
+
+    @Test("A local folder scan failure explains why the detected Skill could not be read")
+    func localFolderProviderSurfacesScanFailure() async {
+        let provider = LocalFolderSourceProvider(scanner: DiagnosticOnlySkillScanner(
+            message: "/example/demo：扫描范围过大（文件总体积超过上限），已跳过以避免影响应用启动"
+        ))
+
+        do {
+            _ = try await provider.preview(locator: "/example/demo")
+            Issue.record("Expected the provider to surface the scanner diagnostic")
+        } catch {
+            #expect(error.localizedDescription.contains("找到了 Skill") == true)
+            #expect(error.localizedDescription.contains("文件总体积超过上限") == true)
+            #expect(error.localizedDescription.contains("没有找到") == false)
+            #expect(error.localizedDescription.contains("应用启动") == false)
+        }
+    }
+
+    @Test("Package confirmation keeps the scanner's concrete rejection reason")
+    func localPackageConfirmationSurfacesScanFailure() async throws {
+        let fixture = try LocalSourceFixture()
+        defer { fixture.remove() }
+        try fixture.write("skills/demo/SKILL.md", fixture.skillMarkdown("A local development demo."))
+        let candidate = try await fixture.candidate()
+        let review = try LocalSkillPackageResolver().review(
+            candidate: candidate,
+            projectRoot: fixture.projectRoot
+        )
+        let resolver = LocalSkillPackageResolver(scanner: DiagnosticOnlySkillScanner(
+            message: "demo：文件总体积超过手动添加上限"
+        ))
+
+        do {
+            _ = try await resolver.confirm(
+                review: review,
+                includePaths: review.recommendedIncludePaths
+            )
+            Issue.record("Expected confirmation to surface the scanner diagnostic")
+        } catch {
+            #expect(error.localizedDescription.contains("文件总体积超过手动添加上限"))
+        }
+    }
+
+    @MainActor
+    @Test("A failed add clears the success toast instead of showing a green failure")
+    func failedLocalAddDoesNotReuseTheSuccessToast() async throws {
+        let fixture = try LocalSourceFixture()
+        defer { fixture.remove() }
+        try fixture.write("skills/demo/SKILL.md", fixture.skillMarkdown("A local development demo."))
+        let model = AppModel(
+            libraryRoot: fixture.storeRoot,
+            homeDirectory: fixture.root,
+            startBootstrap: false
+        )
+        await model.previewLocalFolder(fixture.projectRoot)
+        let setup = try #require(model.pendingLocalSourceSetup)
+        let review = try #require(setup.reviews.first)
+        model.statusMessage = "上一次操作已完成"
+
+        await model.confirmLocalSourceSetup(
+            setup,
+            includePathsByCandidate: [review.candidate.id: ["missing-file"]]
+        )
+
+        #expect(model.errorMessage != nil)
+        #expect(model.statusMessage.isEmpty)
     }
 
     @MainActor
@@ -385,6 +540,17 @@ struct LocalSourceTrackingTests {
 
         #expect(model.operationProgress?.canCancel == false)
         #expect(model.statusMessage == "正在完成更新，请稍候")
+    }
+}
+
+private struct DiagnosticOnlySkillScanner: SkillScanner {
+    let message: String
+
+    func scan(
+        roots: [URL],
+        sourceName: @Sendable (URL) -> String
+    ) async -> ScanResult {
+        ScanResult(candidates: [], duplicateGroups: [], conflicts: [], diagnostics: [message])
     }
 }
 

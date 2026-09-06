@@ -1,0 +1,80 @@
+[
+  {
+    "repository": "blader/humanizer",
+    "revision": "HEAD",
+    "path": "SKILL.md",
+    "name": "humanizer",
+    "description": "Rewrite AI-sounding text so it reads naturally without changing what it says.\nUse when editing or reviewing prose for inflated claims,\nsales language, vague sources, repetitive structure, stock AI words, passive\nvoice, filler, or chatbot artifacts. Based on Wikipedia's \"Signs of AI writing.\"",
+    "trust": "curated",
+    "searchAliases": [
+      "AI味",
+      "去除AI",
+      "去掉AI",
+      "不像AI",
+      "活人感",
+      "humanize"
+    ]
+  },
+  {
+    "repository": "petergyang/no-ai-slop",
+    "revision": "HEAD",
+    "path": "skills/no-ai-slop/SKILL.md",
+    "name": "no-ai-slop",
+    "description": "Edit drafts into sharper, more human writing while preserving the writer's personal voice, or detect AI-slop patterns without rewriting. Use when the user wants a draft clearer, more direct, more opinionated, or less AI-sounding, or asks whether writing reads as AI.",
+    "trust": "curated",
+    "searchAliases": [
+      "AI味",
+      "去除AI",
+      "去掉AI",
+      "不像AI",
+      "活人感",
+      "humanize"
+    ]
+  },
+  {
+    "repository": "KKKKhazix/human-writing",
+    "revision": "HEAD",
+    "path": "human-writing/SKILL.md",
+    "name": "human-writing",
+    "description": "通用中文创作与改稿 Skill。用于知乎回答、论坛长帖、公众号文章、博客、评论、人物故事、历史叙事、新闻与行业解读、科普、教程、评测、个人叙事、小说、故事、对白、口播和演讲稿。默认写成一个见过事、查过材料、愿意把来龙去脉讲清楚的人在说话，重点保留中文互联网长回答与长帖的活人感和自然中文韵律，避免空泛的机构腔、喊口号式演说腔、营销腔和模型腔。非虚构长文先检查材料够不够，材料不足时研究、追问或缩短，绝不用重复解释灌字数。现实内容额外核验事实、引语、数据与用户亲历，虚构内容可以创造人物、场景、对白、心理与情节。成稿正文严禁冒号、破折号、“不是……而是……”及同类翻案句，并清除商业黑话和模型惯用黑话。不创建作者画像、个人规则库或个人写作 Skill。",
+    "trust": "curated",
+    "searchAliases": [
+      "AI味",
+      "去除AI",
+      "去掉AI",
+      "不像AI",
+      "活人感",
+      "humanize"
+    ]
+  },
+  {
+    "repository": "KKKKhazix/khazix-skills",
+    "revision": "HEAD",
+    "path": "khazix-writer/SKILL.md",
+    "name": "khazix-writer",
+    "description": "数字生命卡兹克（Khazix）的公众号长文写作skill。当用户需要撰写公众号文章、写稿子、续写文章、根据素材产出长文时使用。触发词包括但不限于：写文章、写稿子、帮我写、续写、扩写、公众号文章、长文、出稿、按我的风格写。即使用户只是说\"帮我把这个写成文章\"或\"用我的风格写一下\"，只要上下文涉及内容创作和公众号输出，都应该触发。也适用于用户丢过来一个PDF、brief、新闻链接、语音转文字或任何素材说\"帮我写篇文章\"的场景。不要用于短内容（小红书帖子、推特、朋友圈）或纯标题摘要生成（那个用wechat-title skill）。",
+    "trust": "curated",
+    "searchAliases": [
+      "AI味",
+      "去除AI",
+      "去掉AI",
+      "不像AI",
+      "活人感",
+      "humanize"
+    ]
+  },
+  {
+    "repository": "helloianneo/ian-xiaohei-illustrations",
+    "revision": "main",
+    "path": "ian-xiaohei-illustrations/SKILL.md",
+    "name": "ian-xiaohei-illustrations",
+    "description": "生成 Ian 风格的中文正文配图。用于用户要求为中文文章、帖子、博客、Notion 文档、工作流文档、方法论、流程、结构、状态、隐喻或观点生成“怪诞”“小黑”“手绘”“正文配图”“文章插图”“配图建议”“shot list”“去标题/改图”等任务；默认使用小黑 IP、纯白手绘、少量红橙蓝批注、简洁清爽但天马行空的视觉风格。",
+    "trust": "curated",
+    "nameAliases": [
+      "小黑配图",
+      "小黑怪诞正文配图",
+      "Ian 小黑配图"
+    ],
+    "nameAliasSource": "https://github.com/helloianneo/ian-xiaohei-illustrations/blob/main/ian-xiaohei-illustrations/SKILL.md"
+  }
+]

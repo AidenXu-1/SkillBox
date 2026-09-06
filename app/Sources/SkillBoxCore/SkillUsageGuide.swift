@@ -166,7 +166,7 @@ public struct SkillUsageGuideMaterialReader: Sendable {
 }
 
 public struct SkillUsageGuideRecord: Codable, Hashable, Sendable {
-    public static let currentPromptVersion = "usage-guide-v3"
+    public static let currentPromptVersion = "usage-guide-v4"
 
     public var schemaVersion: Int
     public var skillID: UUID
@@ -216,12 +216,21 @@ public actor SkillUsageGuideStore {
     }
 
     public func load(skillID: UUID, fingerprint: String) -> SkillUsageGuideRecord? {
+        guard let record = loadCompatible(skillID: skillID, fingerprint: fingerprint),
+              record.promptVersion == SkillUsageGuideRecord.currentPromptVersion
+        else { return nil }
+        return record
+    }
+
+    /// Reads a guide that still belongs to this exact Skill content even when a
+    /// newer writing prompt is available. Callers can keep the richer saved
+    /// explanation as a fallback while attempting to generate the newer copy.
+    public func loadCompatible(skillID: UUID, fingerprint: String) -> SkillUsageGuideRecord? {
         guard let data = try? Data(contentsOf: fileURL(skillID: skillID, fingerprint: fingerprint)),
               let record = try? decoder.decode(SkillUsageGuideRecord.self, from: data),
               record.schemaVersion == 1,
               record.skillID == skillID,
-              record.fingerprint == fingerprint,
-              record.promptVersion == SkillUsageGuideRecord.currentPromptVersion
+              record.fingerprint == fingerprint
         else { return nil }
         return record
     }
@@ -250,6 +259,25 @@ public actor SkillUsageGuideStore {
             .appendingPathComponent(skillID.uuidString, isDirectory: true)
             .appendingPathComponent(fingerprint, isDirectory: true)
             .appendingPathComponent("usage-guide.json")
+    }
+}
+
+public enum SkillUsageGuideFallbackSelection {
+    public static func preferred(
+        cached: SkillUsageGuide?,
+        extracted: SkillUsageGuide?
+    ) -> SkillUsageGuide? {
+        guard let cached else { return extracted }
+        guard let extracted else { return cached }
+        return completenessScore(cached) >= completenessScore(extracted) ? cached : extracted
+    }
+
+    private static func completenessScore(_ guide: SkillUsageGuide) -> Int {
+        var score = guide.purpose.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0 : 1
+        if guide.useWhen?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false { score += 1 }
+        if !guide.experienceSteps.isEmpty { score += 1 }
+        if guide.starterPrompt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false { score += 1 }
+        return score
     }
 }
 
@@ -324,7 +352,10 @@ public struct SkillUsageGuideExtractor: Sendable {
     }
 
     private var experienceHeadings: [String] {
-        ["使用时会发生什么", "你会经历什么", "用户体验流程", "用户流程", "whathappens", "userexperience", "userjourney"]
+        [
+            "使用时会发生什么", "你会经历什么", "使用流程", "交互流程", "用户体验流程", "用户流程",
+            "whathappens", "howitworks", "workflow", "userexperience", "userjourney",
+        ]
     }
 
     private func readableText(at url: URL) -> String? {
@@ -464,8 +495,8 @@ public struct SkillUsageGuideExtractor: Sendable {
     private func experience(in documents: [String]) -> [String] {
         for document in documents {
             guard let lines = sectionLines(in: document, headings: experienceHeadings) else { continue }
-            let items = lines.compactMap(listItem).map { limited(cleanSentence($0), to: 90) }
-            if !items.isEmpty { return Array(items.prefix(3)) }
+            let items = lines.compactMap(listItem).map { limited(cleanSentence($0), to: 160) }
+            if !items.isEmpty { return Array(items.prefix(7)) }
         }
         return []
     }
