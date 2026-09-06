@@ -7,7 +7,7 @@
 
   本地优先 · 安装前预览 · 操作可撤销 · 无账号 · 无遥测
 
-  [查看可下载版本](https://github.com/AidenXu-1/SkillBox/releases) · [反馈问题](https://github.com/AidenXu-1/SkillBox/issues)
+  [下载 v0.2.2](https://github.com/AidenXu-1/SkillBox/releases/tag/v0.2.2) · [反馈问题](https://github.com/AidenXu-1/SkillBox/issues)
 </div>
 
 ## SkillBox 能做什么
@@ -28,18 +28,20 @@ SkillBox 管理的是跨项目使用的全局 Skills，不扫描或管理项目�
 
 ## 下载与安装
 
-当前开发版本：**v0.2.2（Build 6）**。可下载的发行版本及附件请以 GitHub 版本列表为准。
+当前发行版本：**v0.2.2（Build 6）**。
 
-[**打开 GitHub 版本列表**](https://github.com/AidenXu-1/SkillBox/releases)
+[**下载 v0.2.2 安装包**](https://github.com/AidenXu-1/SkillBox/releases/tag/v0.2.2) · [历史版本](https://github.com/AidenXu-1/SkillBox/releases)
 
 系统要求：Apple Silicon Mac，macOS 15.0 或更高版本。
 
-1. 在版本列表选择已发布版本，下载并打开其 DMG。
+1. 打开上方下载页，下载并打开 `SkillBox-0.2.2.dmg`。
 2. 把 SkillBox 拖进「应用程序」。
 3. 第一次打开时，如果 macOS 提示无法验证开发者，请进入「系统设置 → 隐私与安全」。
 4. 找到 SkillBox，点击「仍要打开」，按系统提示输入这台 Mac 的登录密码。
 
 > SkillBox 当前采用 ad-hoc 签名并启用 Hardened Runtime，没有使用 Apple Developer ID，也没有经过 Apple 公证。macOS 无法通过 Apple 证书确认开发者身份，首次打开需要你亲自放行；应用更新后，系统可能再次要求确认。请从项目官方 GitHub 下载。
+
+本版本已完成现有安装环境中的核心流程验收；另一台 Mac 或干净账户的首次安装、手动放行与核心操作体验尚未单独实测。此限制也记录在版本说明中。
 
 ## 隐私与安全
 
@@ -70,6 +72,6 @@ cd app
 
 准备发行候选可运行 `app/Scripts/release-distribution.sh`（从仓库根目录执行）。脚本会发现并执行全量测试，完成 Release 构建、签名、图标与隐私检查，生成 DMG、SHA-256 和来源清单，并模拟下载后的隔离属性；它不会自动安装或上传 GitHub。
 
-测试数量和结果以当次执行为准。正式发行还需要完成真实主流程、干净账户安装体验，以及发布后下载附件的校验。
+测试数量和结果以当次执行为准。默认发行检查还包括真实主流程、干净账户安装体验，以及发布后下载附件的校验；v0.2.2 在已披露首次安装未实测的范围下获准发布，未将该项记为通过。
 
 开发说明：[`docs/spec.md`](docs/spec.md) · [`docs/agent-guide.md`](docs/agent-guide.md) · [`docs/progress.md`](docs/progress.md) · [`app/README.md`](app/README.md)
