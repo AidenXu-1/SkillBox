@@ -10,6 +10,16 @@ struct SkillBoxOperationProgress: Equatable {
     var canCancel: Bool
 }
 
+private struct ManualUsageGuideFailure: Sendable {
+    var message: String
+    var category: AIInvocationErrorCategory?
+}
+
+private enum ManualUsageGuideTaskResult: Sendable {
+    case success(SkillUsageGuide)
+    case failure(ManualUsageGuideFailure)
+}
+
 struct AssignmentProposal: Identifiable {
     let id = UUID()
     let skill: SkillRecord
@@ -86,6 +96,95 @@ struct AIModelChoice: Identifiable, Hashable {
     var id: String { "\(providerID)::\(model)" }
 }
 
+private struct DiscoveryAIRequestTimeout: Error, Sendable {}
+
+private final class DiscoveryAIRequestRace<Value: Sendable>: @unchecked Sendable {
+    typealias Continuation = CheckedContinuation<Value, Error>
+
+    private let lock = NSLock()
+    private var continuation: Continuation?
+    private var pendingResult: Result<Value, Error>?
+    private var operationTask: Task<Void, Never>?
+    private var timeoutTask: Task<Void, Never>?
+    private var isResolved = false
+
+    func installContinuation(_ continuation: Continuation) {
+        let pending = lock.withLock { () -> Result<Value, Error>? in
+            if let pendingResult {
+                self.pendingResult = nil
+                return pendingResult
+            }
+            self.continuation = continuation
+            return nil
+        }
+        if let pending { continuation.resume(with: pending) }
+    }
+
+    func installTasks(operation: Task<Void, Never>, timeout: Task<Void, Never>) {
+        let shouldCancel = lock.withLock {
+            guard !isResolved else { return true }
+            operationTask = operation
+            timeoutTask = timeout
+            return false
+        }
+        if shouldCancel {
+            operation.cancel()
+            timeout.cancel()
+        }
+    }
+
+    func succeed(_ value: Value) {
+        resolve(.success(value), cancelOperation: false)
+    }
+
+    func fail(_ error: Error, cancelOperation: Bool) {
+        resolve(.failure(error), cancelOperation: cancelOperation)
+    }
+
+    private func resolve(_ result: Result<Value, Error>, cancelOperation: Bool) {
+        let captured = lock.withLock { () -> (Continuation?, Task<Void, Never>?, Task<Void, Never>?)? in
+            guard !isResolved else { return nil }
+            isResolved = true
+            let continuation = self.continuation
+            if continuation == nil { pendingResult = result }
+            self.continuation = nil
+            let operation = operationTask
+            let timeout = timeoutTask
+            operationTask = nil
+            timeoutTask = nil
+            return (continuation, operation, timeout)
+        }
+        guard let captured else { return }
+        if cancelOperation { captured.1?.cancel() }
+        captured.2?.cancel()
+        captured.0?.resume(with: result)
+    }
+}
+
+private func withDiscoveryAIRequestDeadline<Value: Sendable>(
+    _ timeout: Duration,
+    operation: @escaping @Sendable () async throws -> Value
+) async throws -> Value {
+    let race = DiscoveryAIRequestRace<Value>()
+    return try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+            race.installContinuation(continuation)
+            let operationTask = Task {
+                do { race.succeed(try await operation()) }
+                catch { race.fail(error, cancelOperation: false) }
+            }
+            let timeoutTask = Task {
+                do { try await Task.sleep(for: timeout) }
+                catch { return }
+                race.fail(DiscoveryAIRequestTimeout(), cancelOperation: true)
+            }
+            race.installTasks(operation: operationTask, timeout: timeoutTask)
+        }
+    } onCancel: {
+        race.fail(CancellationError(), cancelOperation: true)
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     static let githubConnectionHintKey = "SkillBoxGitHubConnectionHint"
@@ -119,6 +218,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var pendingDeletionAfterSyncSkillID: UUID?
     @Published private(set) var pendingUndoTransaction: SyncTransaction?
     @Published var canRetryGitHubWithDefaultBranch = false
+    @Published var canRetryGitHubConnection = false
     @Published var pendingReleasePackageChoice: GitHubReleasePackageChoice?
     @Published var pendingInstallContentChoice: GitHubInstallContentChoice?
     @Published var pendingLocalSourceSetup: LocalSourceSetup?
@@ -130,12 +230,13 @@ final class AppModel: ObservableObject {
     @Published var isDiscoverySearching = false
     @Published var discoveryRunState: DiscoveryRunState?
     @Published private(set) var activeDiscoverySessionID: UUID?
-    @Published private(set) var generatingDiscoveryUsageGuideCandidateID: String?
     @Published var discoveryStorageBytes: Int64 = 0
     @Published var aiSettings = AISettings.defaults
     @Published var configuredAIProviderIDs: Set<String> = []
     @Published var isTestingAIConnection = false
     @Published var aiConnectionStatus = ""
+    @Published private(set) var generatingUsageGuideSkillIDs = Set<UUID>()
+    @Published private(set) var usageGuideRevision = 0
 
     let libraryRoot: URL
     let discoverySessionsDirectory: URL
@@ -145,11 +246,11 @@ final class AppModel: ObservableObject {
     private let aiSettingsStore: AISettingsStore
     private let aiKeyStore: any AIKeyStore
     private let aiProvider: any AIProvider
+    private let discoveryAIRequestTimeout: Duration
     private let userDefaults: UserDefaults
-    private lazy var discoveryProvider = DiscoverySearchCoordinator(providers: [
-        SkillsShDiscoveryProvider(repositoryTokenProvider: githubSession),
-        GitHubSkillDiscoveryProvider(tokenProvider: githubSession),
-    ])
+    private let injectedGitHubProvider: GitHubSourceProvider?
+    private let injectedRoutedDiscoveryProvider: RoutedSkillDiscoveryProvider?
+    private lazy var routedDiscoveryProvider = injectedRoutedDiscoveryProvider ?? DefaultSkillDiscovery.make(tokenProvider: githubSession)
     private let scanner = FileSystemSkillScanner()
     private let planner = DefaultSyncPlanner()
     private let executor = TransactionalSyncExecutor()
@@ -161,7 +262,7 @@ final class AppModel: ObservableObject {
         client: githubDeviceClient,
         credentialStore: KeychainGitHubCredentialStore()
     )
-    private lazy var githubProvider = GitHubSourceProvider(tokenProvider: githubSession)
+    private lazy var githubProvider = injectedGitHubProvider ?? GitHubSourceProvider(tokenProvider: githubSession)
     private lazy var githubUpdateChecker = GitHubUpdateChecker(checker: githubProvider, store: store)
     private lazy var automaticGitHubUpdateChecker = GitHubUpdateChecker(
         checker: GitHubSourceProvider(),
@@ -171,22 +272,22 @@ final class AppModel: ObservableObject {
     private var remoteOperationTask: Task<Void, Never>?
     private var pendingGitHubPackageRecipes: [String: GitHubPackageRecipe] = [:]
     private var pendingLocalPackages: [String: PreparedLocalPackage] = [:]
-    private var pendingLocalTrackingEnabled = false
     private var pendingLocalUpdateState: LocalSourceState?
     private var pendingDiscoveryCandidateName: String?
     private var pendingDiscoveryUsageGuide: SkillUsageGuide?
     private var pendingDiscoveryUsageGuideSourceDigest: String?
-    private var discoveryUsageGuideTask: Task<Void, Never>?
-    private var discoveryUsageGuideGenerationID: UUID?
     private var discoveryCandidateSelectionTask: Task<Void, Never>?
     private var discoveryCandidateSelectionGenerationID: UUID?
     private var discoverySearchTask: Task<Void, Never>?
+    private var discoveryQueueTask: Task<Void, Never>?
+    @Published var discoveryQueuePaused = false
     private var activeGitHubPreviewOperationID: UUID?
     private var retryGitHubImportContext: GitHubImportContext?
     private var invalidatedDiscoverySessionIDs = Set<UUID>()
     private var aiAuthorizationGeneration = 0
     private var riskAcknowledgementDigests: [String: String] = [:]
     private var pendingSyncAssignments: [Assignment]?
+    private var manualUsageGuideTasks: [String: Task<ManualUsageGuideTaskResult, Never>] = [:]
 
     var githubClientID: String { Bundle.main.object(forInfoDictionaryKey: "SkillBoxGitHubClientID") as? String ?? "" }
     var isGitHubConfigured: Bool { !githubClientID.isEmpty && githubInstallURL != nil }
@@ -201,6 +302,9 @@ final class AppModel: ObservableObject {
         homeDirectory customHomeDirectory: URL? = nil,
         aiKeyStore providedAIKeyStore: (any AIKeyStore)? = nil,
         aiProvider providedAIProvider: (any AIProvider)? = nil,
+        githubProvider providedGitHubProvider: GitHubSourceProvider? = nil,
+        routedDiscoveryProvider providedRoutedDiscoveryProvider: RoutedSkillDiscoveryProvider? = nil,
+        discoveryAIRequestTimeout: Duration = .seconds(20),
         userDefaults: UserDefaults = .standard,
         startBootstrap: Bool = true
     ) {
@@ -226,6 +330,9 @@ final class AppModel: ObservableObject {
         }
         aiKeyStore = providedAIKeyStore ?? KeychainAIKeyStore()
         aiProvider = providedAIProvider ?? OpenAICompatibleProvider()
+        self.discoveryAIRequestTimeout = discoveryAIRequestTimeout
+        injectedGitHubProvider = providedGitHubProvider
+        injectedRoutedDiscoveryProvider = providedRoutedDiscoveryProvider
         self.userDefaults = userDefaults
         riskAcknowledgementDigests = userDefaults.dictionary(forKey: Self.riskAcknowledgementsKey) as? [String: String] ?? [:]
         showOnboarding = !UserDefaults.standard.bool(forKey: "SkillBoxOnboardingCompleted")
@@ -251,6 +358,7 @@ final class AppModel: ObservableObject {
 
     func acknowledgeRisk(for skill: SkillRecord) {
         guard skill.riskReport.requiresUserAttention, !skill.riskReport.isBlocked else { return }
+        objectWillChange.send()
         riskAcknowledgementDigests[skill.id.uuidString] = riskAcknowledgementDigest(for: skill)
         userDefaults.set(riskAcknowledgementDigests, forKey: Self.riskAcknowledgementsKey)
     }
@@ -301,15 +409,17 @@ final class AppModel: ObservableObject {
         do {
             let recovered = try await TransactionalSyncExecutor().recoverInterruptedTransactions(store: store)
             if recovered.contains(where: { $0.status == .failed }) {
-                errorMessage = "上次未完成的安装没有全部恢复，请在「最近操作」中查看详情。"
+                errorMessage = "上次未完成的安装没有全部恢复，请到「设置 → 操作记录与恢复」查看详情。"
             } else if !recovered.isEmpty {
                 statusMessage = "已恢复上次异常中断的安装操作"
             }
         } catch { present(error) }
         let persisted = await store.currentSnapshot()
-        let builtin = BuiltinAgentAdapters.all.map { $0.makeTarget(homeDirectory: homeDirectory, fileManager: .default) }
-        let custom = persisted.targets.filter(\.isCustom)
-        do { try await store.replaceTargets(builtin + custom) } catch { present(error) }
+        let targets = BuiltinAgentAdapters.reconciledTargets(
+            persisted: persisted.targets,
+            homeDirectory: homeDirectory
+        )
+        do { try await store.replaceTargets(targets) } catch { present(error) }
         do { try await store.refreshRiskReports(using: StaticRiskAnalyzer()) } catch { present(error) }
         await reload()
         lastDeletedSkill = await store.mostRecentRestorableDeletion()
@@ -339,8 +449,29 @@ final class AppModel: ObservableObject {
         isDiscoverySearching && activeDiscoverySessionID == selectedDiscoverySessionID
     }
 
-    var isGeneratingSelectedDiscoveryUsageGuide: Bool {
-        generatingDiscoveryUsageGuideCandidateID == selectedDiscoveryCandidateID
+    var canContinueSelectedDiscoverySearch: Bool {
+        guard let session = selectedDiscoverySession,
+              let run = session.runs.last,
+              run.state == .completed || run.state == .partiallyCompleted || run.state == .failed
+        else { return false }
+        let intent = session.intent ?? DiscoveryIntent(goal: session.title)
+        let evaluated = Set(run.semanticEvaluatedCandidateIDs)
+        let evaluationFrontier = intent.route == .exact
+            ? []
+            : DiscoveryCandidateRanker.candidatesForEvaluation(
+                session.candidates,
+                intent: intent,
+                allowPrivateSkillContent: aiSettings.isPrivateContentSharingAllowedForSelectedProvider
+            )
+        let hasUnevaluatedAICandidate = aiSettings.selectedVerifiedConfiguration != nil
+            && evaluationFrontier.contains { !evaluated.contains($0.id) }
+        if hasUnevaluatedAICandidate { return true }
+        if run.state == .failed || run.failedSourceCount > 0 || run.failedQueryCount > 0
+            || run.failedCandidateVerificationCount > 0 || run.deferredCandidateVerificationCount > 0
+        {
+            return true
+        }
+        return run.state == .partiallyCompleted && run.requestedLimitPerQuery < 1_000
     }
 
     var selectedAIConfiguration: AIProviderConfiguration? {
@@ -452,7 +583,7 @@ final class AppModel: ObservableObject {
             if !trimmed.isEmpty {
                 try await aiKeyStore.save(trimmed, providerID: providerID)
             }
-            guard let key = try await aiKeyStore.load(providerID: providerID),
+            guard let key = try await aiKeyStore.loadForUserInitiatedAccess(providerID: providerID),
                   let configuration = aiSettings.configuration(id: providerID)
             else { throw AIServiceError.missingAPIKey }
             let authorizationGeneration = aiAuthorizationGeneration
@@ -493,7 +624,6 @@ final class AppModel: ObservableObject {
         aiAuthorizationGeneration &+= 1
         discoverySearchTask?.cancel()
         cancelDiscoveryCandidateSelection()
-        cancelDiscoveryUsageGuide()
     }
 
     func openAIKeyPage(providerID: String) {
@@ -521,16 +651,13 @@ final class AppModel: ObservableObject {
         if allowAutomaticSelection, selectedDiscoverySessionID == nil {
             selectedDiscoverySessionID = discoverySessions.first?.id
         }
-        if let session = selectedDiscoverySession,
-           selectedDiscoveryCandidateID == nil || !session.candidates.contains(where: { $0.id == selectedDiscoveryCandidateID })
-        {
-            selectedDiscoveryCandidateID = session.selectedCandidateID ?? session.candidates.first?.id
+        if let session = selectedDiscoverySession {
+            selectedDiscoveryCandidateID = Self.preferredDiscoveryCandidateID(in: session)
         }
     }
 
     func beginNewDiscovery() {
         cancelDiscoveryCandidateSelection()
-        cancelDiscoveryUsageGuide()
         selectedDiscoverySessionID = nil
         selectedDiscoveryCandidateID = nil
         discoveryDraft = ""
@@ -539,16 +666,14 @@ final class AppModel: ObservableObject {
 
     func selectDiscoverySession(_ id: UUID?) {
         cancelDiscoveryCandidateSelection()
-        cancelDiscoveryUsageGuide()
         selectedDiscoverySessionID = id
         let session = discoverySessions.first { $0.id == id }
-        selectedDiscoveryCandidateID = session?.selectedCandidateID ?? session?.candidates.first?.id
+        selectedDiscoveryCandidateID = session.flatMap(Self.preferredDiscoveryCandidateID)
         discoveryDraft = ""
     }
 
     func selectDiscoveryCandidate(_ id: String) {
         cancelDiscoveryCandidateSelection()
-        cancelDiscoveryUsageGuide()
         selectedDiscoveryCandidateID = id
         guard let session = selectedDiscoverySession else { return }
         let generationID = UUID()
@@ -570,12 +695,6 @@ final class AppModel: ObservableObject {
                 !Task.isCancelled
                 else { return }
                 await self.reloadDiscoverySessions(allowAutomaticSelection: false)
-                guard !Task.isCancelled,
-                      self.discoveryCandidateSelectionGenerationID == generationID,
-                      self.selectedDiscoverySessionID == session.id,
-                      self.selectedDiscoveryCandidateID == id
-                else { return }
-                self.startDiscoveryUsageGuideGeneration(sessionID: session.id, candidateID: id)
             } catch is CancellationError {
                 return
             } catch {
@@ -590,136 +709,180 @@ final class AppModel: ObservableObject {
         discoveryCandidateSelectionGenerationID = nil
     }
 
-    private func startDiscoveryUsageGuideGeneration(sessionID: UUID, candidateID: String) {
-        let generationID = UUID()
-        discoveryUsageGuideGenerationID = generationID
-        generatingDiscoveryUsageGuideCandidateID = candidateID
-        discoveryUsageGuideTask = Task { [weak self] in
-            guard let self else { return }
-            await self.generateDiscoveryUsageGuideIfNeeded(sessionID: sessionID, candidateID: candidateID)
-            guard self.discoveryUsageGuideGenerationID == generationID else { return }
-            self.discoveryUsageGuideTask = nil
-            self.discoveryUsageGuideGenerationID = nil
-            self.generatingDiscoveryUsageGuideCandidateID = nil
-        }
-    }
-
-    func cancelDiscoveryUsageGuide() {
-        discoveryUsageGuideTask?.cancel()
-        discoveryUsageGuideTask = nil
-        discoveryUsageGuideGenerationID = nil
-        generatingDiscoveryUsageGuideCandidateID = nil
-    }
-
-    private func generateDiscoveryUsageGuideIfNeeded(sessionID: UUID, candidateID: String) async {
-        guard !Task.isCancelled,
-              let session = discoverySessions.first(where: { $0.id == sessionID }),
-              let candidate = session.candidates.first(where: { $0.id == candidateID }),
-              candidate.usageGuide == nil,
-              AIContentSharingPolicy.canSend(
-                  sourceKind: .github,
-                  repositoryIsPrivate: candidate.evidence.repositoryIsPrivate,
-                  allowPrivateSkillContent: aiSettings.isPrivateContentSharingAllowedForSelectedProvider
-              ),
-              let configuration = aiSettings.selectedVerifiedConfiguration,
-              configuredAIProviderIDs.contains(configuration.id),
-              let key = try? await aiKeyStore.load(providerID: configuration.id),
-              !key.isEmpty
-        else { return }
-        guard !Task.isCancelled else { return }
-
-        let source = candidate.evidence.skillDocumentExcerpt ?? candidate.userFacingSummary ?? ""
-        let excerpt = String(source.prefix(DiscoveryEvaluationLimits.maximumLazyGuideCharacters))
-        let sourceDigest = candidate.evidence.skillDocumentExcerpt.map(SkillUsageGuideSourceIdentity.digest(markdown:))
-        guard !excerpt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let material = SkillUsageGuideMaterial(
-            name: candidate.name,
-            description: candidate.userFacingSummary ?? "",
-            documents: [.init(relativePath: "SKILL.md", content: excerpt)]
-        )
-
-        let analyzed: AIInvocationResult<SkillUsageGuide>
-        do {
-            analyzed = try await aiProvider.analyzeSkillUsage(
-                material: material,
-                configuration: configuration,
-                apiKey: key
-            )
-        } catch is CancellationError {
-            return
-        } catch {
-            return
-        }
-        guard !Task.isCancelled else { return }
-
-        do {
-            guard try await discoveryStore.saveUsageGuide(
-                sessionID: sessionID,
-                storageFolderName: session.storageFolderName,
-                candidateID: candidateID,
-                guide: analyzed.value,
-                sourceDigest: sourceDigest,
-                diagnostics: analyzed.diagnostics
-            ) != nil else { return }
-            await reloadDiscoverySessions(allowAutomaticSelection: false)
-        } catch { present(error) }
-    }
-
     func startDiscoverySearch() {
-        guard discoverySearchTask == nil, !isDiscoverySearching else { return }
+        let text = discoveryDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        guard text.count <= DiscoveryEvaluationLimits.maximumPlanningInputCharacters else {
+            noticeMessage = "这条消息超过 2,000 字，请拆成几条发送。原文已保留。"
+            return
+        }
+        if discoverySearchTask != nil || isDiscoverySearching {
+            guard let session = selectedDiscoverySession, session.id == activeDiscoverySessionID else {
+                noticeMessage = "另一个对话还在处理，请先停止或等它完成。"
+                return
+            }
+            let previous = discoveryQueueTask
+            discoveryQueueTask = Task { [weak self] in
+                await previous?.value
+                guard let self else { return }
+                do {
+                    try await self.discoveryStore.enqueue(text, sessionID: session.id, storageFolderName: session.storageFolderName)
+                    if self.discoveryDraft.trimmingCharacters(in: .whitespacesAndNewlines) == text { self.discoveryDraft = "" }
+                    await self.reloadDiscoverySessions(allowAutomaticSelection: false)
+                } catch { self.present(error) }
+            }
+            return
+        }
+        discoveryDraft = ""
+        launchDiscoveryMessage(text)
+    }
+
+    private func launchDiscoveryMessage(_ text: String, existingMessageID: UUID? = nil) {
+        discoveryQueuePaused = false
+        isDiscoverySearching = true
+        discoveryRunState = .understanding
         cancelDiscoveryCandidateSelection()
-        cancelDiscoveryUsageGuide()
+        let requestedSessionID = selectedDiscoverySessionID
         discoverySearchTask = Task { [weak self] in
             guard let self else { return }
-            await self.submitDiscoverySearch()
+            defer {
+                self.isDiscoverySearching = false
+                self.discoveryRunState = nil
+                self.activeDiscoverySessionID = nil
+                self.discoverySearchTask = nil
+            }
+            var nextText = text
+            var messageID = existingMessageID
+            var boundSessionID = requestedSessionID
+            repeat {
+                await self.submitDiscoverySearch(message: nextText, existingMessageID: messageID, requestedSessionID: boundSessionID)
+                let sessionID = self.lastProcessedDiscoverySessionID
+                boundSessionID = sessionID
+                await self.discoveryQueueTask?.value
+                guard !Task.isCancelled, !self.discoveryQueuePaused,
+                      let session = self.selectedDiscoverySession, session.id == sessionID,
+                      !self.invalidatedDiscoverySessionIDs.contains(session.id)
+                else { break }
+                do {
+                    guard let next = try await self.discoveryStore.claimQueued(sessionID: session.id, storageFolderName: session.storageFolderName) else { break }
+                    await self.reloadDiscoverySessions(allowAutomaticSelection: false)
+                    nextText = next.text
+                    messageID = next.id
+                } catch { self.present(error); break }
+            } while !Task.isCancelled
             self.discoverySearchTask = nil
         }
     }
 
+    private var lastProcessedDiscoverySessionID: UUID?
+
+    func resumeDiscoveryQueue() {
+        guard discoverySearchTask == nil, !isDiscoverySearching, let session = selectedDiscoverySession else { return }
+        discoverySearchTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let message = try await self.discoveryStore.claimQueued(sessionID: session.id, storageFolderName: session.storageFolderName)
+                await self.reloadDiscoverySessions(allowAutomaticSelection: false)
+                self.discoverySearchTask = nil
+                guard self.selectedDiscoverySessionID == session.id, let message else { return }
+                self.launchDiscoveryMessage(message.text, existingMessageID: message.id)
+            } catch { self.discoverySearchTask = nil; self.present(error) }
+        }
+    }
+
     func cancelDiscoverySearch() {
+        discoveryQueuePaused = true
         discoverySearchTask?.cancel()
     }
 
-    private func submitDiscoverySearch() async {
-        let text = discoveryDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !Task.isCancelled, !isDiscoverySearching, !text.isEmpty else {
+    private func submitDiscoverySearch(message text: String, existingMessageID: UUID? = nil, requestedSessionID: UUID?) async {
+        guard !Task.isCancelled, !text.isEmpty else {
             if text.isEmpty { noticeMessage = "先说说你想让 AI 帮你完成什么。" }
             return
         }
         isDiscoverySearching = true
         discoveryRunState = .understanding
-        defer {
-            isDiscoverySearching = false
-            discoveryRunState = nil
-            activeDiscoverySessionID = nil
-        }
+        // launchDiscoveryMessage owns completion, including queue persistence.
+        // Clearing these here briefly exposes an idle UI with a live task and
+        // can reject the user's immediate reply to a clarification.
         var session: DiscoverySession
         let isNewSession: Bool
-        if let current = selectedDiscoverySession {
+        if let requestedSessionID, let current = discoverySessions.first(where: { $0.id == requestedSessionID }) {
             session = current
             isNewSession = false
         } else {
+            guard requestedSessionID == nil else { return }
             session = await discoveryStore.makeSession(title: String(text.prefix(28)))
             isNewSession = true
         }
+        let missingUserHistory = DiscoveryConversation.hasUnverifiableLegacyConditions(in: session)
+        session.intent = DiscoveryConversation.userGroundedIntent(in: session)
+        if missingUserHistory {
+            let notice = "这条旧记录缺少原始用户条件的完整依据，已保守保留已有必须条件；你可以明确撤回或重新说明条件。"
+            if !session.notices.contains(where: { $0.text == notice }) {
+                session.notices.append(.init(text: notice, kind: .information))
+            }
+        }
+        let carriesForwardPreviousSearch = text == "继续深挖更多来源" && session.continuationInvalidated != true
+        let previousContinuationRun = carriesForwardPreviousSearch ? session.runs.last : nil
         activeDiscoverySessionID = session.id
-        selectedDiscoverySessionID = session.id
+        lastProcessedDiscoverySessionID = session.id
+        if selectedDiscoverySessionID == requestedSessionID { selectedDiscoverySessionID = session.id }
         invalidatedDiscoverySessionIDs.remove(session.id)
-        session.messages.append(.init(role: .user, text: text))
-        let fallbackPlan = DiscoveryIntentPlanner.fallback(message: text, previous: session.intent)
+        if selectedDiscoverySessionID == session.id, let selectedDiscoveryCandidateID { session.selectedCandidateID = selectedDiscoveryCandidateID }
+        var contextSession = session
+        contextSession.messages.removeAll { $0.id == existingMessageID }
+        let planningContext = DiscoveryPlanningContext(session: contextSession, nextMessage: text)
+        let priorIntent = session.intent
+        let userMessage = DiscoveryMessage(id: existingMessageID ?? UUID(), role: .user, text: text)
+        if !session.messages.contains(where: { $0.id == userMessage.id }) { session.messages.append(userMessage) }
+        let action = DiscoveryConversation.action(for: text, session: session)
+        if action != .search {
+            await handleDiscoveryConversation(text: text, action: action, session: &session, isNewSession: isNewSession, userMessageID: userMessage.id)
+            return
+        }
+        let fallbackPlan = DiscoveryConversation.searchPlan(message: text, session: session)
+        let continuesTask = priorIntent?.goal == fallbackPlan.intent.goal
+        session.pendingClarification = nil
+        if !continuesTask {
+            if !session.recommendedCandidates.isEmpty {
+                appendDiscoveryReply("上一任务的结果：" + session.recommendedCandidates.map(\.name).joined(separator: "、"), to: &session,
+                    references: Array(session.recommendedCandidates.prefix(6)).map(DiscoveryConversationReference.init))
+                session.messages[session.messages.count - 1].createdAt = userMessage.createdAt.addingTimeInterval(-0.001)
+                session.messages.removeAll { $0.id == userMessage.id }
+                session.messages.append(userMessage)
+            }
+            session.contextStartMessageID = userMessage.id
+            session.candidates = []
+            session.selectedCandidateID = nil
+        }
         let runID = UUID()
-        session.runs.append(.init(id: runID, queries: fallbackPlan.queries, state: .understanding))
-        discoveryDraft = ""
+        session.runs.append(.init(
+            id: runID,
+            queries: fallbackPlan.queries,
+            route: fallbackPlan.intent.route,
+            state: .understanding
+        ))
         session.updatedAt = Date()
         guard await saveDiscoveryResult(session, allowCreate: isNewSession) else { return }
 
         var plan = fallbackPlan
+        if carriesForwardPreviousSearch,
+           let previousContinuationRun,
+           !previousContinuationRun.queries.isEmpty
+        {
+            plan = DiscoveryPlan(
+                intent: session.intent ?? fallbackPlan.intent,
+                queries: previousContinuationRun.queries
+            )
+        }
         var configurationUsed: AIProviderConfiguration?
         var keyUsed: String?
         var authorizationGenerationUsed: Int?
         var fallbackReason: String?
         var diagnostics: [AIInvocationDiagnostic] = []
-        if let configuration = aiSettings.selectedVerifiedConfiguration,
+        if fallbackPlan.intent.route != .exact,
+           let configuration = aiSettings.selectedVerifiedConfiguration,
            configuredAIProviderIDs.contains(configuration.id)
         {
             do {
@@ -728,20 +891,30 @@ final class AppModel: ObservableObject {
                     guard aiSettings.selectedVerifiedConfiguration == configuration,
                           configuredAIProviderIDs.contains(configuration.id)
                     else { throw CancellationError() }
-                    let result = try await aiProvider.planDiscovery(
-                        message: text,
-                        previousIntent: session.intent,
-                        configuration: configuration,
-                        apiKey: key
-                    )
-                    guard authorizationGeneration == aiAuthorizationGeneration else {
-                        throw CancellationError()
-                    }
-                    plan = result.value
-                    diagnostics.append(contentsOf: result.diagnostics)
                     configurationUsed = configuration
                     keyUsed = key
                     authorizationGenerationUsed = authorizationGeneration
+                    if !carriesForwardPreviousSearch {
+                        let aiProvider = self.aiProvider
+                        let previousIntent = continuesTask ? priorIntent : nil
+                        let result = try await withDiscoveryAIRequestDeadline(discoveryAIRequestTimeout) {
+                            try await aiProvider.planDiscovery(
+                                message: text,
+                                previousIntent: previousIntent,
+                                context: planningContext,
+                                configuration: configuration,
+                                apiKey: key
+                            )
+                        }
+                        guard authorizationGeneration == aiAuthorizationGeneration else {
+                            throw CancellationError()
+                        }
+                        plan = DiscoveryIntentPlanner.reconcile(
+                            modelPlan: result.value,
+                            deterministicPlan: fallbackPlan
+                        )
+                        diagnostics.append(contentsOf: result.diagnostics)
+                    }
                 } else {
                     fallbackReason = "本轮未使用 AI 语义筛选，当前结果来自已核对的公开资料。"
                 }
@@ -753,19 +926,28 @@ final class AppModel: ObservableObject {
                 if let diagnostic = Self.aiDiagnostic(from: error) { diagnostics.append(diagnostic) }
                 fallbackReason = Self.aiNotice(for: error, phase: "需求整理")
             }
-        } else {
+        } else if fallbackPlan.intent.route != .exact {
             fallbackReason = "本轮未使用 AI 语义筛选，当前结果来自已核对的公开资料。"
         }
         session.intent = plan.intent
+        session.continuationInvalidated = false
+        var evidenceIntent = plan.intent
+        for query in plan.queries.dropFirst()
+        where !plan.intent.targets.contains(where: { $0.kind == .author })
+            && !evidenceIntent.preferences.contains(query) {
+            // Author aliases identify ownership, not writing capability.
+            // Supplemental queries are created before any candidate document is
+            // read. Carry them into local matching so a precise English query
+            // does not find a niche Skill only to lose it at the final gate.
+            evidenceIntent.preferences.append(query)
+        }
         Self.updateDiscoveryRun(in: &session, id: runID, state: .understanding, queries: plan.queries, diagnostics: diagnostics, fallbackReason: fallbackReason)
 
-        if plan.needsClarification, let question = plan.clarifyingQuestion, !question.isEmpty {
-            session.messages.append(.init(
-                role: .assistant,
-                text: question,
-                providerID: configurationUsed?.id,
-                model: configurationUsed?.model
-            ))
+        if plan.needsClarification {
+            let question = plan.clarifyingQuestion.flatMap { $0.isEmpty ? nil : String($0.prefix(400)) }
+                ?? "你希望这个 Skill 直接完成什么任务，最后交付什么结果？"
+            session.pendingClarification = question
+            appendDiscoveryReply(question, to: &session)
             Self.updateDiscoveryRun(in: &session, id: runID, state: .completed, queries: plan.queries, diagnostics: diagnostics, fallbackReason: fallbackReason)
             session.updatedAt = Date()
             _ = await saveDiscoveryResult(session)
@@ -774,18 +956,48 @@ final class AppModel: ObservableObject {
 
         do {
             discoveryRunState = .recalling
-            Self.updateDiscoveryRun(in: &session, id: runID, state: .recalling, queries: plan.queries, diagnostics: diagnostics, fallbackReason: fallbackReason)
+            let searchScope: DiscoverySearchScope = carriesForwardPreviousSearch ? .deep : .initial
+            let previousLimit = previousContinuationRun?.requestedLimitPerQuery ?? 0
+            let previouslyEvaluatedCandidateIDs = Set(previousContinuationRun?.semanticEvaluatedCandidateIDs ?? [])
+            let previouslyRecommendedCandidateIDs = Set(previousContinuationRun?.semanticRecommendedCandidateIDs ?? [])
+            let requestedLimitPerQuery = searchScope.limitPerQuery(after: previousLimit)
+            Self.updateDiscoveryRun(
+                in: &session,
+                id: runID,
+                state: .recalling,
+                queries: plan.queries,
+                diagnostics: diagnostics,
+                fallbackReason: fallbackReason,
+                requestedLimitPerQuery: requestedLimitPerQuery,
+                semanticEvaluatedCandidateIDs: Array(previouslyEvaluatedCandidateIDs),
+                semanticRecommendedCandidateIDs: previousContinuationRun?.semanticRecommendedCandidateIDs ?? []
+            )
             session.updatedAt = Date()
             guard await saveDiscoveryResult(session) else { return }
 
             try Task.checkCancellation()
-            let searchScope: DiscoverySearchScope = plan.intent.preferences.contains(where: { $0.contains("继续深挖") }) ? .deep : .initial
-            let result = try await discoveryProvider.search(queries: plan.queries, limitPerQuery: searchScope.limitPerQuery)
+            let routedResult = try await routedDiscoveryProvider.search(
+                plan: plan,
+                limitPerQuery: requestedLimitPerQuery
+            )
+            let result = routedResult.batch
             try Task.checkCancellation()
-            if result.failedSourceCount > 0 {
+            let replacesPreviousCandidates = !continuesTask || plan.intent.route == .exact
+                || plan.intent.targets.contains { $0.kind == .skillName || $0.kind == .repository }
+            let mergedCandidates = replacesPreviousCandidates
+                ? result.candidates
+                : DiscoverySearchCoordinator.mergeCandidates(
+                    existing: session.candidates,
+                    incoming: result.candidates
+                )
+            let accumulatedCandidates = mergedCandidates
+            if let incompleteNotice = DiscoverySearchFeedback.incompleteNotice(
+                for: result,
+                canSearchDeeper: requestedLimitPerQuery < 1_000
+            ) {
                 fallbackReason = Self.combinedNotice(
                     fallbackReason,
-                    "本轮有 \(result.failedSourceCount) 个公开来源暂时未完成，已保留其他来源中核对通过的结果。"
+                    incompleteNotice
                 )
             }
             discoveryRunState = .verifying
@@ -796,18 +1008,25 @@ final class AppModel: ObservableObject {
                 queries: plan.queries,
                 diagnostics: diagnostics,
                 fallbackReason: fallbackReason,
-                retrievedCandidateCount: result.candidates.count
+                retrievedCandidateCount: accumulatedCandidates.count,
+                searchResult: result
             )
             session.updatedAt = Date()
             guard await saveDiscoveryResult(session) else { return }
 
             var evaluation: DiscoveryEvaluation?
-            let evaluationFrontier = DiscoveryCandidateRanker.candidatesForEvaluation(
-                result.candidates,
-                intent: plan.intent,
-                allowPrivateSkillContent: aiSettings.isPrivateContentSharingAllowedForSelectedProvider
+            let evaluationFrontier = plan.intent.route == .exact
+                ? []
+                : DiscoveryCandidateRanker.candidatesForEvaluation(
+                    accumulatedCandidates,
+                    intent: evidenceIntent,
+                    allowPrivateSkillContent: aiSettings.isPrivateContentSharingAllowedForSelectedProvider
+                )
+            let evaluationCandidates = DiscoveryEvaluationBatcher.nextEvaluationWindow(
+                from: evaluationFrontier,
+                excluding: previouslyEvaluatedCandidateIDs
             )
-            let evaluationCandidates = Array(evaluationFrontier.prefix(DiscoveryEvaluationLimits.maximumCandidates))
+            let evaluationIntent = evidenceIntent
             if let configurationUsed, let keyUsed, let authorizationGenerationUsed {
                 do {
                     discoveryRunState = .evaluating
@@ -818,26 +1037,77 @@ final class AppModel: ObservableObject {
                         queries: plan.queries,
                         diagnostics: diagnostics,
                         fallbackReason: fallbackReason,
-                        retrievedCandidateCount: result.candidates.count,
+                        retrievedCandidateCount: accumulatedCandidates.count,
                         evaluationCandidateCount: evaluationCandidates.count
                     )
                     session.updatedAt = Date()
                     guard await saveDiscoveryResult(session) else { return }
                     if !evaluationCandidates.isEmpty {
-                        try Task.checkCancellation()
-                        guard authorizationGenerationUsed == aiAuthorizationGeneration,
-                              aiSettings.selectedVerifiedConfiguration == configurationUsed,
-                              configuredAIProviderIDs.contains(configurationUsed.id)
-                        else { throw CancellationError() }
-                        let evaluated = try await aiProvider.evaluateCandidates(
-                            intent: plan.intent,
-                            candidates: evaluationCandidates,
-                            configuration: configurationUsed,
-                            apiKey: keyUsed
+                        var preliminaryEvaluations: [DiscoveryEvaluation] = []
+                        var comparisonFailureReported = false
+                        for batch in DiscoveryEvaluationBatcher.preliminaryBatches(from: evaluationCandidates) {
+                            do {
+                                try Task.checkCancellation()
+                                guard authorizationGenerationUsed == aiAuthorizationGeneration,
+                                      aiSettings.selectedVerifiedConfiguration == configurationUsed,
+                                      configuredAIProviderIDs.contains(configurationUsed.id)
+                                else { throw CancellationError() }
+                                let aiProvider = self.aiProvider
+                                let evaluated = try await withDiscoveryAIRequestDeadline(discoveryAIRequestTimeout) {
+                                    try await aiProvider.evaluateCandidates(
+                                        intent: evaluationIntent,
+                                        candidates: batch,
+                                        configuration: configurationUsed,
+                                        apiKey: keyUsed
+                                    )
+                                }
+                                preliminaryEvaluations.append(evaluated.value)
+                                diagnostics.append(contentsOf: evaluated.diagnostics)
+                            } catch is CancellationError {
+                                throw CancellationError()
+                            } catch {
+                                if let diagnostic = Self.aiDiagnostic(from: error) { diagnostics.append(diagnostic) }
+                                if !comparisonFailureReported {
+                                    fallbackReason = Self.combinedNotice(fallbackReason, Self.aiNotice(for: error, phase: "分组比较"))
+                                    comparisonFailureReported = true
+                                }
+                            }
+                        }
+
+                        var finalEvaluation: DiscoveryEvaluation?
+                        let finalists = DiscoveryEvaluationBatcher.finalists(
+                            from: preliminaryEvaluations,
+                            candidates: evaluationCandidates
                         )
-                        try Task.checkCancellation()
-                        evaluation = evaluated.value
-                        diagnostics.append(contentsOf: evaluated.diagnostics)
+                        if preliminaryEvaluations.count > 1, finalists.count > 1 {
+                            do {
+                                try Task.checkCancellation()
+                                guard authorizationGenerationUsed == aiAuthorizationGeneration,
+                                      aiSettings.selectedVerifiedConfiguration == configurationUsed,
+                                      configuredAIProviderIDs.contains(configurationUsed.id)
+                                else { throw CancellationError() }
+                                let aiProvider = self.aiProvider
+                                let final = try await withDiscoveryAIRequestDeadline(discoveryAIRequestTimeout) {
+                                    try await aiProvider.evaluateCandidates(
+                                        intent: evaluationIntent,
+                                        candidates: finalists,
+                                        configuration: configurationUsed,
+                                        apiKey: keyUsed
+                                    )
+                                }
+                                finalEvaluation = final.value
+                                diagnostics.append(contentsOf: final.diagnostics)
+                            } catch is CancellationError {
+                                throw CancellationError()
+                            } catch {
+                                if let diagnostic = Self.aiDiagnostic(from: error) { diagnostics.append(diagnostic) }
+                                fallbackReason = Self.combinedNotice(fallbackReason, Self.aiNotice(for: error, phase: "最终比较"))
+                            }
+                        }
+                        evaluation = DiscoveryEvaluationBatcher.merge(
+                            preliminary: preliminaryEvaluations,
+                            final: finalEvaluation
+                        )
                     }
                 } catch {
                     if error is CancellationError {
@@ -848,69 +1118,112 @@ final class AppModel: ObservableObject {
                     fallbackReason = Self.combinedNotice(fallbackReason, Self.aiNotice(for: error, phase: "候选比较"))
                 }
             }
-            let semanticRouting = DiscoveryCandidateRanker.semanticRouting(
-                evaluation: evaluation,
-                fallbackCandidateIDs: Set(evaluationFrontier.map(\.id))
+            let currentEvaluatedCandidateIDs = Set(evaluation?.recommendations.map(\.candidateID) ?? [])
+            let currentRecommendedCandidateIDs = Set(
+                evaluation?.recommendations.filter { $0.tier == .recommended }.map(\.candidateID) ?? []
             )
-            let ranked = DiscoveryCandidateRanker.rank(
-                result.candidates,
-                intent: plan.intent,
-                originalQueryCandidateIDs: result.originalQueryCandidateIDs,
-                relevantCandidateIDs: semanticRouting.relevantCandidateIDs,
-                evaluatedCandidateIDs: semanticRouting.evaluatedCandidateIDs
-            )
-            let evaluationByID = Dictionary(
-                (evaluation?.recommendations ?? []).map { ($0.candidateID, $0) },
-                uniquingKeysWith: { first, _ in first }
-            )
+            let combinedEvaluatedCandidateIDs = previouslyEvaluatedCandidateIDs.union(currentEvaluatedCandidateIDs)
+            let combinedRecommendedCandidateIDs = previouslyRecommendedCandidateIDs.union(currentRecommendedCandidateIDs)
+            let currentRecommendedOrder = evaluation?.recommendations
+                .filter { $0.tier == .recommended }
+                .map(\.candidateID) ?? []
+            let previousRecommendedOrder = (previousContinuationRun?.semanticRecommendedCandidateIDs ?? [])
+                .filter { !currentRecommendedCandidateIDs.contains($0) }
+            let semanticRecommendationOrder = (currentRecommendedOrder + previousRecommendedOrder).reduce(into: [String]()) {
+                if !$0.contains($1) { $0.append($1) }
+            }
+            let semanticRouting = combinedEvaluatedCandidateIDs.isEmpty
+                ? DiscoverySemanticRouting(relevantCandidateIDs: nil, evaluatedCandidateIDs: nil, recommendedRanks: nil)
+                : DiscoverySemanticRouting(
+                    relevantCandidateIDs: combinedRecommendedCandidateIDs,
+                    evaluatedCandidateIDs: combinedEvaluatedCandidateIDs,
+                    recommendedRanks: Dictionary(
+                        uniqueKeysWithValues: semanticRecommendationOrder.enumerated().map { ($0.element, $0.offset) }
+                    )
+                )
+            let ranked = plan.intent.route == .exact
+                ? DiscoveryCandidateRanker.rankExact(accumulatedCandidates)
+                : DiscoveryCandidateRanker.rank(
+                    accumulatedCandidates,
+                    intent: evidenceIntent,
+                    originalQueryCandidateIDs: result.originalQueryCandidateIDs,
+                    relevantCandidateIDs: semanticRouting.relevantCandidateIDs,
+                    evaluatedCandidateIDs: semanticRouting.evaluatedCandidateIDs,
+                    semanticRecommendationRanks: semanticRouting.recommendedRanks
+                )
             let previousStates = session.candidates.reduce(into: [String: DiscoveryCandidateState]()) { $0[$1.id] = $1.state }
             let prepared = (ranked.recommended + ranked.other).map { candidate -> DiscoveryCandidate in
                 var updated = candidate
                 updated.state = previousStates[candidate.id] ?? .notTried
-                if let explanation = evaluationByID[candidate.id] {
-                    updated.recommendationReason = explanation.reason
-                    updated.suitableWhen = explanation.suitableWhen
-                    updated.examplePrompt = explanation.examplePrompt
-                    updated.experienceSteps = explanation.experienceSteps
-                    updated.limitations = explanation.limitations
-                    updated.usageGuide = explanation.usageGuide
-                }
+                // Model output may only break an otherwise exact local tie. Do
+                // not retain any candidate-conditioned copy in the record or UI.
+                updated.recommendationReason = nil
+                updated.suitableWhen = nil
+                updated.examplePrompt = nil
+                updated.experienceSteps = []
+                updated.limitations = []
+                updated.usageGuide = nil
+                updated.usageGuideSourceDigest = nil
                 return updated
             }
             session.candidates = prepared
-            if session.selectedCandidateID == nil || !prepared.contains(where: { $0.id == session.selectedCandidateID }) {
+            if session.selectedCandidateID == nil || !ranked.recommended.contains(where: { $0.id == session.selectedCandidateID }) {
                 session.selectedCandidateID = ranked.recommended.first?.id
             }
             Self.updateDiscoveryRun(
                 in: &session,
                 id: runID,
-                state: fallbackReason == nil ? .completed : .partiallyCompleted,
+                state: result.isExhaustive ? .completed : .partiallyCompleted,
                 queries: plan.queries,
                 diagnostics: diagnostics,
                 fallbackReason: fallbackReason,
                 recommendedCandidateIDs: ranked.recommended.map(\.id),
                 otherCandidateIDs: ranked.other.map(\.id),
-                usedAI: evaluation != nil
+                usedAI: evaluation != nil,
+                route: routedResult.route,
+                outcome: routedResult.outcome,
+                semanticEvaluatedCandidateIDs: Array(combinedEvaluatedCandidateIDs),
+                semanticRecommendedCandidateIDs: semanticRecommendationOrder
             )
-            let acceptedCandidateIDs = Set(prepared.map(\.id))
-            let recommendedResponseIDs = Set(
-                evaluation?.recommendations.filter { $0.tier == .recommended }.map(\.candidateID) ?? []
-            )
-            let canUseAIReply = evaluation != nil
-                && recommendedResponseIDs.isSubset(of: acceptedCandidateIDs)
-            if canUseAIReply {
-                session.messages.append(.init(
-                    role: .assistant,
-                    text: evaluation!.reply,
-                    providerID: configurationUsed?.id,
-                    model: configurationUsed?.model
+            switch routedResult.outcome {
+            case .exactNotFound:
+                guard result.isExhaustive else {
+                    session.updatedAt = Date()
+                    _ = await saveDiscoveryResult(session)
+                    statusMessage = "暂时无法完成核验，请稍后重试"
+                    return
+                }
+                let target = plan.intent.targets.first?.value ?? plan.intent.goal
+                session.notices.append(.init(
+                    runID: runID,
+                    text: "没有找到与“\(target)”完全一致且能读取真实 SKILL.md 的结果，没有用相似 Skill 代替。",
+                    kind: .information
                 ))
-            } else if let fallbackReason {
-                session.notices.append(.init(runID: runID, text: fallbackReason, kind: .partialResult))
+            case .exactAmbiguous:
+                session.notices.append(.init(
+                    runID: runID,
+                    text: "找到了 \(ranked.recommended.count) 个同名且已核对 SKILL.md 的结果，已全部列出，由你根据作者和仓库选择。",
+                    kind: .information
+                ))
+            case .exactFound, .communityRecommendations, .hybridResults:
+                break
             }
             session.updatedAt = Date()
+            let resultNames = session.recommendedCandidates.prefix(3).map(\.name).joined(separator: "、")
+            var finalReply = session.recommendedCandidates.isEmpty
+                ? "这轮暂时没有得到足够可靠的推荐。可以补充具体用途，或给我名称和仓库地址。"
+                : "核验到 \(session.recommendedCandidates.count) 份可优先查看的 Skill：\(resultNames)。你可以接着问它们的区别或用法。"
+            if let conditionSummary = DiscoveryConstraintAssessment.summary(candidates: session.candidates, intent: session.intent) {
+                finalReply += "\n\n" + conditionSummary
+            }
+            appendDiscoveryReply(finalReply, to: &session,
+                references: Array(session.recommendedCandidates.prefix(3)).map(DiscoveryConversationReference.init))
             guard await saveDiscoveryResult(session) else { return }
-            statusMessage = ranked.recommended.isEmpty ? "暂时没有足够可靠的推荐" : "已找到 \(ranked.recommended.count) 个值得先看的 Skill"
+            if routedResult.outcome == .exactNotFound {
+                statusMessage = "没有找到已核对的精确结果"
+            } else {
+                statusMessage = ranked.recommended.isEmpty ? "暂时没有足够可靠的推荐" : "已找到 \(ranked.recommended.count) 个值得先看的 Skill"
+            }
         } catch is CancellationError {
             await markDiscoveryRunInterrupted(in: &session, runID: runID)
         } catch {
@@ -926,6 +1239,63 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func appendDiscoveryReply(_ text: String, to session: inout DiscoverySession, references: [DiscoveryConversationReference] = [], configuration: AIProviderConfiguration? = nil) {
+        var message = DiscoveryMessage(role: .assistant, text: text, providerID: configuration?.id, model: configuration?.model)
+        message.origin = configuration == nil ? "conversation-local-v1" : "conversation-evidence-v1"
+        message.references = references.isEmpty ? nil : references
+        session.messages.append(message)
+        session.updatedAt = Date()
+    }
+
+    private func handleDiscoveryConversation(text: String, action: DiscoveryConversationAction, session: inout DiscoverySession, isNewSession: Bool, userMessageID: UUID) async {
+        if case let .removeConstraint(term) = action {
+            guard let intent = session.intent else {
+                appendDiscoveryReply("当前还没有寻找任务。先告诉我你想找什么 Skill。", to: &session)
+                _ = await saveDiscoveryResult(session, allowCreate: isNewSession)
+                return
+            }
+            session.intent = DiscoveryConversation.removeConstraint(term, from: intent)
+            session.continuationInvalidated = true
+            session.contextStartMessageID = userMessageID
+            session.pendingClarification = nil
+            appendDiscoveryReply("已撤回“\(term)”条件，当前任务摘要已更新。继续寻找时会使用新条件。", to: &session)
+            _ = await saveDiscoveryResult(session, allowCreate: isNewSession)
+            return
+        }
+        let refs = DiscoveryConversation.references(for: text, action: action, session: session)
+        guard await saveDiscoveryResult(session, allowCreate: isNewSession) else { return }
+        var answer = DiscoveryConversation.fallbackReply(action: action, references: refs)
+        var usedConfiguration: AIProviderConfiguration?
+        if (action == .explain || action == .compare), !refs.isEmpty,
+           action != .compare || refs.count >= 2,
+           let configuration = aiSettings.selectedVerifiedConfiguration,
+           configuredAIProviderIDs.contains(configuration.id) {
+            do {
+                if let key = try await aiKeyStore.load(providerID: configuration.id), !key.isEmpty {
+                    let generation = aiAuthorizationGeneration
+                    let provider = aiProvider
+                    let task = DiscoveryConversation.taskSummary(session) ?? "了解当前 Skill"
+                    let response = try await withDiscoveryAIRequestDeadline(discoveryAIRequestTimeout) {
+                        try await provider.answerDiscovery(message: text, task: task, references: refs, configuration: configuration, apiKey: key)
+                    }
+                    guard generation == aiAuthorizationGeneration else { throw CancellationError() }
+                    answer = response.value.text
+                    usedConfiguration = configuration
+                }
+            } catch is CancellationError {
+                appendDiscoveryReply("已停止回答，已有对话和待处理补充仍保留。", to: &session)
+                _ = await saveDiscoveryResult(session)
+                return
+            } catch {
+                answer = "这次 AI 回答未完成，先保留可核对的作者资料。\n\n" + answer
+            }
+        }
+        guard !Task.isCancelled else { return }
+        appendDiscoveryReply(answer, to: &session, references: refs, configuration: usedConfiguration)
+        _ = await saveDiscoveryResult(session)
+        statusMessage = "已回答，本轮没有新增搜索"
+    }
+
     private static func updateDiscoveryRun(
         in session: inout DiscoverySession,
         id: UUID,
@@ -936,8 +1306,14 @@ final class AppModel: ObservableObject {
         recommendedCandidateIDs: [String]? = nil,
         otherCandidateIDs: [String]? = nil,
         usedAI: Bool? = nil,
+        route: DiscoverySearchRoute? = nil,
+        outcome: DiscoveryRouteOutcome? = nil,
         retrievedCandidateCount: Int? = nil,
-        evaluationCandidateCount: Int? = nil
+        evaluationCandidateCount: Int? = nil,
+        searchResult: DiscoveryBatchSearchResult? = nil,
+        requestedLimitPerQuery: Int? = nil,
+        semanticEvaluatedCandidateIDs: [String]? = nil,
+        semanticRecommendedCandidateIDs: [String]? = nil
     ) {
         guard let index = session.runs.firstIndex(where: { $0.id == id }) else { return }
         session.runs[index].state = state
@@ -947,8 +1323,23 @@ final class AppModel: ObservableObject {
         if let recommendedCandidateIDs { session.runs[index].recommendedCandidateIDs = recommendedCandidateIDs }
         if let otherCandidateIDs { session.runs[index].otherCandidateIDs = otherCandidateIDs }
         if let usedAI { session.runs[index].usedAI = usedAI }
+        if let route { session.runs[index].route = route }
+        if let outcome { session.runs[index].outcome = outcome }
         if let retrievedCandidateCount { session.runs[index].retrievedCandidateCount = retrievedCandidateCount }
         if let evaluationCandidateCount { session.runs[index].evaluationCandidateCount = evaluationCandidateCount }
+        if let requestedLimitPerQuery { session.runs[index].requestedLimitPerQuery = requestedLimitPerQuery }
+        if let semanticEvaluatedCandidateIDs { session.runs[index].semanticEvaluatedCandidateIDs = semanticEvaluatedCandidateIDs }
+        if let semanticRecommendedCandidateIDs { session.runs[index].semanticRecommendedCandidateIDs = semanticRecommendedCandidateIDs }
+        if let searchResult {
+            session.runs[index].requestUsage = searchResult.requestUsage
+            session.runs[index].retryAfter = searchResult.rateLimitedUntil
+            session.runs[index].failedSourceCount = searchResult.failedSourceCount
+            session.runs[index].failedQueryCount = searchResult.failedQueryCount
+            session.runs[index].saturatedQueryCount = searchResult.saturatedQueryCount
+            session.runs[index].failedCandidateVerificationCount = searchResult.failedCandidateVerificationCount
+            session.runs[index].deferredCandidateVerificationCount = searchResult.deferredCandidateVerificationCount
+            session.runs[index].unresolvedCommunityMentions = searchResult.unresolvedCommunityMentions
+        }
     }
 
     private static func aiDiagnostic(from error: Error) -> AIInvocationDiagnostic? {
@@ -959,6 +1350,14 @@ final class AppModel: ObservableObject {
     private static func combinedNotice(_ first: String?, _ second: String) -> String {
         guard let first, !first.isEmpty else { return second }
         return "\(first) \(second)"
+    }
+
+    private static func preferredDiscoveryCandidateID(in session: DiscoverySession) -> String? {
+        let visible = session.recommendedCandidates
+        if let selected = session.selectedCandidateID, visible.contains(where: { $0.id == selected }) {
+            return selected
+        }
+        return visible.first?.id
     }
 
     private static func aiNotice(for error: Error, phase: String) -> String {
@@ -1010,7 +1409,6 @@ final class AppModel: ObservableObject {
         if activeDiscoverySessionID == session.id { cancelDiscoverySearch() }
         if selectedDiscoverySessionID == session.id {
             cancelDiscoveryCandidateSelection()
-            cancelDiscoveryUsageGuide()
         }
         do {
             try await discoveryStore.delete(session)
@@ -1028,7 +1426,6 @@ final class AppModel: ObservableObject {
         if let activeDiscoverySessionID { invalidatedDiscoverySessionIDs.insert(activeDiscoverySessionID) }
         cancelDiscoverySearch()
         cancelDiscoveryCandidateSelection()
-        cancelDiscoveryUsageGuide()
         do {
             try await discoveryStore.deleteAll()
             selectedDiscoverySessionID = nil
@@ -1049,8 +1446,8 @@ final class AppModel: ObservableObject {
             locator: url.absoluteString,
             trackingMode: .latestStableRelease,
             desiredCandidateName: candidate.name,
-            usageGuide: candidate.usageGuide,
-            usageGuideSourceDigest: candidate.usageGuideSourceDigest
+            usageGuide: nil,
+            usageGuideSourceDigest: nil
         ))
     }
 
@@ -1074,14 +1471,13 @@ final class AppModel: ObservableObject {
         defer { isBusy = false }
         await refreshTargetStatuses()
         let targetRoots = snapshot.targets.map { URL(fileURLWithPath: $0.path) }
-        let universal = ["~/.agents/skills", "~/.config/agents/skills"].map { PathSafety.resolveTildePath($0, homeDirectory: homeDirectory) }
         var seen = Set<String>()
-        let roots = (targetRoots + universal).filter {
+        let roots = targetRoots.filter {
             FileManager.default.fileExists(atPath: $0.path) && seen.insert($0.standardizedFileURL.path).inserted
         }
         let sourceNames = Dictionary(uniqueKeysWithValues: snapshot.targets.map { ($0.path, $0.displayName) })
         scanResult = await scanner.scan(roots: roots, sourceName: { root in
-            sourceNames[root.path] ?? "其他通用位置"
+            sourceNames[root.path] ?? "Agent Skill 目录"
         })
         statusMessage = "查看完成，没有改动任何文件"
     }
@@ -1155,7 +1551,6 @@ final class AppModel: ObservableObject {
 
     func confirmLocalSourceSetup(
         _ setup: LocalSourceSetup,
-        trackChanges: Bool,
         includePathsByCandidate: [String: [String]]
     ) async {
         guard pendingLocalSourceSetup?.id == setup.id, !isBusy else { return }
@@ -1184,13 +1579,9 @@ final class AppModel: ObservableObject {
             pendingLocalSourceSetup = nil
             switch setup.purpose {
             case .importSkills:
-                pendingLocalTrackingEnabled = trackChanges
                 pendingLocalPackages = [:]
                 let candidates = prepared.map { preparedPackage -> SkillCandidate in
-                    var candidate = preparedPackage.package.candidate
-                    if !trackChanges {
-                        candidate.source.displayName = "电脑文件夹"
-                    }
+                    let candidate = preparedPackage.package.candidate
                     var stored = preparedPackage
                     stored.package.candidate = candidate
                     pendingLocalPackages[candidate.id] = stored
@@ -1200,7 +1591,7 @@ final class AppModel: ObservableObject {
                 updatingSkillID = nil
                 pendingCandidates = candidates
                 selectedCandidateIDs = Set(candidates.filter { !$0.riskReport.isBlocked }.map(\.id))
-                statusMessage = trackChanges ? "已准备持续跟踪的纯净 Skill" : "已准备一次性导入的纯净 Skill"
+                statusMessage = "已准备持续跟踪的纯净 Skill"
             case let .editSkill(skillID), let .relinkSkill(skillID):
                 guard let preparedPackage = prepared.first,
                       let skill = snapshot.skills.first(where: { $0.id == skillID })
@@ -1437,8 +1828,15 @@ final class AppModel: ObservableObject {
             guard activeGitHubPreviewOperationID == operationID else { return }
             retryGitHubImportContext = context
             canRetryGitHubWithDefaultBranch = true
+            canRetryGitHubConnection = false
             errorMessage = GitHubSourceError.noStableRelease.localizedDescription
             statusMessage = "这个仓库还没有正式 Release"
+        } catch let error as GitHubSourceError where error.canRetryConnection {
+            guard activeGitHubPreviewOperationID == operationID else { return }
+            retryGitHubImportContext = context
+            canRetryGitHubWithDefaultBranch = false
+            canRetryGitHubConnection = true
+            present(error)
         } catch {
             guard activeGitHubPreviewOperationID == operationID else { return }
             if isCancellation(error) { statusMessage = "已取消 GitHub 下载" }
@@ -1467,6 +1865,7 @@ final class AppModel: ObservableObject {
 
     func retryGitHubUsingDefaultBranch() {
         canRetryGitHubWithDefaultBranch = false
+        canRetryGitHubConnection = false
         errorMessage = nil
         githubTrackingMode = .defaultBranch
         var context = retryGitHubImportContext ?? .init(
@@ -1478,6 +1877,20 @@ final class AppModel: ObservableObject {
         )
         context.trackingMode = .defaultBranch
         startGitHubPreview(context: context)
+    }
+
+    func retryGitHubConnection() {
+        guard let context = retryGitHubImportContext else { return }
+        canRetryGitHubConnection = false
+        errorMessage = nil
+        startGitHubPreview(context: context)
+    }
+
+    func dismissCurrentError() {
+        canRetryGitHubWithDefaultBranch = false
+        canRetryGitHubConnection = false
+        retryGitHubImportContext = nil
+        errorMessage = nil
     }
 
     func checkForUpdate(_ skill: SkillRecord) async {
@@ -2043,9 +2456,7 @@ final class AppModel: ObservableObject {
                         recipe: pendingGitHubPackageRecipes[candidate.id]
                     ))
                 }
-                if pendingLocalTrackingEnabled,
-                   let prepared = pendingLocalPackages[candidate.id]
-                {
+                if let prepared = pendingLocalPackages[candidate.id] {
                     try await store.updateLocalSourceState(.init(
                         skillID: record.id,
                         projectRootPath: prepared.projectRootPath,
@@ -2067,7 +2478,6 @@ final class AppModel: ObservableObject {
             pendingGitHubVersion = nil
             pendingGitHubPackageRecipes = [:]
             pendingLocalPackages = [:]
-            pendingLocalTrackingEnabled = false
             pendingLocalUpdateState = nil
             pendingLocalIgnoredChangedPaths = []
             pendingDiscoveryCandidateName = nil
@@ -2258,7 +2668,6 @@ final class AppModel: ObservableObject {
         pendingGitHubVersion = nil
         pendingGitHubPackageRecipes = [:]
         pendingLocalPackages = [:]
-        pendingLocalTrackingEnabled = false
         pendingLocalUpdateState = nil
         pendingLocalIgnoredChangedPaths = []
         pendingDiscoveryCandidateName = nil
@@ -2490,7 +2899,7 @@ final class AppModel: ObservableObject {
             noticeMessage = "请先了解并确认这份 Skill 的内容提示。"
             return false
         }
-        let available = snapshot.targets.filter(isAvailableForInstallation)
+        let available = visibleTargets().filter(isAvailableForInstallation)
         guard !available.isEmpty else {
             noticeMessage = "本机还没有找到可以安装 Skill 的应用。SkillBox 不会代为创建应用文件夹。"
             return false
@@ -2597,11 +3006,101 @@ final class AppModel: ObservableObject {
     }
 
     func availableTargets() -> [AgentTarget] {
-        snapshot.targets.filter(isAvailableForInstallation)
+        visibleTargets().filter(isAvailableForInstallation)
     }
 
     func unavailableTargets() -> [AgentTarget] {
-        snapshot.targets.filter { !isAvailableForInstallation($0) }
+        visibleTargets().filter { !isAvailableForInstallation($0) }
+    }
+
+    func visibleTargets() -> [AgentTarget] {
+        snapshot.targets
+            .filter(\.isVisible)
+            .sorted { $0.sortIndex < $1.sortIndex }
+    }
+
+    func hiddenBuiltinTargets() -> [AgentTarget] {
+        snapshot.targets
+            .filter { !$0.isCustom && !$0.isVisible }
+            .sorted { $0.sortIndex < $1.sortIndex }
+    }
+
+    func setTargetVisibility(_ target: AgentTarget, isVisible: Bool, preservingManagedCopies: Bool = false) async -> Bool {
+        let hasManagedCopies = snapshot.installations.contains { $0.targetID == target.id }
+        if !isVisible, hasManagedCopies, !preservingManagedCopies {
+            noticeMessage = "\(target.displayName) 仍有 SkillBox 管理的安装副本。你可以先卸载，或明确选择保留文件并停止管理。"
+            return false
+        }
+        do {
+            try await store.setTargetVisibility(
+                id: target.id,
+                isVisible: isVisible,
+                preservingManagedCopies: preservingManagedCopies
+            )
+            statusMessage = isVisible ? "已将 \(target.displayName) 加回安装表" : "已从安装表移出 \(target.displayName)"
+            await reload()
+            return true
+        } catch {
+            present(error)
+            return false
+        }
+    }
+
+    func restoreAllDefaultTargets() async {
+        let defaultIDs = Set(BuiltinAgentAdapters.defaultAdapters.map(\.targetID))
+        var targets = snapshot.targets
+        var restored = 0
+        for index in targets.indices where defaultIDs.contains(targets[index].id) && !targets[index].isVisible {
+            targets[index].isVisible = true
+            restored += 1
+        }
+        do {
+            try await store.replaceTargets(targets)
+            statusMessage = restored == 0 ? "十个预设应用都在安装表中" : "已恢复 \(restored) 个预设应用"
+            await reload()
+        } catch { present(error) }
+    }
+
+    func restoreDefaultTargetOrder() async {
+        do {
+            try await store.replaceTargets(BuiltinAgentAdapters.restoringDefaultOrder(in: snapshot.targets))
+            statusMessage = "已恢复预设应用顺序"
+            await reload()
+        } catch { present(error) }
+    }
+
+    func saveVisibleTargetOrder(_ orderedIDs: [UUID]) async {
+        let visible = visibleTargets()
+        guard Set(orderedIDs) == Set(visible.map(\.id)), orderedIDs.count == visible.count else {
+            noticeMessage = "应用列表在拖动时发生了变化，请重新调整顺序。"
+            return
+        }
+        let byID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
+        var reordered = orderedIDs.compactMap { byID[$0] }
+        var hidden = snapshot.targets.filter { !$0.isVisible }.sorted { $0.sortIndex < $1.sortIndex }
+        for index in reordered.indices { reordered[index].sortIndex = index }
+        for index in hidden.indices { hidden[index].sortIndex = reordered.count + index }
+        do {
+            try await store.replaceTargets(reordered + hidden)
+            statusMessage = "应用顺序已保存"
+            await reload()
+        } catch { present(error) }
+    }
+
+    func moveVisibleTarget(_ target: AgentTarget, before destination: AgentTarget?) async {
+        var visible = visibleTargets().filter { $0.id != target.id }
+        if let destination, let index = visible.firstIndex(where: { $0.id == destination.id }) {
+            visible.insert(target, at: index)
+        } else {
+            visible.append(target)
+        }
+        var hidden = snapshot.targets.filter { !$0.isVisible }
+        for index in visible.indices { visible[index].sortIndex = index }
+        for index in hidden.indices { hidden[index].sortIndex = visible.count + index }
+        do {
+            try await store.replaceTargets(visible + hidden)
+            await reload()
+        } catch { present(error) }
     }
 
     func orderedFolders() -> [SkillFolder] {
@@ -2777,7 +3276,7 @@ final class AppModel: ObservableObject {
                 return
             }
             var targets = snapshot.targets
-            targets.append(.init(kind: .custom, displayName: trimmed, path: validatedURL.path, detectionStatus: .available, writeStatus: FileManager.default.isWritableFile(atPath: validatedURL.path) ? .writable : .readOnly, isCustom: true))
+            targets.append(.init(kind: .custom, displayName: trimmed, path: validatedURL.path, detectionStatus: .available, writeStatus: FileManager.default.isWritableFile(atPath: validatedURL.path) ? .writable : .readOnly, isCustom: true, sortIndex: targets.count))
             try await store.replaceTargets(targets)
             await reload()
         } catch { present(error) }
@@ -2814,9 +3313,12 @@ final class AppModel: ObservableObject {
         } catch { present(error) }
     }
 
-    func removeCustomTarget(_ target: AgentTarget) async {
+    func removeCustomTarget(_ target: AgentTarget, preservingManagedCopies: Bool = false) async {
         do {
-            try await store.removeCustomTarget(id: target.id)
+            try await store.removeCustomTarget(
+                id: target.id,
+                preservingManagedCopies: preservingManagedCopies
+            )
             statusMessage = "已移除 \(target.displayName) 的安装位置"
             await reload()
         } catch { present(error) }
@@ -2851,47 +3353,107 @@ final class AppModel: ObservableObject {
         if let saved = await usageGuideStore.load(skillID: skill.id, fingerprint: skill.fingerprint) {
             return saved.guide
         }
+        let compatibleSaved = await usageGuideStore.loadCompatible(
+            skillID: skill.id,
+            fingerprint: skill.fingerprint
+        )
         let url = await store.contentURL(for: skill)
-        let material = await Task.detached(priority: .userInitiated) {
-            SkillUsageGuideMaterialReader().read(
-                from: url,
-                name: skill.displayName,
-                description: skill.description
-            )
-        }.value
-        let fallback = await Task.detached(priority: .userInitiated) {
+        let extracted = await Task.detached(priority: .userInitiated) {
             SkillUsageGuideExtractor().extract(from: url)
         }.value
-
-        let sourceState = snapshot.sourceStates.first { $0.skillID == skill.id }
-        let canSendMaterial = AIContentSharingPolicy.canSend(
-            sourceKind: skill.source.kind,
-            repositoryIsPrivate: sourceState?.repositoryIsPrivate,
-            allowPrivateSkillContent: aiSettings.isPrivateContentSharingAllowedForSelectedProvider
+        let fallback = SkillUsageGuideFallbackSelection.preferred(
+            cached: compatibleSaved?.guide,
+            extracted: extracted
         )
-        guard canSendMaterial,
-              let configuration = aiSettings.selectedVerifiedConfiguration,
-              configuredAIProviderIDs.contains(configuration.id),
-              let key = try? await aiKeyStore.load(providerID: configuration.id),
-              !key.isEmpty
-        else { return fallback }
+        return fallback
+    }
 
-        do {
-            let analyzed = try await aiProvider.analyzeSkillUsage(
-                material: material,
-                configuration: configuration,
-                apiKey: key
-            )
-            try await usageGuideStore.save(
-                analyzed.value,
-                skillID: skill.id,
-                fingerprint: skill.fingerprint,
-                providerID: configuration.id,
-                model: configuration.model
-            )
-            return analyzed.value
-        } catch {
-            return fallback
+    var isAgnesUsageGuideConfigured: Bool {
+        configuredAIProviderIDs.contains("agnes") &&
+            aiSettings.isConnectionVerified(providerID: "agnes")
+    }
+
+    /// The only network entry point for a managed Skill introduction. Merely
+    /// opening or switching Skills stays local; the detail button calls this
+    /// method as the user's authorization for one request.
+    func generateSkillUsageGuide(_ skill: SkillRecord) async -> SkillUsageGuide? {
+        let key = "\(skill.id.uuidString)::\(skill.fingerprint)::\(SkillUsageGuideRecord.currentPromptVersion)"
+        if let task = manualUsageGuideTasks[key] {
+            switch await task.value {
+            case let .success(guide): return guide
+            case .failure: return nil
+            }
+        }
+        guard isAgnesUsageGuideConfigured,
+              let configuration = aiSettings.configuration(id: "agnes")
+        else {
+            noticeMessage = "请先到“设置 → AI”连接你的 Agnes API。"
+            return nil
+        }
+        generatingUsageGuideSkillIDs.insert(skill.id)
+
+        let libraryStore = store
+        let guideStore = usageGuideStore
+        let keyStore = aiKeyStore
+        let provider = aiProvider
+        let task = Task<ManualUsageGuideTaskResult, Never> {
+            do {
+                guard let apiKey = try await keyStore.loadForUserInitiatedAccess(providerID: "agnes") else {
+                    throw AIServiceError.missingAPIKey
+                }
+                let url = await libraryStore.contentURL(for: skill)
+                let material = await Task.detached(priority: .userInitiated) {
+                    SkillUsageGuideMaterialReader().read(
+                        from: url,
+                        name: skill.displayName,
+                        description: skill.description
+                    )
+                }.value
+                var guide = try await provider.analyzeSkillUsage(
+                    material: material,
+                    configuration: configuration,
+                    apiKey: apiKey
+                ).value
+                try Task.checkCancellation()
+                guide.origin = .aiAssisted
+                guide.sourceDocuments = material.documents.map(\.relativePath)
+                try await guideStore.save(
+                    guide,
+                    skillID: skill.id,
+                    fingerprint: skill.fingerprint,
+                    providerID: "agnes",
+                    model: configuration.model
+                )
+                return .success(guide)
+            } catch {
+                let category: AIInvocationErrorCategory? = if case let AIServiceError.invocation(failure) = error {
+                    failure.category
+                } else {
+                    nil
+                }
+                return .failure(.init(message: error.localizedDescription, category: category))
+            }
+        }
+        manualUsageGuideTasks[key] = task
+        let result = await task.value
+        manualUsageGuideTasks[key] = nil
+        generatingUsageGuideSkillIDs.remove(skill.id)
+        switch result {
+        case let .success(guide):
+            usageGuideRevision &+= 1
+            statusMessage = "已获取 \(skill.displayName) 的 Skill 介绍"
+            return guide
+        case let .failure(failure):
+            if failure.message == AIServiceError.missingAPIKey.localizedDescription {
+                noticeMessage = "请先到“设置 → AI”重新保存 Agnes API Key。"
+            } else if failure.message == AIServiceError.keychainAuthorizationNotCompleted.localizedDescription {
+                noticeMessage = failure.message
+            } else if failure.category == .truncatedOutput {
+                noticeMessage = "Agnes 返回的介绍不完整。已有介绍已保留，请稍后重试。"
+            } else {
+                noticeMessage = "\(failure.message)。已有介绍已保留，可以稍后重试。"
+            }
+            return nil
         }
     }
 
@@ -2969,17 +3531,12 @@ final class AppModel: ObservableObject {
     }
 
     private func refreshTargetStatuses() async {
-        let builtins = BuiltinAgentAdapters.all.map { $0.makeTarget(homeDirectory: homeDirectory, fileManager: .default) }
-        let custom = snapshot.targets.filter(\.isCustom).map { target in
-            var refreshed = target
-            var isDirectory: ObjCBool = false
-            let exists = FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory) && isDirectory.boolValue
-            refreshed.detectionStatus = exists && FileManager.default.isReadableFile(atPath: target.path) ? .available : exists ? .unreadable : .directoryMissing
-            refreshed.writeStatus = exists && FileManager.default.isWritableFile(atPath: target.path) ? .writable : exists ? .readOnly : .directoryMissing
-            return refreshed
-        }
+        let targets = BuiltinAgentAdapters.reconciledTargets(
+            persisted: snapshot.targets,
+            homeDirectory: homeDirectory
+        )
         do {
-            try await store.replaceTargets(builtins + custom)
+            try await store.replaceTargets(targets)
             await reload()
         } catch {
             present(error)
@@ -3153,7 +3710,7 @@ final class AppModel: ObservableObject {
 
     private func present(_ error: Error) {
         errorMessage = error.localizedDescription
-        statusMessage = "操作未完成"
+        statusMessage = ""
     }
 
     private func setGitHubConnectionHint(_ connected: Bool) {

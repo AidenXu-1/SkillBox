@@ -16,6 +16,18 @@ required_files=(
     "Contents/MacOS/SkillBox"
     "Contents/Resources/Assets.car"
     "Contents/Resources/SkillBox.icns"
+    "Contents/Resources/trusted-skills-catalog-v1.json"
+    "Contents/Resources/AgentIcons/gpt.png"
+    "Contents/Resources/AgentIcons/claude-code.png"
+    "Contents/Resources/AgentIcons/workbuddy.png"
+    "Contents/Resources/AgentIcons/zcode.png"
+    "Contents/Resources/AgentIcons/kimi-code.png"
+    "Contents/Resources/AgentIcons/cursor.png"
+    "Contents/Resources/AgentIcons/hanaagent.png"
+    "Contents/Resources/AgentIcons/pi.svg"
+    "Contents/Resources/AgentIcons/deepseek-harness.svg"
+    "Contents/Resources/AgentIcons/trae.png"
+    "Contents/Resources/AgentIcons/gemini-cli.png"
     "Contents/_CodeSignature/CodeResources"
 )
 for relative in "${required_files[@]}"; do

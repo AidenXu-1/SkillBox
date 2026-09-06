@@ -51,6 +51,7 @@ private struct DirectorySkillTrash: SkillTrashHandling, @unchecked Sendable {
 
 public enum LibraryStoreError: LocalizedError {
     case unsupportedSchema(Int)
+    case unsupportedManagementSource
     case blockedImport
     case highRiskConfirmationRequired
     case candidateChanged
@@ -67,6 +68,7 @@ public enum LibraryStoreError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .unsupportedSchema: "这份 SkillBox 数据来自更新的应用版本，当前应用暂时无法读取"
+        case .unsupportedManagementSource: "SkillBox 只从本地开发文件夹或 GitHub 添加全局 Skill"
         case .blockedImport: "这份 Skill 有严重风险，为了安全已阻止添加"
         case .highRiskConfirmationRequired: "这份 Skill 包含需要确认的内容，请查看证据后再次明确确认"
         case .candidateChanged: "Skill 在你确认前发生了变化，请重新查看"
@@ -198,6 +200,26 @@ public actor LibraryStore {
 
     public func replaceTargets(_ targets: [AgentTarget]) throws {
         snapshot.targets = targets
+        try persist()
+    }
+
+    public func setTargetVisibility(
+        id: UUID,
+        isVisible: Bool,
+        preservingManagedCopies: Bool = false
+    ) throws {
+        guard let index = snapshot.targets.firstIndex(where: { $0.id == id }) else {
+            throw LibraryStoreError.targetNotFound
+        }
+        let hasManagedCopies = snapshot.installations.contains { $0.targetID == id }
+        guard isVisible || !hasManagedCopies || preservingManagedCopies else {
+            throw LibraryStoreError.targetStillInstalled
+        }
+        if !isVisible, preservingManagedCopies {
+            snapshot.assignments.removeAll { $0.targetID == id }
+            snapshot.installations.removeAll { $0.targetID == id }
+        }
+        snapshot.targets[index].isVisible = isVisible
         try persist()
     }
 
@@ -396,6 +418,9 @@ public actor LibraryStore {
         _ candidate: SkillCandidate,
         authorizingHighRisk: Bool = false
     ) throws -> SkillRecord {
+        guard candidate.source.kind == .localFolder || candidate.source.kind == .github else {
+            throw LibraryStoreError.unsupportedManagementSource
+        }
         guard !candidate.riskReport.isBlocked else { throw LibraryStoreError.blockedImport }
         guard !candidate.riskReport.requiresUserAttention || authorizingHighRisk else {
             throw LibraryStoreError.highRiskConfirmationRequired
@@ -786,16 +811,19 @@ public actor LibraryStore {
         else { throw LibraryStoreError.candidateChanged }
     }
 
-    public func removeCustomTarget(id: UUID) throws {
+    public func removeCustomTarget(id: UUID, preservingManagedCopies: Bool = false) throws {
         guard let target = snapshot.targets.first(where: { $0.id == id }) else {
             throw LibraryStoreError.targetNotFound
         }
         guard target.isCustom else { throw LibraryStoreError.builtinTarget }
-        guard !snapshot.installations.contains(where: { $0.targetID == id }) else {
+        guard preservingManagedCopies || !snapshot.installations.contains(where: { $0.targetID == id }) else {
             throw LibraryStoreError.targetStillInstalled
         }
         snapshot.targets.removeAll { $0.id == id }
         snapshot.assignments.removeAll { $0.targetID == id }
+        if preservingManagedCopies {
+            snapshot.installations.removeAll { $0.targetID == id }
+        }
         try persist()
     }
 

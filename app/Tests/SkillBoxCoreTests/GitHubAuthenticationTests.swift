@@ -30,6 +30,19 @@ struct GitHubAuthenticationTests {
         #expect(query[kSecReturnData as String] as? Bool == true)
     }
 
+    @Test("A user action may present one macOS Keychain authorization")
+    func userInitiatedCredentialReadsPermitAuthorization() {
+        let query = KeychainCredentialAccessPolicy.userInitiatedReadQuery(
+            service: "com.zhaoji.skillbox.test",
+            account: "test-account"
+        )
+
+        let context = query[kSecUseAuthenticationContext as String] as? LAContext
+        #expect(context?.interactionNotAllowed == false)
+        #expect(query[kSecUseAuthenticationUI as String] == nil)
+        #expect(query[kSecReturnData as String] as? Bool == true)
+    }
+
     @Test("An explicit save can rebind a credential after the app identity changes")
     func explicitSaveCanRebindAfterAuthorizationIsNeeded() {
         #expect(KeychainCredentialAccessPolicy.saveRecovery(for: errSecInteractionNotAllowed) == .replaceAfterAuthorization)

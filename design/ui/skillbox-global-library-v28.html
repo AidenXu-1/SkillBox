@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SkillBox v28 · 全局 Skill 管理</title>
+  <style>
+    :root{color-scheme:light;--bg:#f4f5f8;--panel:#fff;--sidebar:rgba(246,246,248,.9);--line:rgba(30,30,35,.1);--text:#1d1d1f;--muted:#6e6e73;--faint:#929298;--blue:#087af5;--blue2:#0067df;--green:#2caf62;--orange:#ee8d23;--red:#d94a45;--shadow:0 24px 70px rgba(31,35,44,.18)}
+    *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","PingFang SC",sans-serif;color:var(--text);background:#dfe3ea}button,input{font:inherit}button{cursor:default}
+    .desktop{width:100vw;height:100vh;padding:22px;background:radial-gradient(circle at 8% 4%,#fff 0,#edf0f5 42%,#dfe3ea 100%)}
+    .window{height:100%;min-height:760px;display:grid;grid-template-columns:236px 345px minmax(590px,1fr);grid-template-rows:52px 1fr;overflow:hidden;border:1px solid rgba(255,255,255,.85);border-radius:22px;background:var(--panel);box-shadow:var(--shadow)}
+    .titlebar{grid-column:1/-1;display:flex;align-items:center;border-bottom:1px solid var(--line);background:rgba(251,251,252,.9);backdrop-filter:blur(28px);z-index:8}.traffic{width:236px;display:flex;gap:9px;padding-left:18px}.traffic i{width:13px;height:13px;border-radius:50%;background:#ff5f57}.traffic i:nth-child(2){background:#febc2e}.traffic i:nth-child(3){background:#28c840}.title{font-size:14px;font-weight:650;letter-spacing:-.01em}
+    .sidebar{grid-row:2;background:var(--sidebar);border-right:1px solid var(--line);padding:14px 10px 10px;display:flex;flex-direction:column}.brand{display:flex;align-items:center;gap:10px;padding:0 4px 16px}.brand img{width:36px;height:36px;border-radius:10px}.brand span{display:grid;gap:2px}.brand strong{font-size:15px;letter-spacing:-.02em}.brand small{font-size:10.5px;color:var(--muted)}.nav{display:grid;gap:5px;padding:7px;border:1px solid rgba(30,30,35,.08);border-radius:13px;background:rgba(20,20,25,.025)}.nav button{min-height:46px;border:1px solid rgba(30,30,35,.055);background:rgba(20,20,25,.018);border-radius:10px;padding:0 12px;display:flex;align-items:center;gap:11px;text-align:left;font-size:14px;font-weight:550;color:#36363a}.nav button:hover{background:rgba(20,20,25,.06);border-color:rgba(30,30,35,.12)}.nav button:active{transform:scale(.985)}.nav button.active{background:var(--blue);border-color:var(--blue);color:white;font-weight:650}.nav svg{width:18px;height:18px}.nav-separator{height:1px;background:var(--line);margin:5px 10px}.sidebar-note{margin-top:auto;display:grid;grid-template-columns:26px 1fr;gap:9px;padding:11px;border:1px solid rgba(30,30,35,.08);border-radius:12px;background:rgba(20,20,25,.025);font-size:10.5px;line-height:1.45}.sidebar-note i{width:24px;height:24px;border-radius:7px;background:#e4f0ff;color:var(--blue);font-style:normal;display:grid;place-items:center;font-weight:750}.sidebar-note b{display:block;margin-bottom:2px;color:#45454a}.sidebar-note span{color:var(--muted)}
+    .library-page{display:contents}.library-page.off{display:none}.library{grid-row:2;border-right:1px solid var(--line);background:#fbfbfc;min-width:0;display:flex;flex-direction:column}.library-head{padding:24px 18px 13px}.library-title-row{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:7px 0 14px}.eyebrow{font-size:11px;font-weight:700;color:var(--blue);letter-spacing:.04em}.library h1{margin:0;font-size:27px;letter-spacing:-.045em;line-height:1}.add-button{border:0;border-radius:9px;background:var(--blue);color:white;padding:7px 10px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 2px rgba(0,85,190,.18)}.add-button:hover{background:var(--blue2)}.add-button:active,.btn:active,.copy-button:active{transform:scale(.97)}
+    .search{height:34px;border-radius:9px;border:1px solid var(--line);background:white;display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--faint);box-shadow:0 1px 0 rgba(0,0,0,.02)}.search input{border:0;outline:0;width:100%;font-size:13px;background:transparent}.filter{display:flex;gap:7px;margin-top:10px;overflow:hidden}.chip{border:0;background:#ececf0;color:#5e5e63;border-radius:999px;padding:5px 9px;font-size:10.5px;white-space:nowrap}.chip.active{background:#dcecff;color:#0068d8;font-weight:650}
+    .skills{padding:0 10px 18px;overflow:auto}.skill{display:grid;grid-template-columns:36px minmax(0,1fr) 25px;gap:10px;align-items:center;padding:11px 10px;border-radius:11px;margin-bottom:3px}.skill:hover{background:#f0f0f2}.skill.selected{background:#e8f2ff}.skill-icon{width:36px;height:36px;border-radius:10px;background:linear-gradient(145deg,#dcecff,#f2f7ff);display:grid;place-items:center;color:#087af5;font-weight:750}.skill-copy{min-width:0}.skill-copy b{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.skill-copy small{display:block;margin-top:4px;color:var(--muted);font-size:10.5px}.source-logo{width:24px;height:24px;border-radius:7px;display:grid;place-items:center}.source-logo svg{width:15px;height:15px}.source-logo.github{background:#29292c;color:#fff}.source-logo.local{background:#e1efff;color:#087af5}
+    .detail{grid-row:2;min-width:0;background:white;overflow:auto}.detail-inner{max-width:900px;margin:0 auto;padding:30px 34px 48px}.detail-top{display:flex;align-items:flex-start;gap:15px}.hero-icon{width:54px;height:54px;border-radius:15px;background:linear-gradient(145deg,#dcecff,#f7fbff);display:grid;place-items:center;color:var(--blue);font-size:22px;font-weight:800}.detail-title{flex:1;min-width:0}.detail-title h2{font-size:25px;letter-spacing:-.04em;margin:0 0 6px}.detail-title p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.45}.actions{display:flex;gap:8px}.btn{border:1px solid var(--line);background:#f6f6f8;color:#303034;border-radius:9px;padding:8px 11px;font-size:11.5px;font-weight:600;white-space:nowrap}.btn.primary{background:var(--blue);border-color:var(--blue);color:white}.btn.danger{background:white;color:var(--red);border-color:rgba(217,74,69,.2)}.btn.primary:hover{background:var(--blue2)}
+    .meta-grid{display:grid;grid-template-columns:1.55fr .8fr .8fr;gap:9px;margin-top:20px}.meta-card{padding:13px 14px;border:1px solid var(--line);border-radius:12px;min-width:0}.meta-card small{display:block;color:var(--muted);font-size:10.5px;margin-bottom:6px}.meta-card strong{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.source-line{display:flex;align-items:center;gap:8px}.source-line .source-logo{width:23px;height:23px;flex:none}.state-good{color:var(--green)}
+    .install-card{margin-top:10px;padding:15px 16px;border-radius:14px;background:linear-gradient(135deg,#f2f8ff,#fafcff);border:1px solid #d9eaff;display:flex;align-items:center;gap:14px}.install-copy{flex:1}.install-copy small{color:var(--muted);font-size:10.5px}.install-copy strong{display:block;margin-top:4px;font-size:15px;letter-spacing:-.02em}.app-stack{display:flex}.app{width:32px;height:32px;margin-left:-6px;border:3px solid #f6faff;border-radius:9px;background:white;display:grid;place-items:center;font-size:10px;font-weight:750;color:#333;box-shadow:0 3px 12px rgba(25,55,90,.08);overflow:hidden}.app:first-child{margin-left:0}.app img{width:100%;height:100%;object-fit:cover;display:block}.app.more{color:var(--blue);background:#e7f2ff}.install-actions{display:flex;gap:7px}
+    .detail-switch{display:flex;flex-direction:column;align-items:stretch;margin-top:24px}.tabs{display:flex;gap:0;border-bottom:1px solid var(--line)}.tab{flex:1;min-height:46px;border:0;background:transparent;padding:0;color:var(--muted);font-size:13px;font-weight:650;border-bottom:2px solid transparent}.tab:hover{background:rgba(20,20,25,.035)}.tab.active{color:var(--text);border-bottom-color:var(--blue)}.ai-note{font-size:10px;color:var(--muted);padding-top:7px;text-align:right}.ai-note b{color:#7657d6}
+    .tab-panel{display:none;padding-top:14px}.tab-panel.active{display:block}.intro-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.intro-card{padding:14px 15px;border-radius:13px;background:#f7f7f8;min-height:90px}.intro-card.full{grid-column:1/-1;min-height:auto}.intro-card label{display:block;color:var(--muted);font-size:10.5px;margin-bottom:7px}.intro-card strong{font-size:14px;line-height:1.5}.intro-card p{font-size:12.5px;line-height:1.55;margin:0}.flow-list{display:grid;gap:8px}.flow-step{display:grid;grid-template-columns:24px 1fr;gap:9px;align-items:start}.flow-step i{width:22px;height:22px;border-radius:50%;background:#e3efff;color:var(--blue);font-style:normal;font-size:10px;font-weight:750;display:grid;place-items:center}.prompt-box{display:flex;align-items:center;gap:12px}.prompt-copy{flex:1;font-size:12.5px;line-height:1.55}.copy-button{border:0;background:#e4efff;color:var(--blue);border-radius:8px;padding:7px 10px;font-size:10.5px;font-weight:700;white-space:nowrap}
+    .file-tree{border:1px solid var(--line);border-radius:13px;overflow:hidden}.file-row{display:grid;grid-template-columns:23px minmax(0,1fr) auto;gap:8px;align-items:center;padding:10px 13px;border-bottom:1px solid rgba(30,30,35,.06);font-size:12px}.file-row:last-child{border-bottom:0}.file-row.indent{padding-left:34px}.file-icon{color:var(--blue)}.file-size{font-size:10px;color:var(--muted)}.file-help{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}.file-help span{font-size:11px;color:var(--muted)}
+    .matrix-page{grid-column:2/-1;grid-row:2;min-width:0;background:#fff;display:none;flex-direction:column}.matrix-page.show{display:flex}.matrix-head{display:flex;align-items:flex-start;gap:20px;padding:28px 30px 16px}.matrix-head-copy{flex:1}.matrix-head h1{margin:5px 0 7px;font-size:27px;letter-spacing:-.045em}.matrix-head p{margin:0;color:var(--muted);font-size:12.5px}.matrix-body{min-height:0;flex:1;padding:0 25px 24px 30px}.matrix-area{min-width:0}.matrix-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:9px}.matrix-search{width:230px}.matrix-hint{margin-left:auto;color:var(--muted);font-size:10.5px}.matrix-order-state{color:var(--green);font-weight:650}.state-legend{display:flex;align-items:center;gap:16px;min-height:32px;margin-bottom:8px;color:var(--muted);font-size:10px}.legend-item{display:flex;align-items:center;gap:6px;white-space:nowrap}.legend-icon{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:750}.legend-icon svg{width:13px;height:13px}.legend-icon.installable{background:#edf4ff;color:var(--blue)}.legend-icon.installed{background:#eaf8ef;color:#249956}.legend-icon.update{background:#e5f0ff;color:#006ee6}.legend-icon.conflict{background:#fff0e4;color:#df7915}.legend-icon.disabled{background:#f1f1f2;color:#999}.matrix-shell{border:1px solid var(--line);border-radius:14px;overflow:auto;background:white;max-height:585px}.matrix{border-collapse:separate;border-spacing:0;min-width:1420px;width:100%;table-layout:fixed}.matrix th,.matrix td{border-bottom:1px solid rgba(30,30,35,.065);background:white}.matrix tr:last-child td{border-bottom:0}.matrix th{height:82px;padding:8px 7px;font-size:11px;color:#444;text-align:center;position:relative}.matrix th[data-agent],.matrix td[data-agent]{width:116px}.matrix th[data-agent]{cursor:grab;user-select:none}.matrix th[data-agent]:active{cursor:grabbing}.matrix th.dragging{opacity:.46;background:#eaf3ff}.matrix th.drop-before:before{content:"";position:absolute;left:-2px;top:8px;bottom:8px;width:3px;border-radius:3px;background:var(--blue)}.matrix .skill-col{width:225px;text-align:left;padding-left:15px;position:sticky;left:0;z-index:4;background:#fbfbfc;border-right:1px solid var(--line)}.matrix thead .skill-col{z-index:9;padding:8px 12px}.skill-filter-wrap{position:relative}.skill-filter-button{width:100%;border:1px solid var(--line);background:white;border-radius:9px;padding:8px 10px;display:flex;align-items:center;justify-content:space-between;color:#303034;font-size:11.5px;font-weight:650;text-align:left;box-shadow:0 1px 2px rgba(20,25,35,.04)}.skill-filter-button:active{transform:scale(.985)}.skill-filter-button small{color:var(--muted);font-weight:500}.skill-filter-menu{position:absolute;display:none;top:41px;left:0;width:210px;padding:6px;background:rgba(255,255,255,.98);border:1px solid var(--line);border-radius:12px;box-shadow:0 16px 36px rgba(30,35,45,.18);z-index:30;transform-origin:top left}.skill-filter-menu.show{display:block}.folder-option{width:100%;border:0;background:transparent;border-radius:8px;padding:8px 9px;display:grid;grid-template-columns:19px 1fr auto;gap:7px;align-items:center;text-align:left;font-size:11.5px;color:#39393d}.folder-option:hover{background:#f2f6fb}.folder-option.active{color:var(--blue);font-weight:650}.folder-option b{font-size:9.5px;color:var(--faint)}.agent-head{display:grid;grid-template-columns:1fr;place-items:center;gap:4px}.agent-drag{position:absolute;top:5px;right:8px;font-style:normal;color:#b4b4b8;font-size:10px;letter-spacing:-2px}.agent-product{display:flex;align-items:center;justify-content:center;gap:6px;min-width:0}.agent-product b{max-width:74px;font-size:10.5px;line-height:1.08;white-space:normal}.agent-product-icon{width:25px;height:25px;border-radius:7px;display:block;object-fit:contain;flex:none;background:transparent;box-shadow:0 1px 3px rgba(20,24,32,.12)}.agent-head small{color:var(--green);font-size:9px;font-weight:550}.agent-head small.off{color:var(--faint)}.matrix td{height:61px;text-align:center;padding:7px}.matrix td.skill-col{padding:8px 13px}.matrix-skill{display:grid;grid-template-columns:25px minmax(0,1fr) auto;gap:9px;align-items:center}.matrix-skill .source-logo{width:23px;height:23px}.matrix-skill b{display:block;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.matrix-skill small{display:block;color:var(--muted);font-size:9.5px;margin-top:3px}.source-update{border-radius:999px;background:#e5f0ff;color:#087af5;padding:3px 6px;font-size:8.5px;font-weight:700;white-space:nowrap}.matrix-state{width:32px;height:32px;border:0;border-radius:50%;display:inline-grid;place-items:center;font-size:16px;font-weight:700}.matrix-state svg{width:15px;height:15px}.matrix-state.installable{background:#edf4ff;color:var(--blue)}.matrix-state.installed{background:#eaf8ef;color:#249956}.matrix-state.update{background:#e5f0ff;color:#006ee6}.matrix-state.conflict{background:#fff0e4;color:#df7915}.matrix-state.disabled{background:#f1f1f2;color:#999}.matrix-state:active:not(.disabled){transform:scale(.9)}.matrix tr.row-hidden{display:none}.matrix-empty{display:none;text-align:center;padding:48px;color:var(--muted);font-size:12px}.matrix-empty.show{display:block}
+    .scrim{position:fixed;inset:0;background:rgba(28,31,38,.25);display:none;align-items:center;justify-content:center;padding:40px;z-index:20;backdrop-filter:blur(3px)}.scrim.show{display:flex}.sheet{width:min(600px,90vw);background:rgba(255,255,255,.98);border-radius:20px;border:1px solid rgba(255,255,255,.8);box-shadow:0 30px 90px rgba(20,25,34,.28);overflow:hidden}.sheet.wide{width:min(760px,92vw)}.sheet-head{padding:24px 26px 14px}.sheet-head h2{margin:0;font-size:22px;letter-spacing:-.035em}.sheet-head p{margin:8px 0 0;color:var(--muted);font-size:13px;line-height:1.5}.sheet-body{padding:8px 26px 26px}.sheet-body.scroll{max-height:min(620px,68vh);overflow:auto}.choices{display:grid;grid-template-columns:1fr 1fr;gap:12px}.choice{border:1px solid var(--line);background:#fafafa;border-radius:15px;padding:18px;text-align:left;min-height:150px}.choice:hover{border-color:#9cc9ff;background:#f4f9ff}.choice-icon{width:40px;height:40px;border-radius:11px;background:#e7f2ff;color:var(--blue);display:grid;place-items:center;font-size:20px}.choice b{display:block;margin-top:16px;font-size:14px}.choice p{margin:7px 0 0;color:var(--muted);font-size:11.5px;line-height:1.5}.choice em{display:block;margin-top:13px;color:var(--blue);font-size:11px;font-style:normal;font-weight:650}.sheet-foot{padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px;background:#fafafa}.app-list{display:grid;gap:7px}.app-row{display:grid;grid-template-columns:25px 38px 1fr auto;gap:10px;align-items:center;padding:10px 11px;border-radius:11px;background:#f7f7f8}.app-row .agent-product-icon{width:34px;height:34px;border-radius:9px}.check{width:19px;height:19px;border-radius:6px;border:1px solid #c9c9ce;background:white;display:grid;place-items:center;color:white;font-size:12px}.check.on{background:var(--blue);border-color:var(--blue)}.app-row b{font-size:13px}.app-row small{display:block;color:var(--muted);font-size:10.5px;margin-top:2px}.ready{font-size:10.5px;color:var(--green)}.unavailable{opacity:.52}.manage-list{display:grid;gap:8px}.manage-row{display:grid;grid-template-columns:42px minmax(0,1fr) 115px auto;align-items:center;gap:11px;padding:10px 11px;border:1px solid var(--line);border-radius:13px;background:#fff}.manage-row .agent-product-icon{width:38px;height:38px;border-radius:10px}.manage-copy{min-width:0}.manage-copy b{font-size:13px}.manage-copy small{display:block;margin-top:3px;color:var(--muted);font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.manage-status{font-size:10.5px;color:var(--green);text-align:right}.manage-status.off{color:var(--faint)}.manage-action{border:0;background:transparent;color:var(--red);font-size:10.5px;padding:6px 5px}.manage-action.add{color:var(--blue);font-weight:650}.manage-section{display:flex;align-items:center;justify-content:space-between;margin:18px 1px 9px}.manage-section:first-child{margin-top:1px}.manage-section b{font-size:12px}.manage-section span{font-size:10.5px;color:var(--muted)}.manage-section>span b{display:block;color:var(--text)}.manage-section>span small{display:block;margin-top:3px;color:var(--muted);font-size:10px}.btn:disabled{cursor:default;opacity:.45}.custom-app-icon{width:38px;height:38px;border-radius:10px;background:#e8f2ff;color:var(--blue);display:grid;place-items:center;font-weight:750;font-size:15px}.field-stack{display:grid;gap:13px}.field label{display:block;font-size:11px;font-weight:650;margin-bottom:6px}.text-field,.folder-field{width:100%;height:40px;border:1px solid var(--line);border-radius:10px;background:#fff;padding:0 11px;font-size:12.5px;outline:0}.text-field:focus{border-color:#80baff;box-shadow:0 0 0 3px #e6f1ff}.folder-field{display:flex;align-items:center;gap:8px;color:#39393d;text-align:left}.folder-field span{flex:1;color:var(--muted)}.field-help{margin:6px 0 0;color:var(--muted);font-size:10.5px;line-height:1.45}.safe-note{margin-top:14px;padding:12px 13px;border-radius:11px;background:#f1f7ff;color:#41617d;font-size:11px;line-height:1.5}.remove-product{display:flex;align-items:center;gap:12px;padding:13px;border-radius:13px;background:#f7f7f8}.remove-product img{width:40px;height:40px;border-radius:11px}.remove-product b{font-size:13px}.remove-product small{display:block;color:var(--muted);font-size:10.5px;margin-top:3px}
+    @media(max-width:1120px){.window{grid-template-columns:210px 315px minmax(500px,1fr)}.traffic{width:210px}.detail-inner{padding:27px 25px}.intro-grid{grid-template-columns:1fr}.intro-card.full{grid-column:1}.state-legend{gap:10px;overflow:auto}}
+    @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+  </style>
+</head>
+<body>
+<div class="desktop"><main class="window">
+  <header class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="title">SkillBox</div></header>
+  <aside class="sidebar">
+    <div class="brand"><img src="../brand/skillbox-app-icon-master.png" alt=""><span><strong>SkillBox</strong><small>统一管理全局 Skill</small></span></div>
+    <nav class="nav">
+      <button class="active" data-page="library"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M4 5.5v16M8 7h8M8 11h6"/></svg>我的 Skills</button>
+      <button data-page="matrix"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16M15 4v16"/></svg>安装到应用</button>
+      <div class="nav-separator"></div>
+      <button data-page="discover"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10" cy="10" r="6"/><path d="m14.5 14.5 5 5M10 7v6M7 10h6"/></svg>发现 Skills</button>
+      <button data-page="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1A7 7 0 0 0 15 6l-.3-2.6h-4L10.4 6a7 7 0 0 0-1.5.9l-2.4-1-2 3.4 2 1.5a7 7 0 0 0 0 2.2l-2 1.5 2 3.4 2.4-1a7 7 0 0 0 1.5.9l.3 2.6h4l.3-2.6a7 7 0 0 0 1.5-.9l2.4 1 2-3.4-2-1.5c.1-.3.1-.7.1-1z"/></svg>设置</button>
+    </nav>
+    <div class="sidebar-note"><i>◎</i><span><b>管理范围</b>只管理跨项目使用的全局 Skill</span></div>
+  </aside>
+
+  <div class="library-page" id="libraryPage">
+    <section class="library">
+      <div class="library-head">
+        <div class="eyebrow">全局 Skill</div>
+        <div class="library-title-row"><h1>我的 Skills</h1><button class="add-button" id="addSkill">＋ 添加</button></div>
+        <div class="search">⌕<input aria-label="搜索" placeholder="搜索 Skills"></div>
+        <div class="filter"><button class="chip active">全部 5</button><button class="chip">产品开发 2</button><button class="chip">内容创作 2</button><button class="chip">未分类 1</button></div>
+      </div>
+      <div class="skills">
+        <div class="skill selected"><div class="skill-icon">V</div><div class="skill-copy"><b>vibe-project-foundation</b><small>已安装到 2 个应用</small></div><span class="source-logo github" title="GitHub 来源"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.8-1.6 6.8-7.4A5.8 5.8 0 0 0 19.3 3 5.4 5.4 0 0 0 19.1 0S17.9-.4 15 1.5a13.4 13.4 0 0 0-6 0C6.1-.4 4.9 0 4.9 0a5.4 5.4 0 0 0-.2 3A5.8 5.8 0 0 0 3.2 7.1c0 5.8 3.5 7 6.8 7.4A4.8 4.8 0 0 0 9 18v4"/><path d="M9 19c-3 .9-3-1.5-4.2-2"/></svg></span></div>
+        <div class="skill"><div class="skill-icon">写</div><div class="skill-copy"><b>zhaoji-writing</b><small>已安装到 3 个应用</small></div><span class="source-logo local" title="本地开发文件夹"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6.5h6l2 2h10v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 9h18"/></svg></span></div>
+        <div class="skill"><div class="skill-icon">A</div><div class="skill-copy"><b>agent-team</b><small>已安装到 GPT</small></div><span class="source-logo github" title="GitHub 来源"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.8-1.6 6.8-7.4A5.8 5.8 0 0 0 19.3 3 5.4 5.4 0 0 0 19.1 0S17.9-.4 15 1.5a13.4 13.4 0 0 0-6 0C6.1-.4 4.9 0 4.9 0a5.4 5.4 0 0 0-.2 3A5.8 5.8 0 0 0 3.2 7.1c0 5.8 3.5 7 6.8 7.4A4.8 4.8 0 0 0 9 18v4"/></svg></span></div>
+        <div class="skill"><div class="skill-icon">H</div><div class="skill-copy"><b>html-deck-studio</b><small>尚未安装</small></div><span class="source-logo local" title="本地开发文件夹"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6.5h6l2 2h10v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 9h18"/></svg></span></div>
+        <div class="skill"><div class="skill-icon">O</div><div class="skill-copy"><b>obsidian-feishu-sync</b><small>已安装到 2 个应用</small></div><span class="source-logo github" title="GitHub 来源"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.8-1.6 6.8-7.4A5.8 5.8 0 0 0 19.3 3 5.4 5.4 0 0 0 19.1 0S17.9-.4 15 1.5a13.4 13.4 0 0 0-6 0C6.1-.4 4.9 0 4.9 0a5.4 5.4 0 0 0-.2 3A5.8 5.8 0 0 0 3.2 7.1c0 5.8 3.5 7 6.8 7.4A4.8 4.8 0 0 0 9 18v4"/></svg></span></div>
+      </div>
+    </section>
+
+    <section class="detail"><div class="detail-inner">
+      <div class="detail-top"><div class="hero-icon">V</div><div class="detail-title"><h2>vibe-project-foundation</h2><p>为全新、需要长期开发的软件项目创建开工前的基础文件。</p></div><div class="actions"><button class="btn primary" id="manageInstall">管理安装</button></div></div>
+      <div class="meta-grid">
+        <div class="meta-card"><small>来源</small><div class="source-line"><span class="source-logo github"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.8-1.6 6.8-7.4A5.8 5.8 0 0 0 19.3 3 5.4 5.4 0 0 0 19.1 0S17.9-.4 15 1.5a13.4 13.4 0 0 0-6 0C6.1-.4 4.9 0 4.9 0a5.4 5.4 0 0 0-.2 3A5.8 5.8 0 0 0 3.2 7.1c0 5.8 3.5 7 6.8 7.4A4.8 4.8 0 0 0 9 18v4"/></svg></span><strong>AidenXu-1/vibe-project-foundation-skill</strong></div></div>
+        <div class="meta-card"><small>当前安装版本</small><strong>v1.3.0</strong></div>
+        <div class="meta-card"><small>版本情况</small><strong class="state-good">已是最新</strong></div>
+      </div>
+      <div class="install-card"><div class="app-stack"><div class="app"><img src="assets/agent-icons/gpt.png" alt="GPT"></div><div class="app"><img src="assets/agent-icons/claude-code.png" alt="Claude"></div><div class="app more">+</div></div><div class="install-copy"><small>当前安装情况</small><strong>已安装到 GPT、Claude</strong></div><div class="install-actions"><button class="btn" id="installAll">全部安装</button><button class="btn danger" id="uninstallAll">全部卸载</button></div></div>
+
+      <div class="detail-switch"><div class="tabs"><button class="tab active" data-tab="intro">Skill 介绍</button><button class="tab" data-tab="files">文件详情</button></div><span class="ai-note"><b>✦ AI 已整理</b> · 依据当前版本</span></div>
+      <div class="tab-panel active" id="introPanel">
+        <div class="intro-grid">
+          <div class="intro-card full"><label>作用</label><strong>给一个全新软件项目建好开工前需要的基础文件：项目说明、AI 协作规则、基础目录和 Git 备份。完成后就能接着写需求和开发。</strong></div>
+          <div class="intro-card"><label>适用场景</label><p>你准备从零做一个 App、网站或其他软件，而且以后会持续更新它。项目还没正式开始、目标文件夹是空的时候用。</p></div>
+          <div class="intro-card"><label>你最后会得到什么</label><p>一套可直接开工的项目结构、开发规则、关键说明文档，以及后续 AI 都能读懂的协作入口。</p></div>
+          <div class="intro-card full"><label>使用流程</label><div class="flow-list"><div class="flow-step"><i>1</i><p>它先确认项目名和一句话介绍；你还没想清楚时，会原样记下，不会替你编需求。</p></div><div class="flow-step"><i>2</i><p>它检查目标文件夹是否为空。里面已经有文件时会停下询问，避免覆盖现有项目。</p></div><div class="flow-step"><i>3</i><p>确认后，它创建项目说明、AI 协作规则、基础目录和第一次 Git 备份，然后告诉你下一步该写需求了。</p></div></div></div>
+          <div class="intro-card full"><label>简要启动提示词</label><div class="prompt-box"><div class="prompt-copy">帮我为这个新项目搭建开发前地基。</div><button class="copy-button" id="copyPrompt">复制提示词</button></div></div>
+        </div>
+      </div>
+      <div class="tab-panel" id="filesPanel"><div class="file-help"><span>当前安装版本共 27 个文件 · 34 KB</span><button class="btn">在 Finder 中显示</button></div><div class="file-tree">
+        <div class="file-row"><span class="file-icon">▾</span><b>vibe-project-foundation</b><span class="file-size">34 KB</span></div>
+        <div class="file-row indent"><span class="file-icon">◆</span><span>SKILL.md</span><span class="file-size">8 KB</span></div>
+        <div class="file-row indent"><span class="file-icon">▸</span><span>agents</span><span class="file-size">2 个文件</span></div>
+        <div class="file-row indent"><span class="file-icon">▸</span><span>references</span><span class="file-size">12 个文件</span></div>
+        <div class="file-row indent"><span class="file-icon">▸</span><span>scripts</span><span class="file-size">8 个文件</span></div>
+        <div class="file-row indent"><span class="file-icon">◇</span><span>README.md</span><span class="file-size">5 KB</span></div>
+        <div class="file-row indent"><span class="file-icon">◇</span><span>LICENSE</span><span class="file-size">1 KB</span></div>
+      </div></div>
+    </div></section>
+  </div>
+
+  <section class="matrix-page" id="matrixPage">
+    <div class="matrix-head"><div class="matrix-head-copy"><div class="eyebrow">统一管理</div><h1>安装到应用</h1><p>每一列都对应这个应用自己的全局 Skills 文件夹。选择分类、点击状态即可安装或卸载。</p></div><button class="btn" id="manageAgents">管理应用</button></div>
+    <div class="matrix-body">
+      <div class="matrix-area">
+        <div class="matrix-toolbar"><div class="search matrix-search">⌕<input id="matrixSearch" aria-label="搜索 Skill" placeholder="搜索当前列表"></div><span class="matrix-hint">⠿ 拖动列标题排序 · <span id="orderState">常用应用放前面</span></span><button class="btn" id="resetOrder">恢复默认顺序</button></div>
+        <div class="state-legend" aria-label="安装状态图例"><span class="legend-item"><i class="legend-icon installable">＋</i>安装</span><span class="legend-item"><i class="legend-icon installed">✓</i>已安装</span><span class="legend-item"><i class="legend-icon update">↻</i>可更新</span><span class="legend-item"><i class="legend-icon conflict"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="m12 3 9 5-9 5-9-5z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></svg></i>已有同名</span><span class="legend-item"><i class="legend-icon disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="m6.3 6.3 11.4 11.4"/></svg></i>应用不可用</span></div>
+        <div class="matrix-shell"><table class="matrix" id="installMatrix">
+          <thead><tr>
+            <th class="skill-col"><div class="skill-filter-wrap"><button class="skill-filter-button" id="skillFilterButton"><span id="skillFilterLabel">全部 Skills <small>5</small></span><span>⌄</span></button><div class="skill-filter-menu" id="skillFilterMenu"><button class="folder-option active" data-folder="all"><span>✓</span><span>全部 Skills</span><b>5</b></button><button class="folder-option" data-folder="product"><span></span><span>产品开发</span><b>2</b></button><button class="folder-option" data-folder="content"><span></span><span>内容创作</span><b>2</b></button><button class="folder-option" data-folder="none"><span></span><span>未分类</span><b>1</b></button></div></div></th>
+            <th draggable="true" data-agent="codex"><div class="agent-head"><i class="agent-drag">⠿</i><div class="agent-product"><img class="agent-product-icon" src="assets/agent-icons/codex.png" alt=""><b>Codex</b></div><small>已找到</small></div></th>
+            <th draggable="true" data-agent="claude"><div class="agent-head"><i class="agent-drag">⠿</i><div class="agent-product"><img class="agent-product-icon" src="assets/agent-icons/claude-code.png" alt=""><b>Claude Code</b></div><small>已找到</small></div></th>
+            <th draggable="true" data-agent="hana"><div class="agent-head"><i class="agent-drag">⠿</i><div class="agent-product"><img class="agent-product-icon" src="assets/agent-icons/hanaagent.png" alt=""><b>HanaAgent</b></div><small>已找到</small></div></th>
+            <th draggable="true" data-agent="workbuddy"><div class="agent-head"><i class="agent-drag">⠿</i><div class="agent-product"><img class="agent-product-icon" src="assets/agent-icons/workbuddy.png" alt=""><b>WorkBuddy</b></div><small>已找到</small></div></th>
+            <th draggable="true" data-agent="zcode"><div class="agent-head"><i class="agent-drag">⠿</i><div class="agent-product"><img class="agent-product-icon" src="assets/agent-icons/zcode.png" alt=""><b>ZCode</b></div><small>已找到</small></div></th>
+            <th draggable="true" data-agent="cursor"><div class="agent-head"><i class="agent-drag">⠿</i><div class="agent-product"><img class="agent-product-icon" src="assets/agent-icons/cursor.png" alt=""><b>Cursor</b></div><small class="off">未找到</small></div></th>
+            <th draggable="true" data-agent="gemini"><div class="agent-head"><i class="agent-drag">⠿</i><div class="agent-product"><img class="agent-product-icon" src="assets/agent-icons/gemini-cli.png" alt=""><b>Gemini CLI</b></div><small class="off">未找到</small></div></th>
+          </tr></thead>
+          <tbody>
+            <tr data-folder="product" data-name="vibe-project-foundation"><td class="skill-col"><div class="matrix-skill"><span class="source-logo github"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.8-1.6 6.8-7.4A5.8 5.8 0 0 0 19.3 3 5.4 5.4 0 0 0 19.1 0S17.9-.4 15 1.5a13.4 13.4 0 0 0-6 0C6.1-.4 4.9 0 4.9 0a5.4 5.4 0 0 0-.2 3A5.8 5.8 0 0 0 3.2 7.1c0 5.8 3.5 7 6.8 7.4A4.8 4.8 0 0 0 9 18v4"/></svg></span><span><b>vibe-project-foundation</b><small>产品开发</small></span></div></td><td data-agent="codex"><button class="matrix-state installed" title="Codex 自己的 Skill 目录中已安装当前版本" aria-label="Codex：已安装">✓</button></td><td data-agent="claude"><button class="matrix-state installed" title="Claude Code 自己的 Skill 目录中已安装当前版本" aria-label="Claude Code：已安装">✓</button></td><td data-agent="hana"><button class="matrix-state installable" title="安装到 HanaAgent 自己的 Skill 目录" aria-label="HanaAgent：安装">＋</button></td><td data-agent="workbuddy"><button class="matrix-state installable" title="安装到 WorkBuddy 自己的 Skill 目录" aria-label="WorkBuddy：安装">＋</button></td><td data-agent="zcode"><button class="matrix-state installable" title="安装到 ZCode 自己的 Skill 目录" aria-label="ZCode：安装">＋</button></td><td data-agent="cursor"><button class="matrix-state disabled" title="未找到 Cursor 自己的 Skill 目录" aria-label="Cursor：应用不可用"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="m6.3 6.3 11.4 11.4"/></svg></button></td><td data-agent="gemini"><button class="matrix-state disabled" title="未找到 Gemini CLI 自己的 Skill 目录" aria-label="Gemini CLI：应用不可用"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="m6.3 6.3 11.4 11.4"/></svg></button></td></tr>
+            <tr data-folder="product" data-name="agent-team"><td class="skill-col"><div class="matrix-skill"><span class="source-logo github"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.8-1.6 6.8-7.4A5.8 5.8 0 0 0 19.3 3 5.4 5.4 0 0 0 19.1 0S17.9-.4 15 1.5a13.4 13.4 0 0 0-6 0C6.1-.4 4.9 0 4.9 0a5.4 5.4 0 0 0-.2 3A5.8 5.8 0 0 0 3.2 7.1c0 5.8 3.5 7 6.8 7.4A4.8 4.8 0 0 0 9 18v4"/></svg></span><span><b>agent-team</b><small>产品开发</small></span></div></td><td data-agent="codex"><button class="matrix-state conflict" title="Codex 中已有同名但内容不同的 Skill，点击查看差异" aria-label="Codex：已有同名 Skill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="m12 3 9 5-9 5-9-5z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></svg></button></td><td data-agent="claude"><button class="matrix-state installable" title="点击安装" aria-label="Claude Code：安装">＋</button></td><td data-agent="hana"><button class="matrix-state installable" title="点击安装" aria-label="HanaAgent：安装">＋</button></td><td data-agent="workbuddy"><button class="matrix-state installable" title="点击安装" aria-label="WorkBuddy：安装">＋</button></td><td data-agent="zcode"><button class="matrix-state installable" title="点击安装" aria-label="ZCode：安装">＋</button></td><td data-agent="cursor"><button class="matrix-state disabled" title="电脑上尚未找到这个应用" aria-label="Cursor：应用不可用"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="m6.3 6.3 11.4 11.4"/></svg></button></td><td data-agent="gemini"><button class="matrix-state disabled" title="电脑上尚未找到这个应用" aria-label="Gemini CLI：应用不可用"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="m6.3 6.3 11.4 11.4"/></svg></button></td></tr>
+            <tr data-folder="content" data-name="zhaoji-writing"><td class="skill-col"><div class="matrix-skill"><span class="source-logo local"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6.5h6l2 2h10v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 9h18"/></svg></span><span><b>zhaoji-writing</b><small>内容创作</small></span></div></td><td data-agent="codex"><button class="matrix-state update" title="Codex 中的副本可以更新到当前版本" aria-label="Codex：可更新">↻</button></td><td data-agent="claude"><button class="matrix-state installable" title="点击安装" aria-label="Claude Code：安装">＋</button></td><td data-agent="hana"><button class="matrix-state installed" title="已安装当前版本" aria-label="HanaAgent：已安装">✓</button></td><td data-agent="workbuddy"><button class="matrix-state installable" title="点击安装" aria-label="WorkBuddy：安装">＋</button></td><td data-agent="zcode"><button class="matrix-state installable" title="点击安装" aria-label="ZCode：安装">＋</button></td><td data-agent="cursor"><button class="matrix-state disabled" title="电脑上尚未找到这个应用" aria-label="Cursor：应用不可用"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="m6.3 6.3 11.4 11.4"/></svg></button></td><td data-agent="gemini"><button class="matrix-state disabled" title="电脑上尚未找到这个应用" aria-label="Gemini CLI：应用不可用"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="m6.3 6.3 11.4 11.4"/></svg></button></td></tr>
+            <tr data-folder="content" data-name="obsidian-feishu-sync"><td class="skill-col"><div class="matrix-skill"><span class="source-logo github"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.8-1.6 6.8-7.4A5.8 5.8 0 0 0 19.3 3 5.4 5.4 0 0 0 19.1 0S17.9-.4 15 1.5a13.4 13.4 0 0 0-6 0C6.1-.4 4.9 0 4.9 0a5.4 5.4 0 0 0-.2 3A5.8 5.8 0 0 0 3.2 7.1c0 5.8 3.5 7 6.8 7.4A4.8 4.8 0 0 0 9 18v4"/></svg></span><span><b>obsidian-feishu-sync</b><small>内容创作</small></span></div></td><td data-agent="codex"><button class="matrix-state installed" title="已安装当前版本" aria-label="Codex：已安装">✓</button></td><td data-agent="claude"><button class="matrix-state installable" title="点击安装" aria-label="Claude Code：安装">＋</button></td><td data-agent="hana"><button class="matrix-state installed" title="已安装当前版本" aria-label="HanaAgent：已安装">✓</button></td><td data-agent="workbuddy"><button class="matrix-state installable" title="点击安装" aria-label="WorkBuddy：安装">＋</button></td><td data-agent="zcode"><button class="matrix-state installable" title="点击安装" aria-label="ZCode：安装">＋</button></td><td data-agent="cursor"><button class="matrix-state disabled" title="电脑上尚未找到这个应用" aria-label="Cursor：应用不可用"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="m6.3 6.3 11.4 11.4"/></svg></button></td><td data-agent="gemini"><button class="matrix-state disabled" title="电脑上尚未找到这个应用" aria-label="Gemini CLI：应用不可用"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="m6.3 6.3 11.4 11.4"/></svg></button></td></tr>
+            <tr data-folder="none" data-name="html-deck-studio"><td class="skill-col"><div class="matrix-skill"><span class="source-logo local"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6.5h6l2 2h10v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 9h18"/></svg></span><span><b>html-deck-studio</b><small>未分类</small></span></div></td><td data-agent="codex"><button class="matrix-state conflict" title="Codex 中已有同名但内容不同的 Skill，点击查看差异" aria-label="Codex：已有同名 Skill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="m12 3 9 5-9 5-9-5z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></svg></button></td><td data-agent="claude"><button class="matrix-state installable" title="点击安装" aria-label="Claude Code：安装">＋</button></td><td data-agent="hana"><button class="matrix-state installable" title="点击安装" aria-label="HanaAgent：安装">＋</button></td><td data-agent="workbuddy"><button class="matrix-state installable" title="点击安装" aria-label="WorkBuddy：安装">＋</button></td><td data-agent="zcode"><button class="matrix-state installable" title="点击安装" aria-label="ZCode：安装">＋</button></td><td data-agent="cursor"><button class="matrix-state disabled" title="电脑上尚未找到这个应用" aria-label="Cursor：应用不可用"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="m6.3 6.3 11.4 11.4"/></svg></button></td><td data-agent="gemini"><button class="matrix-state disabled" title="电脑上尚未找到这个应用" aria-label="Gemini CLI：应用不可用"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="m6.3 6.3 11.4 11.4"/></svg></button></td></tr>
+          </tbody>
+        </table><div class="matrix-empty" id="matrixEmpty">这个文件夹里没有符合搜索条件的 Skill</div></div>
+      </div>
+    </div>
+  </section>
+</main></div>
+
+<div class="scrim" id="addSheet"><section class="sheet"><div class="sheet-head"><h2>添加全局 Skill</h2><p>选择它的唯一来源。以后检查更新和安装都会从这里开始。</p></div><div class="sheet-body"><div class="choices"><button class="choice"><div class="choice-icon">▰</div><b>本地开发文件夹</b><p>适合你自己开发、会持续修改的 Skill。SkillBox 只读取，不会移动或改写原文件。</p><em>选择文件夹</em></button><button class="choice"><div class="choice-icon">◖</div><b>GitHub 仓库</b><p>适合从网上获得的开源或私人 Skill。可以跟踪正式 Release 或默认分支。</p><em>输入仓库地址</em></button></div></div><footer class="sheet-foot"><button class="btn close">取消</button></footer></section></div>
+
+<div class="scrim" id="installSheet"><section class="sheet"><div class="sheet-head"><h2>安装到哪些应用？</h2><p>每个应用只检查并写入自己的全局 Skills 文件夹。保存后会先展示清单，再由你确认。</p></div><div class="sheet-body scroll"><div class="app-list" id="installAppList"></div></div><footer class="sheet-foot"><button class="btn close">取消</button><button class="btn primary">保存更改</button></footer></section></div>
+
+<div class="scrim" id="bulkSheet"><section class="sheet"><div class="sheet-head"><h2 id="bulkTitle">安装到全部可用应用？</h2><p id="bulkCopy">SkillBox 会先核对每个位置，再展示完整清单。现在还不会改动文件。</p></div><div class="sheet-body"><div class="app-list" id="bulkList"></div></div><footer class="sheet-foot"><button class="btn close">取消</button><button class="btn primary" id="bulkContinue">查看安装清单</button></footer></section></div>
+
+<div class="scrim" id="agentsSheet"><section class="sheet wide"><div class="sheet-head"><h2>管理应用</h2><p>选择哪些应用出现在安装表里。移除只会把这一列从 SkillBox 隐藏，不会删除应用、Skills 文件夹或里面的文件。</p></div><div class="sheet-body scroll"><div class="manage-section"><b>安装表中的应用</b><span id="activeAgentCount">10 个</span></div><div class="manage-list" id="activeAgentList"></div><div class="manage-section"><span><b>已从列表移除</b><small id="restoreAllState">随时可以加回来</small></span><button class="btn" id="restoreAllAgents">恢复全部预设应用</button></div><div class="manage-list" id="hiddenAgentList"></div><div class="manage-section"><b>列表里没有我的应用</b><button class="btn primary" id="openCustomAgent">＋ 添加自定义应用</button></div><div class="safe-note">自定义应用需要你选择它已经存在的全局 Skills 文件夹。SkillBox 不会猜目录，也不会代你新建。</div></div><footer class="sheet-foot"><button class="btn close">完成</button></footer></section></div>
+
+<div class="scrim" id="customAgentSheet"><section class="sheet"><div class="sheet-head"><h2>添加自定义应用</h2><p>把一个 SkillBox 暂未收录的 Agent 工具加入安装表。</p></div><div class="sheet-body"><div class="field-stack"><div class="field"><label for="customAgentName">应用名称</label><input class="text-field" id="customAgentName" placeholder="例如 MyAgent"></div><div class="field"><label>全局 Skills 文件夹</label><button class="folder-field" id="chooseCustomFolder"><span id="customFolderLabel">选择这个应用自己的 Skills 文件夹</span><b>选择…</b></button><p class="field-help">只能选择已经存在的文件夹。不要选择用户主目录、项目目录或其他应用的 Skills 文件夹。</p></div></div><div class="safe-note">添加后只是多出一个安装位置；SkillBox 不会读取其中的内容来创建“我的 Skills”。</div></div><footer class="sheet-foot"><button class="btn close">取消</button><button class="btn primary" id="saveCustomAgent">添加到安装表</button></footer></section></div>
+
+<div class="scrim" id="removeAgentSheet"><section class="sheet"><div class="sheet-head"><h2 id="removeAgentTitle">从安装表移除这个应用？</h2><p>只改变 SkillBox 里的应用管理，不会删除电脑上的应用、Skills 文件夹或文件。</p></div><div class="sheet-body"><div class="remove-product"><img id="removeAgentIcon" src="" alt=""><span><b id="removeAgentName"></b><small id="removeAgentPath"></small></span></div><div class="safe-note" id="removeAgentNote">这个应用当前没有 SkillBox 管理的安装副本，可以安全地从列表移除。</div></div><footer class="sheet-foot"><button class="btn close">取消</button><button class="btn danger" id="confirmRemoveAgent">从列表移除</button></footer></section></div>
+
+<script type="text/plain" id="retiredStaticPrototypeScript">
+  const qs=new URLSearchParams(location.search);
+  const add=document.querySelector('#addSheet');
+  const install=document.querySelector('#installSheet');
+  const bulk=document.querySelector('#bulkSheet');
+  const libraryPage=document.querySelector('#libraryPage');
+  const matrixPage=document.querySelector('#matrixPage');
+  const navButtons=[...document.querySelectorAll('.nav button[data-page]')];
+
+  function showPage(page){
+    const matrix=page==='matrix';
+    libraryPage.classList.toggle('off',matrix);
+    matrixPage.classList.toggle('show',matrix);
+    navButtons.forEach(button=>button.classList.toggle('active',button.dataset.page===(matrix?'matrix':'library')));
+  }
+  navButtons.forEach(button=>{if(button.dataset.page==='library'||button.dataset.page==='matrix')button.onclick=()=>showPage(button.dataset.page)});
+  document.querySelector('#addSkill').onclick=()=>add.classList.add('show');
+  document.querySelector('#manageInstall').onclick=()=>install.classList.add('show');
+  document.querySelectorAll('.close').forEach(button=>button.onclick=()=>button.closest('.scrim').classList.remove('show'));
+
+  document.querySelectorAll('.tab').forEach(button=>button.onclick=()=>{
+    document.querySelectorAll('.tab').forEach(tab=>tab.classList.toggle('active',tab===button));
+    document.querySelector('#introPanel').classList.toggle('active',button.dataset.tab==='intro');
+    document.querySelector('#filesPanel').classList.toggle('active',button.dataset.tab==='files');
+  });
+  document.querySelector('#copyPrompt').onclick=event=>{event.currentTarget.textContent='已复制';setTimeout(()=>event.currentTarget.textContent='复制提示词',1200)};
+
+  const bulkList=document.querySelector('#bulkList');
+  function openBulk(mode){
+    const uninstall=mode==='uninstall';
+    document.querySelector('#bulkTitle').textContent=uninstall?'从所有应用卸载？':'安装到全部可用应用？';
+    document.querySelector('#bulkCopy').textContent=uninstall?'会从 Codex、Claude Code 移除受管理副本；来源、版本记录和 SkillBox 中的 Skill 都会保留。':'SkillBox 会先核对全部可用位置，再分别展示新增、保持不变和已有同名的内容。现在还不会改动文件。';
+    document.querySelector('#bulkContinue').textContent=uninstall?'查看卸载清单':'查看安装清单';
+    document.querySelector('#bulkContinue').className=uninstall?'btn danger':'btn primary';
+    bulkList.innerHTML=uninstall?'<div class="app-row"><span class="check on">✓</span><img class="agent-product-icon" src="assets/agent-icons/codex.png" alt=""><span><b>Codex</b><small>准备从 Codex 目录卸载受管理副本</small></span><span>将移除</span></div><div class="app-row"><span class="check on">✓</span><img class="agent-product-icon" src="assets/agent-icons/claude-code.png" alt=""><span><b>Claude Code</b><small>准备从 Claude Code 目录卸载受管理副本</small></span><span>将移除</span></div>':'<div class="app-row"><span class="check on">✓</span><img class="agent-product-icon" src="assets/agent-icons/codex.png" alt=""><span><b>Codex</b><small>Codex 目录中已经是当前版本</small></span><span class="ready">保持不变</span></div><div class="app-row"><span class="check on">✓</span><img class="agent-product-icon" src="assets/agent-icons/hanaagent.png" alt=""><span><b>HanaAgent</b><small>尚未安装到 HanaAgent</small></span><span class="ready">准备安装</span></div><div class="app-row"><span class="check on">✓</span><img class="agent-product-icon" src="assets/agent-icons/workbuddy.png" alt=""><span><b>WorkBuddy</b><small>尚未安装到 WorkBuddy</small></span><span class="ready">准备安装</span></div>';
+    bulk.classList.add('show');
+  }
+  document.querySelector('#installAll').onclick=()=>openBulk('install');
+  document.querySelector('#uninstallAll').onclick=()=>openBulk('uninstall');
+
+  let currentFolder='all';
+  const matrixRows=[...document.querySelectorAll('#installMatrix tbody tr')];
+  function filterMatrix(){
+    const query=document.querySelector('#matrixSearch').value.trim().toLowerCase();let visible=0;
+    matrixRows.forEach(row=>{const matchFolder=currentFolder==='all'||row.dataset.folder===currentFolder;const matchQuery=!query||row.dataset.name.toLowerCase().includes(query);const show=matchFolder&&matchQuery;row.classList.toggle('row-hidden',!show);if(show)visible++});
+    document.querySelector('#matrixEmpty').classList.toggle('show',visible===0);
+  }
+  const skillFilterButton=document.querySelector('#skillFilterButton');
+  const skillFilterMenu=document.querySelector('#skillFilterMenu');
+  skillFilterButton.onclick=event=>{event.stopPropagation();skillFilterMenu.classList.toggle('show')};
+  document.querySelectorAll('.folder-option').forEach(button=>button.onclick=event=>{
+    event.stopPropagation();currentFolder=button.dataset.folder;
+    document.querySelectorAll('.folder-option').forEach(item=>{item.classList.toggle('active',item===button);item.firstElementChild.textContent=item===button?'✓':''});
+    const label=button.children[1].textContent;const count=button.children[2].textContent;
+    document.querySelector('#skillFilterLabel').innerHTML=`${label} <small>${count}</small>`;
+    skillFilterMenu.classList.remove('show');filterMatrix();
+  });
+  document.addEventListener('click',()=>skillFilterMenu.classList.remove('show'));
+  document.querySelector('#matrixSearch').addEventListener('input',filterMatrix);
+
+  const table=document.querySelector('#installMatrix');let draggedAgent=null;
+  function headers(){return [...table.querySelectorAll('thead th[data-agent]')]}
+  function order(){return headers().map(header=>header.dataset.agent)}
+  function moveAgent(agent,target){
+    if(agent===target)return;const current=order();const from=current.indexOf(agent);const to=current.indexOf(target);if(from<0||to<0)return;
+    table.querySelectorAll('tr').forEach(row=>{const moving=row.querySelector(`[data-agent="${agent}"]`);const anchor=row.querySelector(`[data-agent="${target}"]`);if(!moving||!anchor)return;if(from<to)anchor.after(moving);else anchor.before(moving)});
+  }
+  function persistOrder(){try{localStorage.setItem('skillbox-agent-order',JSON.stringify(order()))}catch{}document.querySelector('#orderState').textContent='顺序已保存';document.querySelector('#orderState').className='matrix-order-state'}
+  function restoreOrder(saved){table.querySelectorAll('tr').forEach(row=>{const cells=new Map([...row.querySelectorAll('[data-agent]')].map(cell=>[cell.dataset.agent,cell]));saved.forEach(agent=>{const cell=cells.get(agent);if(cell)row.appendChild(cell)})})}
+  headers().forEach(header=>{
+    header.addEventListener('dragstart',event=>{draggedAgent=header.dataset.agent;header.classList.add('dragging');event.dataTransfer.effectAllowed='move'});
+    header.addEventListener('dragover',event=>{event.preventDefault();if(!draggedAgent)return;header.classList.add('drop-before');moveAgent(draggedAgent,header.dataset.agent)});
+    header.addEventListener('dragleave',()=>header.classList.remove('drop-before'));
+    header.addEventListener('drop',event=>{event.preventDefault();header.classList.remove('drop-before')});
+    header.addEventListener('dragend',()=>{table.querySelectorAll('th').forEach(item=>item.classList.remove('dragging','drop-before'));persistOrder();draggedAgent=null});
+  });
+  try{const saved=JSON.parse(localStorage.getItem('skillbox-agent-order')||'[]');if(Array.isArray(saved)&&saved.length===headers().length)restoreOrder(saved)}catch{}
+  document.querySelector('#resetOrder').onclick=()=>{restoreOrder(['codex','claude','hana','workbuddy','zcode','cursor','gemini']);try{localStorage.removeItem('skillbox-agent-order')}catch{}document.querySelector('#orderState').textContent='已恢复默认顺序';document.querySelector('#orderState').className='matrix-order-state'};
+
+  if(qs.get('screen')==='matrix')showPage('matrix');
+  if(qs.get('menu')==='folders')skillFilterMenu.classList.add('show');
+  if(qs.get('screen')==='files')document.querySelector('.tab[data-tab="files"]').click();
+  if(qs.get('screen')==='add')add.classList.add('show');
+  if(qs.get('screen')==='install')install.classList.add('show');
+</script>
+<script>
+  const qs=new URLSearchParams(location.search);
+  const iconRoot='assets/agent-icons/';
+  const agents=[
+    {id:'codex',name:'GPT',icon:'gpt.png',path:'~/.codex/skills',status:'已找到',available:true,managed:2},
+    {id:'claude',name:'Claude',icon:'claude-code.png',path:'~/.claude/skills',status:'已找到',available:true,managed:1},
+    {id:'workbuddy',name:'WorkBuddy',icon:'workbuddy.png',path:'~/.workbuddy/skills',status:'已找到',available:true,managed:0},
+    {id:'zcode',name:'ZCode',icon:'zcode.png',path:'~/.zcode/skills',status:'已找到',available:true,managed:0},
+    {id:'kimi',name:'Kimi Code',icon:'kimi-code.png',path:'~/.kimi-code/skills',status:'目录未建立',available:false,managed:0},
+    {id:'cursor',name:'Cursor',icon:'cursor.png',path:'~/.cursor/skills',status:'未找到目录',available:false,managed:0},
+    {id:'hana',name:'HanaAgent',icon:'hanaagent.png',path:'~/.hanako/skills',status:'已找到',available:true,managed:0},
+    {id:'pi',name:'Pi',icon:'pi.svg',path:'~/.pi/agent/skills',status:'未找到目录',available:false,managed:0},
+    {id:'dsh',name:'DeepSeek Harness',icon:'deepseek-harness.svg',path:'~/.dsh/skills',status:'目录未建立',available:false,managed:0},
+    {id:'trae',name:'Trae',icon:'trae.png',path:'~/.trae-cn/skills',status:'未找到目录',available:false,managed:0}
+  ];
+  const defaultOrder=agents.map(agent=>agent.id);
+  let activeAgents=[...defaultOrder];
+  let pendingRemove=null;
+  let currentFolder='all';
+  const skills=[
+    {name:'vibe-project-foundation',folder:'product',folderName:'产品开发',source:'github',states:{codex:'installed',claude:'installed'}},
+    {name:'agent-team',folder:'product',folderName:'产品开发',source:'github',states:{codex:'conflict'}},
+    {name:'zhaoji-writing',folder:'content',folderName:'内容创作',source:'local',states:{codex:'update',hana:'installed'}},
+    {name:'obsidian-feishu-sync',folder:'content',folderName:'内容创作',source:'github',states:{codex:'installed',hana:'installed'}},
+    {name:'html-deck-studio',folder:'none',folderName:'未分类',source:'local',states:{codex:'conflict'}}
+  ];
+
+  const byId=id=>agents.find(agent=>agent.id===id);
+  const appIcon=agent=>agent.icon?`<img class="agent-product-icon" src="${iconRoot+agent.icon}" alt="${agent.name}">`:`<span class="custom-app-icon">${agent.name.slice(0,1).toUpperCase()}</span>`;
+  const githubIcon='<span class="source-logo github" title="GitHub 来源"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.8-1.6 6.8-7.4A5.8 5.8 0 0 0 19.3 3 5.4 5.4 0 0 0 19.1 0S17.9-.4 15 1.5a13.4 13.4 0 0 0-6 0C6.1-.4 4.9 0 4.9 0a5.4 5.4 0 0 0-.2 3A5.8 5.8 0 0 0 3.2 7.1c0 5.8 3.5 7 6.8 7.4A4.8 4.8 0 0 0 9 18v4"/></svg></span>';
+  const localIcon='<span class="source-logo local" title="本地开发文件夹"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6.5h6l2 2h10v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 9h18"/></svg></span>';
+  const conflictIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="m12 3 9 5-9 5-9-5z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></svg>';
+  const unavailableIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="m6.3 6.3 11.4 11.4"/></svg>';
+  const stateCopy={installable:['安装','＋'],installed:['已安装','✓'],update:['可更新','↻'],conflict:['已有同名',conflictIcon],disabled:['应用不可用',unavailableIcon]};
+
+  function filterMarkup(){return '<div class="skill-filter-wrap"><button class="skill-filter-button" id="skillFilterButton"><span id="skillFilterLabel">全部 Skills <small>5</small></span><span>⌄</span></button><div class="skill-filter-menu" id="skillFilterMenu"><button class="folder-option active" data-folder="all"><span>✓</span><span>全部 Skills</span><b>5</b></button><button class="folder-option" data-folder="product"><span></span><span>产品开发</span><b>2</b></button><button class="folder-option" data-folder="content"><span></span><span>内容创作</span><b>2</b></button><button class="folder-option" data-folder="none"><span></span><span>未分类</span><b>1</b></button></div></div>'}
+  function stateButton(skill,agent){
+    const state=agent.available?(skill.states[agent.id]||'installable'):'disabled';
+    const [label,glyph]=stateCopy[state];
+    const detail=state==='disabled'?`${agent.name} 的全局 Skills 文件夹尚不可用`:`${agent.name}：${label}`;
+    return `<button class="matrix-state ${state}" data-state="${state}" title="${detail}" aria-label="${detail}">${glyph}</button>`;
+  }
+  function renderMatrix(){
+    const table=document.querySelector('#installMatrix');
+    table.querySelector('thead tr').innerHTML=`<th class="skill-col">${filterMarkup()}</th>`+activeAgents.map(id=>{const agent=byId(id);return `<th draggable="true" data-agent="${agent.id}"><div class="agent-head"><i class="agent-drag">⠿</i><div class="agent-product">${appIcon(agent)}<b>${agent.name}</b></div><small class="${agent.available?'':'off'}">${agent.status}</small></div></th>`}).join('');
+    table.querySelector('tbody').innerHTML=skills.map(skill=>`<tr data-folder="${skill.folder}" data-name="${skill.name}"><td class="skill-col"><div class="matrix-skill">${skill.source==='github'?githubIcon:localIcon}<span><b>${skill.name}</b><small>${skill.folderName}</small></span></div></td>${activeAgents.map(id=>{const agent=byId(id);return `<td data-agent="${agent.id}">${stateButton(skill,agent)}</td>`}).join('')}</tr>`).join('');
+    bindFolderFilter();bindDrag();bindMatrixStates();filterMatrix();
+  }
+  function bindMatrixStates(){
+    document.querySelectorAll('.matrix-state').forEach(button=>button.onclick=()=>{
+      if(button.dataset.state==='disabled'||button.dataset.state==='conflict')return;
+      const installed=button.dataset.state==='installed';button.dataset.state=installed?'installable':'installed';button.className=`matrix-state ${button.dataset.state}`;button.textContent=installed?'＋':'✓';
+    });
+  }
+  function filterMatrix(){
+    const query=document.querySelector('#matrixSearch').value.trim().toLowerCase();let visible=0;
+    document.querySelectorAll('#installMatrix tbody tr').forEach(row=>{const show=(currentFolder==='all'||row.dataset.folder===currentFolder)&&(!query||row.dataset.name.toLowerCase().includes(query));row.classList.toggle('row-hidden',!show);if(show)visible++});
+    document.querySelector('#matrixEmpty').classList.toggle('show',visible===0);
+  }
+  function bindFolderFilter(){
+    const button=document.querySelector('#skillFilterButton');const menu=document.querySelector('#skillFilterMenu');
+    button.onclick=event=>{event.stopPropagation();menu.classList.toggle('show')};
+    menu.querySelectorAll('.folder-option').forEach(option=>{
+      const active=option.dataset.folder===currentFolder;option.classList.toggle('active',active);option.firstElementChild.textContent=active?'✓':'';
+      option.onclick=event=>{event.stopPropagation();currentFolder=option.dataset.folder;const label=option.children[1].textContent;const count=option.children[2].textContent;renderMatrix();document.querySelector('#skillFilterLabel').innerHTML=`${label} <small>${count}</small>`;filterMatrix()};
+    });
+  }
+  function bindDrag(){
+    const table=document.querySelector('#installMatrix');let dragged=null;
+    table.querySelectorAll('th[data-agent]').forEach(header=>{
+      header.ondragstart=event=>{dragged=header.dataset.agent;header.classList.add('dragging');event.dataTransfer.effectAllowed='move'};
+      header.ondragover=event=>{event.preventDefault();if(!dragged||dragged===header.dataset.agent)return;const from=activeAgents.indexOf(dragged);const to=activeAgents.indexOf(header.dataset.agent);activeAgents.splice(from,1);activeAgents.splice(to,0,dragged);renderMatrix();document.querySelector('#orderState').textContent='顺序已保存';document.querySelector('#orderState').className='matrix-order-state'};
+    });
+  }
+
+  function renderInstallList(){
+    document.querySelector('#installAppList').innerHTML=activeAgents.map((id,index)=>{const agent=byId(id);const selected=agent.available&&index<2;return `<div class="app-row ${agent.available?'':'unavailable'}"><span class="check ${selected?'on':''}">${selected?'✓':''}</span>${appIcon(agent)}<span><b>${agent.name}</b><small>${agent.path}</small></span><span class="${agent.available?'ready':''}">${agent.available?(selected?'已安装':'可安装'):agent.status}</span></div>`}).join('');
+  }
+  function renderManage(){
+    const row=(agent,active)=>`<div class="manage-row">${appIcon(agent)}<span class="manage-copy"><b>${agent.name}</b><small>${agent.path}</small></span><span class="manage-status ${agent.available?'':'off'}">${agent.status}</span><button class="manage-action ${active?'':'add'}" data-${active?'remove':'restore'}="${agent.id}">${active?(agent.custom?'删除':'移出列表'):'加回来'}</button></div>`;
+    const missingPresets=defaultOrder.filter(id=>!activeAgents.includes(id));
+    document.querySelector('#activeAgentList').innerHTML=activeAgents.map(id=>row(byId(id),true)).join('');
+    document.querySelector('#hiddenAgentList').innerHTML=agents.filter(agent=>!activeAgents.includes(agent.id)).map(agent=>row(agent,false)).join('')||'<div class="safe-note">目前没有移出的应用。</div>';
+    document.querySelector('#activeAgentCount').textContent=`${activeAgents.length} 个`;
+    document.querySelector('#restoreAllState').textContent=missingPresets.length?`已移出 ${missingPresets.length} 个预设应用`:'10 个预设应用都在';
+    document.querySelector('#restoreAllAgents').disabled=missingPresets.length===0;
+    document.querySelectorAll('[data-remove]').forEach(button=>button.onclick=()=>openRemove(button.dataset.remove));
+    document.querySelectorAll('[data-restore]').forEach(button=>button.onclick=()=>{activeAgents.push(button.dataset.restore);renderManage();renderMatrix();renderInstallList()});
+  }
+  function openRemove(id){
+    pendingRemove=id;const agent=byId(id);document.querySelector('#removeAgentTitle').textContent=agent.custom?'删除这个自定义应用？':'从安装表移除这个应用？';document.querySelector('#removeAgentIcon').src=agent.icon?iconRoot+agent.icon:'';document.querySelector('#removeAgentIcon').style.display=agent.icon?'block':'none';document.querySelector('#removeAgentName').textContent=agent.name;document.querySelector('#removeAgentPath').textContent=agent.path;
+    const note=document.querySelector('#removeAgentNote');const confirm=document.querySelector('#confirmRemoveAgent');
+    if(agent.managed){note.textContent=`这里还有 ${agent.managed} 份由 SkillBox 安装的 Skill。你可以保留这些文件并停止管理；内置应用稍后仍能加回来。`;confirm.textContent=agent.custom?'保留副本并删除记录':'保留副本并移出列表'}else{note.textContent=agent.custom?'只删除 SkillBox 中的自定义应用记录，电脑上的应用和文件夹都会保留。':'这个应用当前没有 SkillBox 管理的安装副本，可以直接从列表移除。';confirm.textContent=agent.custom?'删除自定义应用':'从列表移除'}
+    document.querySelector('#removeAgentSheet').classList.add('show');
+  }
+
+  const libraryPage=document.querySelector('#libraryPage');const matrixPage=document.querySelector('#matrixPage');const navButtons=[...document.querySelectorAll('.nav button[data-page]')];
+  function showPage(page){const matrix=page==='matrix';libraryPage.classList.toggle('off',matrix);matrixPage.classList.toggle('show',matrix);navButtons.forEach(button=>button.classList.toggle('active',button.dataset.page===(matrix?'matrix':'library')))}
+  navButtons.forEach(button=>{if(button.dataset.page==='library'||button.dataset.page==='matrix')button.onclick=()=>showPage(button.dataset.page)});
+  document.querySelector('#addSkill').onclick=()=>document.querySelector('#addSheet').classList.add('show');
+  document.querySelector('#manageInstall').onclick=()=>{renderInstallList();document.querySelector('#installSheet').classList.add('show')};
+  document.querySelector('#manageAgents').onclick=()=>{renderManage();document.querySelector('#agentsSheet').classList.add('show')};
+  document.querySelector('#restoreAllAgents').onclick=()=>{const missing=defaultOrder.filter(id=>!activeAgents.includes(id));activeAgents.push(...missing);renderManage();renderMatrix();renderInstallList();document.querySelector('#restoreAllState').textContent=missing.length?`已恢复 ${missing.length} 个预设应用`:'10 个预设应用都在'};
+  document.querySelector('#openCustomAgent').onclick=()=>document.querySelector('#customAgentSheet').classList.add('show');
+  document.querySelector('#chooseCustomFolder').onclick=()=>document.querySelector('#customFolderLabel').textContent='~/.my-agent/skills';
+  document.querySelector('#saveCustomAgent').onclick=()=>{
+    const input=document.querySelector('#customAgentName');const path=document.querySelector('#customFolderLabel').textContent;if(!input.value.trim()){input.focus();return}if(!path.startsWith('~')){document.querySelector('#chooseCustomFolder').focus();return}
+    const id=`custom-${Date.now()}`;agents.push({id,name:input.value.trim(),icon:null,path,status:'已选择',available:true,managed:0,custom:true});activeAgents.push(id);input.value='';document.querySelector('#customFolderLabel').textContent='选择这个应用自己的 Skills 文件夹';document.querySelector('#customAgentSheet').classList.remove('show');renderManage();renderMatrix();renderInstallList();
+  };
+  document.querySelector('#confirmRemoveAgent').onclick=()=>{if(!pendingRemove)return;const removing=byId(pendingRemove);activeAgents=activeAgents.filter(id=>id!==pendingRemove);if(removing.custom)agents.splice(agents.indexOf(removing),1);pendingRemove=null;document.querySelector('#removeAgentSheet').classList.remove('show');renderManage();renderMatrix();renderInstallList()};
+  document.querySelectorAll('.close').forEach(button=>button.onclick=()=>button.closest('.scrim').classList.remove('show'));
+  document.addEventListener('click',event=>{const menu=document.querySelector('#skillFilterMenu');if(menu&&!menu.contains(event.target))menu.classList.remove('show')});
+  document.querySelector('#matrixSearch').addEventListener('input',filterMatrix);
+  document.querySelector('#resetOrder').onclick=()=>{activeAgents=[...defaultOrder.filter(id=>activeAgents.includes(id)),...activeAgents.filter(id=>!defaultOrder.includes(id))];renderMatrix();document.querySelector('#orderState').textContent='已恢复默认顺序';document.querySelector('#orderState').className='matrix-order-state'};
+  document.querySelectorAll('.tab').forEach(button=>button.onclick=()=>{document.querySelectorAll('.tab').forEach(tab=>tab.classList.toggle('active',tab===button));document.querySelector('#introPanel').classList.toggle('active',button.dataset.tab==='intro');document.querySelector('#filesPanel').classList.toggle('active',button.dataset.tab==='files')});
+  document.querySelector('#copyPrompt').onclick=event=>{event.currentTarget.textContent='已复制';setTimeout(()=>event.currentTarget.textContent='复制提示词',1200)};
+  function openBulk(mode){const uninstall=mode==='uninstall';document.querySelector('#bulkTitle').textContent=uninstall?'从所有应用卸载？':'安装到全部可用应用？';document.querySelector('#bulkCopy').textContent=uninstall?'会移除由 SkillBox 安装的副本；来源、版本记录和“我的 Skills”都会保留。':'SkillBox 会逐个核对应用自己的 Skills 文件夹，再让你确认清单。现在不会改动文件。';document.querySelector('#bulkContinue').textContent=uninstall?'查看卸载清单':'查看安装清单';document.querySelector('#bulkContinue').className=uninstall?'btn danger':'btn primary';document.querySelector('#bulkList').innerHTML=activeAgents.map(byId).filter(agent=>agent.available).slice(0,4).map((agent,index)=>`<div class="app-row"><span class="check on">✓</span>${appIcon(agent)}<span><b>${agent.name}</b><small>${agent.path}</small></span><span class="${uninstall?'':'ready'}">${uninstall?'将移除':index===0?'保持不变':'准备安装'}</span></div>`).join('');document.querySelector('#bulkSheet').classList.add('show')}
+  document.querySelector('#installAll').onclick=()=>openBulk('install');document.querySelector('#uninstallAll').onclick=()=>openBulk('uninstall');
+
+  renderMatrix();renderInstallList();
+  if(qs.get('screen')==='matrix'||qs.get('screen')==='agents'||qs.get('screen')==='custom-agent'||qs.get('screen')==='remove-agent')showPage('matrix');
+  if(qs.get('menu')==='folders')document.querySelector('#skillFilterMenu').classList.add('show');
+  if(qs.get('screen')==='files')document.querySelector('.tab[data-tab="files"]').click();
+  if(qs.get('screen')==='add')document.querySelector('#addSheet').classList.add('show');
+  if(qs.get('screen')==='install')document.querySelector('#installSheet').classList.add('show');
+  if(qs.get('screen')==='agents'){renderManage();document.querySelector('#agentsSheet').classList.add('show')}
+  if(qs.get('screen')==='custom-agent')document.querySelector('#customAgentSheet').classList.add('show');
+  if(qs.get('screen')==='remove-agent'){renderManage();openRemove('codex')}
+</script>
+</body>
+</html>

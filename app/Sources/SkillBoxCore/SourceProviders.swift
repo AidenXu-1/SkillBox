@@ -31,6 +31,13 @@ public struct BoundedProcessRunner: Sendable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
+        var environment = ProcessInfo.processInfo.environment
+        let fixedToolDirectories = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+        let existingPath = environment["PATH"] ?? ""
+        let existingDirectories = Set(existingPath.split(separator: ":").map(String.init))
+        let additions = fixedToolDirectories.filter { !existingDirectories.contains($0) }
+        environment["PATH"] = ([existingPath] + additions).filter { !$0.isEmpty }.joined(separator: ":")
+        process.environment = environment
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = output
         process.standardError = output
@@ -133,16 +140,42 @@ public struct AnonymousGitHubAccessTokenProvider: GitHubAccessTokenProvider, Sen
     public func accessToken() async throws -> String? { nil }
 }
 
+public enum LocalFolderSourceError: LocalizedError, Sendable {
+    case skillCouldNotBeRead(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .skillCouldNotBeRead(reason):
+            "找到了 Skill，但读取时遇到问题：\(reason)"
+        }
+    }
+}
+
 public struct LocalFolderSourceProvider: SourceProvider, Sendable {
     private let scanner: any SkillScanner
 
-    public init(scanner: any SkillScanner = FileSystemSkillScanner()) {
+    public init() {
+        scanner = FileSystemSkillScanner(limits: .userSelectedLocalSource)
+    }
+
+    public init(scanner: any SkillScanner) {
         self.scanner = scanner
     }
 
     public func preview(locator: String) async throws -> [SkillCandidate] {
         let url = URL(fileURLWithPath: locator).standardizedFileURL
         let result = await scanner.scan(roots: [url], sourceName: { _ in "本地文件夹" })
+        if result.candidates.isEmpty, let diagnostic = result.diagnostics.first {
+            let components = diagnostic.components(separatedBy: "：")
+            let rawReason = components.count > 1
+                ? components.dropFirst().joined(separator: "：")
+                : diagnostic
+            let reason = rawReason.replacingOccurrences(
+                of: "，已跳过以避免影响应用启动",
+                with: ""
+            )
+            throw LocalFolderSourceError.skillCouldNotBeRead(reason)
+        }
         return result.candidates.map { candidate in
             var updated = candidate
             updated.source = .init(kind: .localFolder, displayName: "本地文件夹", locator: candidate.sourceURL.path)
@@ -170,6 +203,9 @@ public struct GitHubDownloadLimits: Sendable {
 public enum GitHubSourceError: LocalizedError {
     case invalidURL
     case unsupportedHost
+    case secureConnectionFailed
+    case networkUnavailable
+    case requestTimedOut
     case requestFailed(Int)
     case downloadTooLarge
     case incompleteTree
@@ -192,6 +228,12 @@ public enum GitHubSourceError: LocalizedError {
         switch self {
         case .invalidURL: "这个 GitHub 地址无法识别，请检查后重试"
         case .unsupportedHost: "目前只支持 github.com 仓库"
+        case .secureConnectionFailed:
+            "无法与 GitHub 建立安全连接。请检查 Mac 的日期与时间，以及代理或网络工具是否正在拦截 HTTPS，然后重试。没有下载或修改任何 Skill。"
+        case .networkUnavailable:
+            "当前无法连接 GitHub。请确认网络或代理可用后重试。没有下载或修改任何 Skill。"
+        case .requestTimedOut:
+            "连接 GitHub 超时。请稍后重试。没有下载或修改任何 Skill。"
         case .requestFailed: "暂时无法从 GitHub 获取内容，请稍后重试"
         case .downloadTooLarge: "GitHub 下载的文件太大，目前最多约 10 MB"
         case .incompleteTree: "GitHub 返回的目录不完整，SkillBox 已停止本次检查，请稍后重试"
@@ -210,6 +252,56 @@ public enum GitHubSourceError: LocalizedError {
         case let .checksumMismatch(name): "\(name) 的 SHA-256 校验未通过，已停止导入"
         case .releaseAssetUnavailable: "选择的 Release 安装包已不可用，请重新检查"
         }
+    }
+
+    public var canRetryConnection: Bool {
+        switch self {
+        case .secureConnectionFailed, .networkUnavailable, .requestTimedOut: true
+        default: false
+        }
+    }
+}
+
+private func performGitHubNetworkRequest<Value>(
+    _ operation: () async throws -> Value
+) async throws -> Value {
+    var hasRetried = false
+    while true {
+        do {
+            return try await operation()
+        } catch {
+            guard let urlError = error as? URLError else { throw error }
+            if urlError.code == .cancelled { throw error }
+            if !hasRetried, gitHubNetworkErrorCanRetryAutomatically(urlError.code) {
+                hasRetried = true
+                continue
+            }
+            throw mappedGitHubNetworkError(urlError.code)
+        }
+    }
+}
+
+private func gitHubNetworkErrorCanRetryAutomatically(_ code: URLError.Code) -> Bool {
+    switch code {
+    case .secureConnectionFailed, .cannotFindHost, .cannotConnectToHost,
+         .dnsLookupFailed, .networkConnectionLost, .timedOut:
+        true
+    default:
+        false
+    }
+}
+
+private func mappedGitHubNetworkError(_ code: URLError.Code) -> GitHubSourceError {
+    switch code {
+    case .secureConnectionFailed, .serverCertificateHasBadDate,
+         .serverCertificateUntrusted, .serverCertificateHasUnknownRoot,
+         .serverCertificateNotYetValid, .clientCertificateRejected,
+         .clientCertificateRequired:
+        .secureConnectionFailed
+    case .timedOut:
+        .requestTimedOut
+    default:
+        .networkUnavailable
     }
 }
 
@@ -742,6 +834,12 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
     }
 
     private func downloadData(request: URLRequest) async throws -> Data {
+        try await performGitHubNetworkRequest {
+            try await downloadDataOnce(request: request)
+        }
+    }
+
+    private func downloadDataOnce(request: URLRequest) async throws -> Data {
         let (bytes, response) = try await session.bytes(for: request)
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             if let retryAt = rateLimitRetryDate(from: http) {
@@ -1024,11 +1122,13 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
 
     private func boundedAPIData(for request: URLRequest) async throws -> (Data, URLResponse) {
         do {
-            return try await BoundedNetworkResponseLoader.data(
-                for: request,
-                session: session,
-                maximumBytes: Self.maximumAPIResponseBytes
-            )
+            return try await performGitHubNetworkRequest {
+                try await BoundedNetworkResponseLoader.data(
+                    for: request,
+                    session: session,
+                    maximumBytes: Self.maximumAPIResponseBytes
+                )
+            }
         } catch is BoundedNetworkResponseError {
             throw GitHubSourceError.downloadTooLarge
         }
@@ -1273,11 +1373,13 @@ private struct GitHubReference: Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await BoundedNetworkResponseLoader.data(
-                for: request,
-                session: session,
-                maximumBytes: maximumResponseBytes
-            )
+            (data, response) = try await performGitHubNetworkRequest {
+                try await BoundedNetworkResponseLoader.data(
+                    for: request,
+                    session: session,
+                    maximumBytes: maximumResponseBytes
+                )
+            }
         } catch is BoundedNetworkResponseError {
             throw GitHubSourceError.downloadTooLarge
         }

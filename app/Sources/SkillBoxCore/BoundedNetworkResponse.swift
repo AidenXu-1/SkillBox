@@ -8,10 +8,11 @@ enum BoundedNetworkResponseLoader {
     static func data(
         for request: URLRequest,
         session: URLSession,
-        maximumBytes: Int
+        maximumBytes: Int,
+        delegate: (any URLSessionTaskDelegate)? = nil
     ) async throws -> (Data, URLResponse) {
         let limit = max(0, maximumBytes)
-        let (bytes, response) = try await session.bytes(for: request)
+        let (bytes, response) = try await session.bytes(for: request, delegate: delegate)
         if response.expectedContentLength > Int64(limit) {
             throw BoundedNetworkResponseError.responseTooLarge
         }

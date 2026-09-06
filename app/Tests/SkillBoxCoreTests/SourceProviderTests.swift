@@ -2,9 +2,112 @@ import CryptoKit
 import Foundation
 import Testing
 @testable import SkillBoxCore
+@testable import SkillBoxApp
 
 @Suite("GitHub source provider", .serialized)
 struct SourceProviderTests {
+    @Test("A transient GitHub TLS failure retries once and becomes an actionable error")
+    func secureConnectionFailureCanBeRetriedSafely() async throws {
+        let provider = GitHubSourceProvider(
+            session: GitHubNetworkFailureFixture.session(errorCode: .secureConnectionFailed)
+        )
+
+        do {
+            _ = try await provider.checkRemoteVersion(
+                repositoryFullName: "example/skills",
+                skillPath: nil,
+                trackingMode: .latestStableRelease
+            )
+            Issue.record("Expected a mapped GitHub connection failure")
+        } catch GitHubSourceError.secureConnectionFailed {
+            #expect(GitHubNetworkFailureMockURLProtocol.requestCount == 2)
+            #expect(GitHubSourceError.secureConnectionFailed.localizedDescription.contains("代理"))
+            #expect(GitHubSourceError.secureConnectionFailed.localizedDescription.contains("没有下载或修改任何 Skill"))
+        } catch {
+            Issue.record("Expected a secure connection error, got \(error)")
+        }
+    }
+
+    @Test("An offline GitHub request becomes a plain-language network error")
+    func offlineConnectionFailureIsActionable() async throws {
+        let provider = GitHubSourceProvider(
+            session: GitHubNetworkFailureFixture.session(errorCode: .notConnectedToInternet)
+        )
+
+        do {
+            _ = try await provider.checkRemoteVersion(
+                repositoryFullName: "example/skills",
+                skillPath: nil,
+                trackingMode: .latestStableRelease
+            )
+            Issue.record("Expected a mapped offline error")
+        } catch GitHubSourceError.networkUnavailable {
+            #expect(GitHubNetworkFailureMockURLProtocol.requestCount == 1)
+            #expect(GitHubSourceError.networkUnavailable.localizedDescription.contains("网络或代理"))
+        } catch {
+            Issue.record("Expected an offline connection error, got \(error)")
+        }
+    }
+
+    @Test("A timed-out GitHub request retries once and keeps a retryable error")
+    func timedOutConnectionFailureCanBeRetried() async throws {
+        let provider = GitHubSourceProvider(
+            session: GitHubNetworkFailureFixture.session(errorCode: .timedOut)
+        )
+
+        do {
+            _ = try await provider.checkRemoteVersion(
+                repositoryFullName: "example/skills",
+                skillPath: nil,
+                trackingMode: .latestStableRelease
+            )
+            Issue.record("Expected a mapped timeout error")
+        } catch GitHubSourceError.requestTimedOut {
+            #expect(GitHubNetworkFailureMockURLProtocol.requestCount == 2)
+            #expect(GitHubSourceError.requestTimedOut.canRetryConnection)
+        } catch {
+            Issue.record("Expected a timeout error, got \(error)")
+        }
+    }
+
+    @MainActor
+    @Test("A failed GitHub add keeps its context for the Retry button")
+    func githubAddCanRetryWithoutReenteringTheRepository() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SkillBoxGitHubRetryTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let provider = GitHubSourceProvider(
+            session: GitHubNetworkFailureFixture.session(errorCode: .notConnectedToInternet)
+        )
+        let model = AppModel(
+            libraryRoot: root,
+            homeDirectory: root,
+            githubProvider: provider,
+            startBootstrap: false
+        )
+        model.githubURL = "https://github.com/example/skills"
+
+        model.startGitHubPreview()
+        for _ in 0..<100 where model.errorMessage == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(model.canRetryGitHubConnection)
+        #expect(model.errorMessage?.contains("网络或代理") == true)
+        let firstRequestCount = GitHubNetworkFailureMockURLProtocol.requestCount
+
+        model.retryGitHubConnection()
+        for _ in 0..<100 where GitHubNetworkFailureMockURLProtocol.requestCount == firstRequestCount {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        for _ in 0..<100 where model.errorMessage == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(GitHubNetworkFailureMockURLProtocol.requestCount == firstRequestCount + 1)
+        #expect(model.canRetryGitHubConnection)
+    }
+
     @Test("GitHub rate limits are not mistaken for private repository authorization")
     func rateLimitIsNotAuthenticationFailure() async throws {
         let provider = GitHubSourceProvider(session: RateLimitFixture.session())
@@ -716,6 +819,29 @@ struct SourceProviderTests {
         } catch {
             Issue.record("预期超时错误，实际为 \(error)")
         }
+    }
+}
+
+private final class GitHubNetworkFailureMockURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var errorCode: URLError.Code = .secureConnectionFailed
+    nonisolated(unsafe) static var requestCount = 0
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.requestCount += 1
+        client?.urlProtocol(self, didFailWithError: URLError(Self.errorCode))
+    }
+    override func stopLoading() {}
+}
+
+private enum GitHubNetworkFailureFixture {
+    static func session(errorCode: URLError.Code) -> URLSession {
+        GitHubNetworkFailureMockURLProtocol.errorCode = errorCode
+        GitHubNetworkFailureMockURLProtocol.requestCount = 0
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [GitHubNetworkFailureMockURLProtocol.self]
+        return URLSession(configuration: configuration)
     }
 }
 

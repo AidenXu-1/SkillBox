@@ -32,6 +32,27 @@ swift build "${build_arguments[@]}"
 /usr/bin/install -m 644 "$app_root/Config/Info.plist" "$contents/Info.plist"
 /usr/bin/install -m 644 "$app_root/Resources/SkillBox.icns" "$contents/Resources/SkillBox.icns"
 /usr/bin/install -m 644 "$app_root/Resources/Assets.car" "$contents/Resources/Assets.car"
+/usr/bin/install -m 644 \
+    "$app_root/Sources/SkillBoxCore/Resources/trusted-skills-catalog-v1.json" \
+    "$contents/Resources/trusted-skills-catalog-v1.json"
+agent_icon_source="$app_root/../design/ui/assets/agent-icons"
+agent_icon_destination="$contents/Resources/AgentIcons"
+/bin/mkdir -p "$agent_icon_destination"
+for icon in \
+    gpt.png \
+    claude-code.png \
+    workbuddy.png \
+    zcode.png \
+    kimi-code.png \
+    cursor.png \
+    hanaagent.png \
+    pi.svg \
+    deepseek-harness.svg \
+    trae.png \
+    gemini-cli.png
+do
+    /usr/bin/install -m 644 "$agent_icon_source/$icon" "$agent_icon_destination/$icon"
+done
 if [[ "$configuration" == "release" ]]; then
     /usr/bin/strip -S -x "$contents/MacOS/SkillBox"
 fi

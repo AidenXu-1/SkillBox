@@ -21,6 +21,7 @@ struct AIAppModelSecurityTests {
 
         let testTask = Task { await model.saveAndTestAIKey(providerID: "custom", apiKey: "secret") }
         await provider.waitUntilStarted()
+        #expect(await keyStore.userInitiatedLoadCount == 1)
         model.updateAIConfiguration(
             providerID: "custom",
             baseURL: "https://new.example/v1",
@@ -56,6 +57,73 @@ struct AIAppModelSecurityTests {
         #expect(await keyStore.load(providerID: "custom") == nil)
         #expect(!model.configuredAIProviderIDs.contains("custom"))
         #expect(!model.aiSettings.isConnectionVerified(providerID: "custom"))
+    }
+
+    @Test("A complete search can continue when verified candidates still await AI comparison")
+    func completedSearchCanContinueItsNextEvaluationWindow() throws {
+        let fixture = try AIAppModelFixture()
+        defer { fixture.remove() }
+        let model = fixture.model(provider: BlockingConnectionProvider(), keyStore: InMemoryAIKeyStore())
+        var settings = AISettings.defaults
+        settings.isEnabled = true
+        settings.selectedProviderID = "agnes"
+        settings.markConnectionVerified(providerID: "agnes")
+        model.aiSettings = settings
+
+        let candidate = DiscoveryCandidate(
+            id: "author/repo/pptx",
+            name: "pptx",
+            summary: "Create presentation files from scratch.",
+            repositoryFullName: "author/repo",
+            installCount: 500,
+            evidence: .init(
+                skillSummary: "Create presentation files from scratch.",
+                skillContentVerified: true,
+                repositoryIsPrivate: false,
+                sources: [.skillDocument]
+            )
+        )
+        var session = DiscoverySession(title: "PPT", storageFolderName: "ppt")
+        session.candidates = [candidate]
+        session.runs = [.init(
+            queries: ["create pptx"],
+            state: .completed,
+            requestedLimitPerQuery: 64
+        )]
+        model.discoverySessions = [session]
+        model.selectedDiscoverySessionID = session.id
+
+        #expect(model.canContinueSelectedDiscoverySearch)
+
+        session.runs[0].semanticEvaluatedCandidateIDs = [candidate.id]
+        model.discoverySessions = [session]
+        #expect(!model.canContinueSelectedDiscoverySearch)
+    }
+
+    @Test("Ineligible private candidates do not leave Continue stuck on forever")
+    func completedSearchStopsWhenOnlyIneligibleCandidatesRemain() throws {
+        let fixture = try AIAppModelFixture()
+        defer { fixture.remove() }
+        let model = fixture.model(provider: BlockingConnectionProvider(), keyStore: InMemoryAIKeyStore())
+        var settings = AISettings.defaults
+        settings.isEnabled = true
+        settings.selectedProviderID = "agnes"
+        settings.markConnectionVerified(providerID: "agnes")
+        model.aiSettings = settings
+
+        let candidate = DiscoveryCandidate(
+            id: "private/repo/pptx", name: "pptx", summary: "Create presentation files.",
+            repositoryFullName: "private/repo",
+            evidence: .init(skillSummary: "Create presentation files.", skillContentVerified: true, repositoryIsPrivate: true)
+        )
+        var session = DiscoverySession(title: "PPT", storageFolderName: "ppt-private")
+        session.intent = .init(goal: "create pptx")
+        session.candidates = [candidate]
+        session.runs = [.init(queries: ["create pptx"], state: .completed, requestedLimitPerQuery: 1_000)]
+        model.discoverySessions = [session]
+        model.selectedDiscoverySessionID = session.id
+
+        #expect(!model.canContinueSelectedDiscoverySearch)
     }
 }
 
@@ -94,8 +162,13 @@ private struct AIAppModelFixture {
 
 private actor InMemoryAIKeyStore: AIKeyStore {
     private var values: [String: String] = [:]
+    private(set) var userInitiatedLoadCount = 0
 
     func load(providerID: String) -> String? { values[providerID] }
+    func loadForUserInitiatedAccess(providerID: String) -> String? {
+        userInitiatedLoadCount += 1
+        return values[providerID]
+    }
     func save(_ apiKey: String, providerID: String) { values[providerID] = apiKey }
     func delete(providerID: String) { values.removeValue(forKey: providerID) }
 }

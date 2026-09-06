@@ -22,6 +22,24 @@ struct LibraryStoreTests {
         #expect(await reloaded.currentSnapshot().skills.count == 1)
     }
 
+    @Test("An Agent installation directory cannot become a new managed Skill source")
+    func agentDirectoryCannotBecomeManagedSource() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        var candidate = try fixture.candidate(name: "demo", body: "installed copy")
+        candidate.source = .init(
+            kind: .agentDirectory,
+            displayName: "Codex",
+            locator: candidate.sourceURL.path
+        )
+        let store = try LibraryStore(root: fixture.storeRoot)
+
+        await #expect(throws: LibraryStoreError.self) {
+            try await store.importCandidate(candidate)
+        }
+        #expect(await store.currentSnapshot().skills.isEmpty)
+    }
+
     @Test("A complete snapshot remains authoritative when a legacy mirror is from another generation")
     func completeSnapshotPreventsMixedJSONGenerations() async throws {
         let fixture = try SyncFixture()
@@ -807,6 +825,59 @@ struct LibraryStoreTests {
         let snapshot = await store.currentSnapshot()
         #expect(snapshot.targets.map(\.id) == [builtin.id])
         #expect(snapshot.assignments.map(\.targetID) == [builtin.id])
+    }
+
+    @Test("移出预设应用时不会悄悄丢掉受管理关系，明确保留后不碰应用文件")
+    func hidingBuiltinTargetPreservesManagedCopiesOnlyAfterConfirmation() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "central"))
+        let targetRoot = fixture.root.appendingPathComponent("codex", isDirectory: true)
+        let destination = try fixture.writeSkill(
+            at: targetRoot.appendingPathComponent("demo", isDirectory: true),
+            name: "demo",
+            body: "central"
+        )
+        var target = AgentTarget(
+            kind: .codex,
+            displayName: "GPT",
+            path: targetRoot.path,
+            detectionStatus: .available,
+            writeStatus: .writable
+        )
+        target.sortIndex = 0
+        let deployedFingerprint = try SHA256SkillFingerprinter().fingerprint(directory: destination)
+        let installation = ManagedInstallation(
+            skillID: record.id,
+            targetID: target.id,
+            destinationPath: destination.path,
+            deployedFingerprint: deployedFingerprint,
+            transactionID: UUID()
+        )
+        try await store.replaceTargets([target])
+        try await store.replaceAssignments([
+            .init(skillID: record.id, targetID: target.id, installationDirectoryName: "demo"),
+        ])
+        try await store.replaceInstallations([installation])
+
+        await #expect(throws: LibraryStoreError.self) {
+            try await store.setTargetVisibility(id: target.id, isVisible: false)
+        }
+        #expect(await store.currentSnapshot().targets.first?.isVisible == true)
+
+        try await store.setTargetVisibility(
+            id: target.id,
+            isVisible: false,
+            preservingManagedCopies: true
+        )
+
+        let snapshot = await store.currentSnapshot()
+        #expect(snapshot.targets.first?.isVisible == false)
+        #expect(snapshot.assignments.isEmpty)
+        #expect(snapshot.installations.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: destination.appendingPathComponent("SKILL.md").path))
+        #expect(try SHA256SkillFingerprinter().fingerprint(directory: destination) == deployedFingerprint)
     }
 
     @Test("Deleting a Skill is blocked while SkillBox still manages an installed copy")

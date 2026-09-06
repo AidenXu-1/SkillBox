@@ -33,6 +33,14 @@ enum KeychainCredentialAccessPolicy {
         return query
     }
 
+    static func userInitiatedReadQuery(service: String, account: String) -> [String: Any] {
+        var query = baseQuery(service: service, account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        query[kSecUseAuthenticationContext as String] = userInitiatedContext()
+        return query
+    }
+
     static func saveRecovery(for status: OSStatus) -> KeychainCredentialSaveRecovery {
         switch status {
         case errSecItemNotFound:
@@ -75,6 +83,12 @@ enum KeychainCredentialAccessPolicy {
     private static func nonInteractiveContext() -> LAContext {
         let context = LAContext()
         context.interactionNotAllowed = true
+        return context
+    }
+
+    private static func userInitiatedContext() -> LAContext {
+        let context = LAContext()
+        context.interactionNotAllowed = false
         return context
     }
 }

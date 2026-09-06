@@ -521,6 +521,9 @@ public enum AgentKind: String, Codable, CaseIterable, Sendable {
     case zcode
     case workBuddy
     case hanaAgent
+    case pi
+    case deepSeekHarness
+    case trae
     case geminiCLI
     case openCode
     case custom
@@ -546,6 +549,8 @@ public struct AgentTarget: Codable, Hashable, Identifiable, Sendable {
     public var detectionStatus: TargetDetectionStatus
     public var writeStatus: TargetWriteStatus
     public var isCustom: Bool
+    public var isVisible: Bool
+    public var sortIndex: Int
 
     public init(
         id: UUID = UUID(),
@@ -554,7 +559,9 @@ public struct AgentTarget: Codable, Hashable, Identifiable, Sendable {
         path: String,
         detectionStatus: TargetDetectionStatus = .directoryMissing,
         writeStatus: TargetWriteStatus = .directoryMissing,
-        isCustom: Bool = false
+        isCustom: Bool = false,
+        isVisible: Bool = true,
+        sortIndex: Int = .max
     ) {
         self.id = id
         self.kind = kind
@@ -563,6 +570,38 @@ public struct AgentTarget: Codable, Hashable, Identifiable, Sendable {
         self.detectionStatus = detectionStatus
         self.writeStatus = writeStatus
         self.isCustom = isCustom
+        self.isVisible = isVisible
+        self.sortIndex = sortIndex
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, displayName, path, detectionStatus, writeStatus, isCustom, isVisible, sortIndex
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        kind = try container.decode(AgentKind.self, forKey: .kind)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        path = try container.decode(String.self, forKey: .path)
+        detectionStatus = try container.decode(TargetDetectionStatus.self, forKey: .detectionStatus)
+        writeStatus = try container.decode(TargetWriteStatus.self, forKey: .writeStatus)
+        isCustom = try container.decodeIfPresent(Bool.self, forKey: .isCustom) ?? false
+        isVisible = try container.decodeIfPresent(Bool.self, forKey: .isVisible) ?? true
+        sortIndex = try container.decodeIfPresent(Int.self, forKey: .sortIndex) ?? .max
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(displayName, forKey: .displayName)
+        try container.encode(path, forKey: .path)
+        try container.encode(detectionStatus, forKey: .detectionStatus)
+        try container.encode(writeStatus, forKey: .writeStatus)
+        try container.encode(isCustom, forKey: .isCustom)
+        try container.encode(isVisible, forKey: .isVisible)
+        try container.encode(sortIndex, forKey: .sortIndex)
     }
 }
 

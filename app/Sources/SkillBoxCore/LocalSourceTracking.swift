@@ -163,7 +163,7 @@ public enum LocalPackageError: LocalizedError {
     case selectedPathMissing(String)
     case overlappingPaths(String, String)
     case skillMarkdownRequired
-    case packageCouldNotBeBuilt
+    case packageCouldNotBeBuilt(String)
 
     public var errorDescription: String? {
         switch self {
@@ -177,8 +177,8 @@ public enum LocalPackageError: LocalizedError {
             "可使用内容重复包含了同一份文件：\(parent) 和 \(child)"
         case .skillMarkdownRequired:
             "可使用内容必须包含 SKILL.md"
-        case .packageCouldNotBeBuilt:
-            "无法从选择的内容组成一份完整 Skill"
+        case let .packageCouldNotBeBuilt(reason):
+            "无法从选择的内容组成一份完整 Skill：\(reason)"
         }
     }
 }
@@ -188,7 +188,7 @@ public struct LocalSkillPackageResolver: Sendable {
     private let fingerprinter: any SkillFingerprinting
 
     public init(
-        scanner: any SkillScanner = FileSystemSkillScanner(),
+        scanner: any SkillScanner = FileSystemSkillScanner(limits: .userSelectedLocalSource),
         fingerprinter: any SkillFingerprinting = SHA256SkillFingerprinter()
     ) {
         self.scanner = scanner
@@ -296,7 +296,7 @@ public struct LocalSkillPackageResolver: Sendable {
             ? projectRoot
             : projectRoot.appendingPathComponent(state.recipe.skillRelativePath, isDirectory: true)
         guard FileManager.default.fileExists(atPath: skillRoot.appendingPathComponent("SKILL.md").path),
-              let candidate = await localCandidate(at: skillRoot)
+              let candidate = try await localCandidate(at: skillRoot)
         else {
             state.status = .sourceUnavailable
             state.availablePackageFingerprint = nil
@@ -351,7 +351,7 @@ public struct LocalSkillPackageResolver: Sendable {
         let skillRoot = state.recipe.skillRelativePath.isEmpty
             ? projectRoot
             : projectRoot.appendingPathComponent(state.recipe.skillRelativePath, isDirectory: true)
-        guard let candidate = await localCandidate(at: skillRoot) else { return nil }
+        guard let candidate = try await localCandidate(at: skillRoot) else { return nil }
         return try review(candidate: candidate, projectRoot: projectRoot, existingState: state)
     }
 
@@ -380,11 +380,24 @@ public struct LocalSkillPackageResolver: Sendable {
         return (fallback, false)
     }
 
-    private func localCandidate(at skillRoot: URL) async -> SkillCandidate? {
+    private func localCandidate(at skillRoot: URL) async throws -> SkillCandidate? {
         let result = await scanner.scan(roots: [skillRoot], sourceName: { _ in "本地开发源" })
         guard var candidate = result.candidates.first(where: {
             $0.sourceURL.standardizedFileURL == skillRoot.standardizedFileURL
-        }) else { return nil }
+        }) else {
+            if let diagnostic = result.diagnostics.first {
+                let components = diagnostic.components(separatedBy: "：")
+                let rawReason = components.count > 1
+                    ? components.dropFirst().joined(separator: "：")
+                    : diagnostic
+                let reason = rawReason.replacingOccurrences(
+                    of: "，已跳过以避免影响应用启动",
+                    with: ""
+                )
+                throw LocalFolderSourceError.skillCouldNotBeRead(reason)
+            }
+            return nil
+        }
         candidate.source = .init(
             kind: .localFolder,
             displayName: "本地开发源",
@@ -421,7 +434,14 @@ public struct LocalSkillPackageResolver: Sendable {
             let result = await scanner.scan(roots: [content], sourceName: { _ in "本地开发源" })
             guard var packaged = result.candidates.first,
                   packaged.sourceURL.standardizedFileURL == content.standardizedFileURL
-            else { throw LocalPackageError.packageCouldNotBeBuilt }
+            else {
+                let diagnostic = result.diagnostics.first ?? "没有读到有效的 SKILL.md"
+                let components = diagnostic.components(separatedBy: "：")
+                let reason = components.count > 1
+                    ? components.dropFirst().joined(separator: "：")
+                    : diagnostic
+                throw LocalPackageError.packageCouldNotBeBuilt(reason)
+            }
             packaged.directoryName = candidate.directoryName
             packaged.source = candidate.source
             packaged.temporaryPackageRoot = packageRoot

@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SkillBoxCore
 import Testing
@@ -41,6 +42,89 @@ struct ConsumerClosureFlowTests {
 
         let changedEvidence = highRiskSkill(id: skill.id, fingerprint: "content-v1", evidence: "LaunchDaemons")
         #expect(relaunched.needsRiskAcknowledgement(for: changedEvidence))
+    }
+
+    @Test("确认风险后立即通知当前界面刷新")
+    func acknowledgingRiskPublishesTheStateChangeImmediately() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SkillBoxRiskRefreshTests-\(UUID().uuidString)")
+        let suiteName = "SkillBoxRiskRefreshTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let skill = highRiskSkill(fingerprint: "content-v1", evidence: "LaunchAgents")
+        let model = AppModel(
+            libraryRoot: root,
+            homeDirectory: root.appendingPathComponent("home"),
+            userDefaults: defaults,
+            startBootstrap: false
+        )
+        var publicationCount = 0
+        let observation = model.objectWillChange.sink { publicationCount += 1 }
+
+        model.acknowledgeRisk(for: skill)
+
+        #expect(publicationCount == 1)
+        #expect(model.isRiskAcknowledged(for: skill))
+        withExtendedLifetime(observation) {}
+    }
+
+    @Test("提示词版本升级时保留同一 Skill 内容已有的完整四段说明")
+    func legacyCompleteUsageGuideDoesNotCollapseToExtractorFallback() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SkillBoxLegacyUsageGuideTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source/demo", isDirectory: true)
+        let storeRoot = root.appendingPathComponent("store", isDirectory: true)
+        try writeSkill(at: source, body: "为新项目搭建开发前地基。")
+        let store = try LibraryStore(root: storeRoot)
+        let record = try await store.importCandidate(SkillCandidate(
+            sourceURL: source,
+            directoryName: "demo",
+            canonicalName: "demo",
+            displayName: "Demo",
+            description: "为新项目搭建开发前地基",
+            fingerprint: try SHA256SkillFingerprinter().fingerprint(directory: source),
+            source: .init(kind: .localFolder, displayName: "Fixture", locator: source.path),
+            riskReport: try StaticRiskAnalyzer().analyze(skillDirectory: source)
+        ))
+        let completeGuide = SkillUsageGuide(
+            purpose: "建好项目说明、AI 协作规则、基础目录和首次 Git 备份。",
+            useWhen: "从零开始做一个会长期维护的 App、网站或软件。",
+            starterPrompt: "帮我为这个新项目搭好开发前地基。",
+            experienceSteps: ["先询问项目名称和用途", "检查目标文件夹", "创建基础文件并告诉你下一步"]
+        )
+        let guideURL = storeRoot
+            .appendingPathComponent("AIReviews", isDirectory: true)
+            .appendingPathComponent(record.id.uuidString, isDirectory: true)
+            .appendingPathComponent(record.fingerprint, isDirectory: true)
+            .appendingPathComponent("usage-guide.json")
+        try FileManager.default.createDirectory(
+            at: guideURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(SkillUsageGuideRecord(
+            skillID: record.id,
+            fingerprint: record.fingerprint,
+            promptVersion: "usage-guide-v2",
+            guide: completeGuide
+        )).write(to: guideURL)
+        let model = AppModel(
+            libraryRoot: storeRoot,
+            store: store,
+            homeDirectory: root.appendingPathComponent("home"),
+            startBootstrap: false
+        )
+
+        let guide = await model.skillUsageGuide(record)
+
+        #expect(guide == completeGuide)
+        #expect(guide?.useWhen?.isEmpty == false)
+        #expect(guide?.experienceSteps.count == 3)
     }
 
     @Test("The bulk-install boundary refuses a high-risk Skill until its current content is acknowledged")

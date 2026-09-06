@@ -7,67 +7,56 @@
 
   本地优先 · 安装前预览 · 操作可撤销 · 无账号 · 无遥测
 
-  [下载最新版](https://github.com/AidenXu-1/SkillBox/releases/latest/download/SkillBox-0.2.1.dmg) · [查看版本说明](https://github.com/AidenXu-1/SkillBox/releases/latest) · [反馈问题](https://github.com/AidenXu-1/SkillBox/issues)
+  [查看可下载版本](https://github.com/AidenXu-1/SkillBox/releases) · [反馈问题](https://github.com/AidenXu-1/SkillBox/issues)
 </div>
-
-![SkillBox 总览](design/ui/skillbox-ai-discovery-v16-overview.png)
 
 ## SkillBox 能做什么
 
-SkillBox 是一款面向 AI 产品创作者的原生 macOS 应用。它会先只读盘点电脑里的 Skills，再由你决定哪些内容进入「我的 Skills」，以及安装到哪些 AI 应用。
+SkillBox 是一款面向 AI 产品创作者的原生 macOS 应用。你可以从本地开发文件夹或 GitHub 添加全局 Skill，再把同一份版本安装到多个 AI 应用。
 
-- **统一管理**：集中查看 Skill 原件、重复副本、不同版本与安装状态。
-- **安全安装**：写入前展示变化，不静默覆盖已有文件。
-- **随时撤销**：安装、更新和卸载都有操作记录，可以恢复到操作前。
-- **发现 Skills**：用普通语言描述需求，从公开来源寻找并核对真实 `SKILL.md`。
-- **跟踪更新**：支持 GitHub Release、默认分支和本地开发源，更新始终由你确认。
-- **本地优先**：无需 SkillBox 账号，没有遥测，也没有云端数据库。
+- **我的 Skills**：查看每份 Skill 的唯一来源、文件内容、风险提示和已安装应用。
+- **安装到应用**：集中选择安装位置，安装、更新和卸载前先预览变化；已有同名内容或外部改动会明确提示。
+- **操作恢复**：写入后保留操作记录与恢复点，可撤销安装、更新和卸载；恢复时保护后来修改过的文件。
+- **发现 Skills**：输入具体名称、GitHub 地址或想完成的任务，从公开来源寻找并核对真实 `SKILL.md`；可以继续补充条件、比较和了解候选。
+- **跟踪来源**：支持本地开发文件夹、GitHub 正式 Release 或默认分支；检查到变化后，由你确认更新和安装。本地开发文件夹始终只读。
+- **可选 AI**：使用自己的 API Key 辅助理解需求和候选；“我的 Skills”中的 Skill 介绍由你主动点击后通过 Agnes 生成。
+- **本地优先**：无需 SkillBox 账号，无遥测、无云端 Skill 库；关闭 AI 后，核心添加、安装、更新、卸载和恢复仍可使用。
 
-<table>
-  <tr>
-    <td width="50%"><img src="design/ui/skillbox-ai-discovery-v16-discover.png" alt="发现 Skills"></td>
-    <td width="50%"><img src="design/ui/skillbox-layout-v9-matrix.png" alt="安装到不同 AI 应用"></td>
-  </tr>
-  <tr>
-    <td align="center">按实际需求发现 Skill</td>
-    <td align="center">看清每个应用的安装状态</td>
-  </tr>
-</table>
+SkillBox 管理的是跨项目使用的全局 Skills，不扫描或管理项目级 Skills。发现结果取决于可访问的公开来源与核验情况，未完成的来源会如实显示；加入候选前还会进行完整的本地安全检查。
+
+![发现 Skills：三栏对话、推荐结果与独立的安装量和仓库 Star](design/ui/skillbox-discovery-release-022.jpg)
 
 ## 下载与安装
 
-当前版本：**v0.2.1（Build 4）**
+当前开发版本：**v0.2.2（Build 6）**。可下载的发行版本及附件请以 GitHub 版本列表为准。
 
-[**下载 SkillBox-0.2.1.dmg**](https://github.com/AidenXu-1/SkillBox/releases/latest/download/SkillBox-0.2.1.dmg)
+[**打开 GitHub 版本列表**](https://github.com/AidenXu-1/SkillBox/releases)
 
 系统要求：Apple Silicon Mac，macOS 15.0 或更高版本。
 
-1. 下载并打开 DMG。
+1. 在版本列表选择已发布版本，下载并打开其 DMG。
 2. 把 SkillBox 拖进「应用程序」。
 3. 第一次打开时，如果 macOS 提示无法验证开发者，请进入「系统设置 → 隐私与安全」。
-4. 找到 SkillBox，点击「仍要打开」，再按系统提示确认一次。
+4. 找到 SkillBox，点击「仍要打开」，按系统提示输入这台 Mac 的登录密码。
 
-> SkillBox 当前没有使用 Apple Developer ID，也没有经过 Apple 公证。这不会绕过 macOS 的安全机制，因此首次打开需要你亲自放行；应用更新后，系统可能再次要求确认。
+> SkillBox 当前采用 ad-hoc 签名并启用 Hardened Runtime，没有使用 Apple Developer ID，也没有经过 Apple 公证。macOS 无法通过 Apple 证书确认开发者身份，首次打开需要你亲自放行；应用更新后，系统可能再次要求确认。请从项目官方 GitHub 下载。
 
 ## 隐私与安全
 
 - 默认在本机保存和处理 Skill 内容。
 - 扫描、导入和检查阶段不会执行 Skill 中的脚本。
 - API Key 只保存到 macOS 钥匙串，不写入设置文件。
-- 私人 GitHub 仓库和 AI 服务仅在用户主动连接、主动触发时访问。
+- 公开 GitHub 来源可在应用打开期间检查版本；下载、更新和安装由你确认。私人仓库需要你明确授权。
+- AI 仅在你主动发起相关操作后使用所配置服务，不随应用启动或切换 Skill 自动生成介绍；API 费用按服务商规则计算。
 - 安装、覆盖、更新、卸载等文件操作均需用户确认，并保留恢复点。
 
-你可以使用发布页附带的 SHA-256 文件验证下载完整性：
-
-```bash
-shasum -a 256 SkillBox-0.2.1.dmg
-```
-
-正确校验值请以同一 Release 附带的 `SkillBox-0.2.1.sha256` 为准。
+同一发行版本会附带 DMG、`.sha256` 校验文件和 `-release.json` 来源清单。可用 `shasum -a 256` 计算下载文件的摘要，与同版本校验文件核对。
 
 ## 已支持的 AI 应用
 
-内置支持 Codex、Claude Code、Cursor、Kimi Code、ZCode、WorkBuddy、HanaAgent、Gemini CLI 和 OpenCode，也可以添加自定义全局 Skills 目录。
+新用户默认显示 GPT（Codex）、Claude（Claude Code）、WorkBuddy、ZCode、Kimi Code、Cursor、HanaAgent、Pi、DeepSeek Harness 和 Trae。每列显示对应应用在本机的实际可用状态。
+
+可以移出或恢复应用列，也可以添加自定义全局 Skills 目录。老用户已有的 Gemini CLI、OpenCode 目标和安装关系继续保留。
 
 ## 开发与验证
 
@@ -79,6 +68,8 @@ cd app
 ./Scripts/package-app.sh release
 ```
 
-当前发布门禁包含 278 项自动化测试，以及 Release 构建、应用签名完整性、图标、隐私信息和 DMG 校验。
+准备发行候选可运行 `app/Scripts/release-distribution.sh`（从仓库根目录执行）。脚本会发现并执行全量测试，完成 Release 构建、签名、图标与隐私检查，生成 DMG、SHA-256 和来源清单，并模拟下载后的隔离属性；它不会自动安装或上传 GitHub。
+
+测试数量和结果以当次执行为准。正式发行还需要完成真实主流程、干净账户安装体验，以及发布后下载附件的校验。
 
 开发说明：[`docs/spec.md`](docs/spec.md) · [`docs/agent-guide.md`](docs/agent-guide.md) · [`docs/progress.md`](docs/progress.md) · [`app/README.md`](app/README.md)

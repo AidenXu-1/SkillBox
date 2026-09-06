@@ -32,6 +32,12 @@ public struct SkillScanLimits: Sendable {
     }
 }
 
+public extension SkillScanLimits {
+    static let userSelectedLocalSource = SkillScanLimits(
+        maximumAggregateBytesPerSkill: 128 * 1_024 * 1_024
+    )
+}
+
 public enum SkillScanError: LocalizedError {
     case budgetExceeded(String)
 
