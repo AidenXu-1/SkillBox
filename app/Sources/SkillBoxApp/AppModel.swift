@@ -251,8 +251,7 @@ final class AppModel: ObservableObject {
     private let injectedGitHubProvider: GitHubSourceProvider?
     private let injectedRoutedDiscoveryProvider: RoutedSkillDiscoveryProvider?
     private lazy var routedDiscoveryProvider = injectedRoutedDiscoveryProvider ?? DefaultSkillDiscovery.make(tokenProvider: githubSession)
-    private let scanner = FileSystemSkillScanner()
-    private let planner = DefaultSyncPlanner()
+    private let planner: any SyncPlanner
     private let executor = TransactionalSyncExecutor()
     private let updateCoordinator = SkillUpdateCoordinator()
     private let localPackageResolver = LocalSkillPackageResolver()
@@ -299,6 +298,7 @@ final class AppModel: ObservableObject {
     init(
         libraryRoot customLibraryRoot: URL? = nil,
         store providedStore: LibraryStore? = nil,
+        planner: any SyncPlanner = DefaultSyncPlanner(),
         homeDirectory customHomeDirectory: URL? = nil,
         aiKeyStore providedAIKeyStore: (any AIKeyStore)? = nil,
         aiProvider providedAIProvider: (any AIProvider)? = nil,
@@ -328,6 +328,7 @@ final class AppModel: ObservableObject {
         } catch {
             fatalError("无法准备 SkillBox 的本地保存位置：\(error.localizedDescription)")
         }
+        self.planner = planner
         aiKeyStore = providedAIKeyStore ?? KeychainAIKeyStore()
         aiProvider = providedAIProvider ?? OpenAICompatibleProvider()
         self.discoveryAIRequestTimeout = discoveryAIRequestTimeout
@@ -1469,21 +1470,15 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // Refresh only configured destinations and managed installation state. Skill
+    // sources are explicitly imported; installed copies are never discovery roots.
     func scanInstalledSkills() async {
+        guard !isBusy else { return }
         isBusy = true
-        statusMessage = "正在查看本机 Skills…"
         defer { isBusy = false }
         await refreshTargetStatuses()
-        let targetRoots = snapshot.targets.map { URL(fileURLWithPath: $0.path) }
-        var seen = Set<String>()
-        let roots = targetRoots.filter {
-            FileManager.default.fileExists(atPath: $0.path) && seen.insert($0.standardizedFileURL.path).inserted
-        }
-        let sourceNames = Dictionary(uniqueKeysWithValues: snapshot.targets.map { ($0.path, $0.displayName) })
-        scanResult = await scanner.scan(roots: roots, sourceName: { root in
-            sourceNames[root.path] ?? "Agent Skill 目录"
-        })
-        statusMessage = "查看完成，没有改动任何文件"
+        scanResult = ScanResult(candidates: [], duplicateGroups: [], conflicts: [], diagnostics: [])
+        statusMessage = "安装状态已刷新"
     }
 
     func finishOnboarding() {
@@ -2827,10 +2822,7 @@ final class AppModel: ObservableObject {
         setAssignment(skill: skill, target: target, desired: proposedDesired, assignments: &assignments)
         proposedSnapshot.assignments = assignments
         do {
-            let planningRoot = libraryRoot
-            let plan = try await Task.detached(priority: .userInitiated) {
-                try DefaultSyncPlanner().makePlan(snapshot: proposedSnapshot, libraryRoot: planningRoot)
-            }.value
+            let plan = try await assignmentPlan(snapshot: proposedSnapshot, skillID: skill.id, targetID: target.id)
             let action = plan.actions.first { $0.skillID == skill.id && $0.targetID == target.id && $0.kind != .noChange }
             let changes: [SkillFileChange]
             if let action {
@@ -2852,6 +2844,7 @@ final class AppModel: ObservableObject {
     }
 
     func confirmAssignmentProposal(_ proposal: AssignmentProposal) async -> Bool {
+        guard !isBusy else { return false }
         isBusy = true
         defer { isBusy = false }
         var assignments = snapshot.assignments
@@ -2869,10 +2862,9 @@ final class AppModel: ObservableObject {
 
         do {
             try await store.replaceAssignments(assignments)
-            await reload()
-            guard let action = syncPlan?.actions.first(where: {
-                $0.skillID == proposal.skill.id && $0.targetID == proposal.target.id && $0.kind != .noChange
-            }) else {
+            snapshot = await store.currentSnapshot()
+            let plan = try await refreshAssignmentPlan(proposal)
+            guard let action = plan.actions.first(where: { $0.kind != .noChange }) else {
                 statusMessage = proposal.desired ? "已保留当前安装" : "已取消这项安装"
                 return true
             }
@@ -2882,16 +2874,50 @@ final class AppModel: ObservableObject {
             }
 
             let result = try await executor.execute(plan: SyncPlan(actions: [action]), store: store)
+            snapshot = await store.currentSnapshot()
+            _ = try await refreshAssignmentPlan(proposal)
+            guard result.status == .succeeded else {
+                noticeMessage = "操作未完成，请查看操作记录中的原因。"
+                return false
+            }
             statusMessage = action.kind == .remove
                 ? "已从 \(proposal.target.displayName) 卸载 \(proposal.skill.displayName)"
                 : "已安装 \(proposal.skill.displayName) 到 \(proposal.target.displayName)"
-            await reload()
-            await scanInstalledSkills()
-            return result.status == .succeeded
+            return true
         } catch {
             present(error)
             return false
         }
+    }
+
+    private func assignmentPlan(snapshot: LibrarySnapshot, skillID: UUID, targetID: UUID) async throws -> SyncPlan {
+        var scoped = snapshot
+        scoped.assignments = snapshot.assignments.filter { $0.skillID == skillID && $0.targetID == targetID }
+        let destinationPaths = Set(scoped.assignments.compactMap { assignment -> String? in
+            guard let target = snapshot.targets.first(where: { $0.id == assignment.targetID }) else { return nil }
+            return URL(fileURLWithPath: target.path).appendingPathComponent(assignment.installationDirectoryName).standardizedFileURL.path
+        })
+        // Keep ownership at the selected destination, including a conflicting
+        // record, while avoiding reads of unrelated installed copies.
+        scoped.installations = snapshot.installations.filter {
+            ($0.skillID == skillID && $0.targetID == targetID) || destinationPaths.contains($0.destinationPath)
+        }
+        let planningRoot = libraryRoot
+        let planner = planner
+        let plan = try await Task.detached(priority: .userInitiated) {
+            try planner.makePlan(snapshot: scoped, libraryRoot: planningRoot)
+        }.value
+        return SyncPlan(actions: plan.actions.filter { $0.skillID == skillID && $0.targetID == targetID })
+    }
+
+    private func refreshAssignmentPlan(_ proposal: AssignmentProposal) async throws -> SyncPlan {
+        let plan = try await assignmentPlan(snapshot: snapshot, skillID: proposal.skill.id, targetID: proposal.target.id)
+        var actions = syncPlan?.actions.filter {
+            $0.skillID != proposal.skill.id || $0.targetID != proposal.target.id
+        } ?? []
+        actions.append(contentsOf: plan.actions)
+        syncPlan = SyncPlan(actions: actions.sorted { $0.destinationPath < $1.destinationPath })
+        return plan
     }
 
     func prepareInstallEverywhere(_ skill: SkillRecord) async -> Bool {
@@ -3590,7 +3616,7 @@ final class AppModel: ObservableObject {
     private func saveOrganization(_ organization: SkillOrganization) async -> Bool {
         do {
             try await store.replaceOrganization(organization)
-            await reload()
+            snapshot.organization = organization
             return true
         } catch {
             present(error)

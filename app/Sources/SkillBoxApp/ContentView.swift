@@ -328,9 +328,9 @@ struct ContentView: View {
                         .controlSize(.small)
                 }
                 Button { Task { await model.scanInstalledSkills() } } label: {
-                    Label("重新扫描本机 Skills", systemImage: "arrow.clockwise")
+                    Label("刷新安装状态", systemImage: "arrow.clockwise")
                 }
-                .help("重新扫描本机 Skills，不会修改任何文件")
+                .help("刷新应用位置与已管理的安装状态")
                 .disabled(model.isBusy)
             }
             .overlay(alignment: .topTrailing) {
@@ -4957,6 +4957,7 @@ private struct AgentAssignmentSheet: View {
     let proposal: AssignmentProposal
     @Environment(\.dismiss) private var dismiss
     @State private var isConfirming = false
+    @State private var confirmationMessage: String?
 
     private var action: SyncAction? { proposal.action }
     private var isConflict: Bool { action?.blockReason == .unmanagedConflict }
@@ -4990,19 +4991,24 @@ private struct AgentAssignmentSheet: View {
 
             Divider()
             HStack(spacing: 10) {
-                Text(footerText)
+                Text(isConfirming ? "正在处理这一项，请稍候…" : (confirmationMessage ?? footerText))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button(isActionable ? "取消" : "知道了") { dismiss() }
                     .keyboardShortcut(.cancelAction)
+                    .disabled(isConfirming)
                 if isActionable {
-                    Button(confirmTitle) {
+                    Button(isConfirming ? (proposal.desired ? "正在安装…" : "正在卸载…") : confirmTitle) {
                         isConfirming = true
+                        confirmationMessage = nil
                         Task {
                             let succeeded = await model.confirmAssignmentProposal(proposal)
                             isConfirming = false
                             if succeeded { dismiss() }
+                            else {
+                                confirmationMessage = model.noticeMessage ?? model.errorMessage ?? "操作未完成，请稍后重试。"
+                            }
                         }
                     }
                     .buttonStyle(.borderedProminent)
@@ -5014,6 +5020,7 @@ private struct AgentAssignmentSheet: View {
         }
         .padding(24)
         .frame(width: 570)
+        .interactiveDismissDisabled(isConfirming)
     }
 
     private var destinationSummary: some View {
