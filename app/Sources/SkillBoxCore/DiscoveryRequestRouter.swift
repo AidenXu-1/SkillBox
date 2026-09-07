@@ -85,6 +85,9 @@ public enum DiscoveryRequestRouter {
                 executionQueries: [skillName]
             )
         }
+        if isAvailabilityQuestion(text), DiscoveryAuthorIdentity.mentionedAuthor(in: text) == nil {
+            return .init(route: .scenario, targets: [], executionQueries: [])
+        }
         if let author = explicitAuthor(in: text) {
             return .init(
                 route: .hybrid,
@@ -220,13 +223,23 @@ public enum DiscoveryRequestRouter {
     }
 
     public static func isRefinement(_ text: String) -> Bool {
-        guard !explicitlyChangesTask(text) else { return false }
+        guard !explicitlyChangesTask(text), !isAvailabilityQuestion(text) else { return false }
         let newRequests = ["帮我找", "我想找", "我需要找", "想找", "查找", "搜索"]
         guard !newRequests.contains(where: text.hasPrefix) else { return false }
         let markers = ["最好", "而且", "还要", "再", "继续", "深挖", "更多来源", "优先", "最近", "维护", "开源", "中文", "免费", "可以", "不要", "只要", "必须", "离线"]
         let deliverableReplies = ["写出", "输出", "做成", "用来", "主要用于"]
         return text.count <= 80 && (markers.contains(where: text.contains)
             || deliverableReplies.contains(where: text.hasPrefix))
+    }
+
+    /// Asking whether a suitable Skill exists introduces a discovery task.
+    /// Anchor the inquiry before the category: "这个 Skill 有什么限制" and
+    /// "这些 Skill 中有没有…" still refer to the current candidates.
+    static func isAvailabilityQuestion(_ text: String) -> Bool {
+        text.range(
+            of: #"^\s*(?:(?:请问|想问一下|我想知道)[，,：:\s]*)?(?:有什么|有没有|有哪些|哪些|哪种|哪款|是否有|是否存在)[^\n]*skills?(?![A-Za-z])|^\s*(?:are there|is there|which)\b[^\n]*\bskills?\b"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
     }
 
     public static func explicitlyChangesTask(_ text: String) -> Bool {

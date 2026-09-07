@@ -657,6 +657,7 @@ final class AppModel: ObservableObject {
     }
 
     func beginNewDiscovery() {
+        if isDiscoverySearching { discoveryQueuePaused = true }
         cancelDiscoveryCandidateSelection()
         selectedDiscoverySessionID = nil
         selectedDiscoveryCandidateID = nil
@@ -665,6 +666,7 @@ final class AppModel: ObservableObject {
     }
 
     func selectDiscoverySession(_ id: UUID?) {
+        if id != selectedDiscoverySessionID, isDiscoverySearching { discoveryQueuePaused = true }
         cancelDiscoveryCandidateSelection()
         selectedDiscoverySessionID = id
         let session = discoverySessions.first { $0.id == id }
@@ -737,8 +739,10 @@ final class AppModel: ObservableObject {
         launchDiscoveryMessage(text)
     }
 
-    private func launchDiscoveryMessage(_ text: String, existingMessageID: UUID? = nil) {
-        discoveryQueuePaused = false
+    private func launchDiscoveryMessage(_ text: String, existingMessageID: UUID? = nil, resumingQueue: Bool = false) {
+        // Previously retained input requires the explicit resume action. A new
+        // message must not revive a queue paused by stop, navigation or restart.
+        discoveryQueuePaused = !resumingQueue && selectedDiscoverySession?.queuedMessages.isEmpty == false
         isDiscoverySearching = true
         discoveryRunState = .understanding
         cancelDiscoveryCandidateSelection()
@@ -785,7 +789,7 @@ final class AppModel: ObservableObject {
                 await self.reloadDiscoverySessions(allowAutomaticSelection: false)
                 self.discoverySearchTask = nil
                 guard self.selectedDiscoverySessionID == session.id, let message else { return }
-                self.launchDiscoveryMessage(message.text, existingMessageID: message.id)
+                self.launchDiscoveryMessage(message.text, existingMessageID: message.id, resumingQueue: true)
             } catch { self.discoverySearchTask = nil; self.present(error) }
         }
     }

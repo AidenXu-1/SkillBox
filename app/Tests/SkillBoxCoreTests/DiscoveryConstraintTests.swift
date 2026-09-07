@@ -16,6 +16,23 @@ struct DiscoveryConstraintTests {
         DiscoveryCandidateRanker.rank([candidate], intent: .init(goal: "推荐去文案AI味的skill。", mustHaves: conditions), originalQueryCandidateIDs: [candidate.id])
     }
 
+    @Test("Withdrawing a condition clears equivalent wording in the original goal", arguments: ["必须不联网", "必须离线运行", "must work offline"])
+    func withdrawConditionFromGoal(condition: String) {
+        let intent = DiscoveryIntentPlanner.fallback(message: "帮我找写作 Skill，" + condition + "，必须免费", previous: nil).intent
+        let removed = DiscoveryConversation.removeConstraint("离线", from: intent)
+        let candidate = Self.candidate("Requires an internet connection. Free to use.")
+        #expect(DiscoveryConstraintAssessment(candidate: candidate, intent: removed).permitsRecommendation)
+        #expect(removed.goal.contains("写作"))
+        #expect(removed.goal.contains("必须免费"))
+        #expect(!DiscoveryConstraintAssessment(candidate: Self.candidate("Requires a paid subscription."), intent: removed).permitsRecommendation)
+        var session = DiscoverySession(title: "写作", storageFolderName: "withdrawn", intent: removed)
+        session.messages = [.init(role: .user, text: intent.goal), .init(role: .user, text: "不要求离线了")]
+        session.contextStartMessageID = session.messages.last?.id
+        let continued = DiscoveryConversation.searchPlan(message: "继续寻找", session: session)
+        #expect(DiscoveryConstraintAssessment(candidate: candidate, intent: continued.intent).permitsRecommendation)
+        #expect(!DiscoveryPlanningContext(session: session, nextMessage: "继续寻找").text.contains(condition))
+    }
+
     @Test("Required paid service does not satisfy a no-charge request")
     func paidConflict() {
         let value = Self.candidate("Requires a paid subscription; no free tier.")
