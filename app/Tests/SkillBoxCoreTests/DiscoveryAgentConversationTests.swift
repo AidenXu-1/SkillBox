@@ -324,6 +324,104 @@ struct DiscoveryAgentConversationTests {
         #expect(await store.loadAll().first { $0.id == original.id }?.queuedMessages.count == 1)
     }
 
+    @Test("Switching away and back keeps queued messages paused")
+    @MainActor
+    func switchAwayAndBackKeepsQueue() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DiscoverySessionStore(root: root)
+        let original = Self.session()
+        let other = DiscoverySession(title: "视频", storageFolderName: "other-task", intent: .init(goal: "视频剪辑"))
+        try await store.save(original)
+        try await store.save(other)
+        let spy = ConversationSearchSpy(delay: .milliseconds(200))
+        let model = makeModel(root: root, spy: spy)
+        await model.reloadDiscoverySessions()
+        model.selectDiscoverySession(original.id)
+        model.discoveryDraft = "继续寻找"
+        model.startDiscoverySearch()
+        for _ in 0..<200 where await spy.calls == 0 { try await Task.sleep(for: .milliseconds(5)) }
+        model.discoveryDraft = "必须中文"
+        model.startDiscoverySearch()
+        for _ in 0..<200 where model.selectedDiscoverySession?.queuedMessages.isEmpty == true { try await Task.sleep(for: .milliseconds(5)) }
+        model.selectDiscoverySession(other.id)
+        model.selectDiscoverySession(original.id)
+        for _ in 0..<200 where model.isDiscoverySearching { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(await spy.calls == 1)
+        #expect(model.selectedDiscoverySessionID == original.id)
+        #expect(await store.loadAll().first { $0.id == original.id }?.queuedMessages.count == 1)
+    }
+
+    @Test("Availability questions initiate a search in new and existing conversations", arguments: [false, true])
+    @MainActor
+    func availabilityQuestionSearches(existing: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        if existing {
+            let store = try DiscoverySessionStore(root: root)
+            try await store.save(Self.session())
+        }
+        let spy = ConversationSearchSpy()
+        let model = makeModel(root: root, spy: spy)
+        await model.reloadDiscoverySessions()
+        model.discoveryDraft = "有什么 Skill 可以把 PDF 转成 Word 吗？"
+        model.startDiscoverySearch()
+        try await waitForReply(model)
+        #expect(await spy.calls > 0)
+        #expect(model.selectedDiscoverySession?.intent?.goal == "有什么 Skill 可以把 PDF 转成 Word 吗？")
+    }
+
+    @Test("Availability questions start a new task without stealing candidate questions")
+    func availabilityQuestionActions() {
+        let session = Self.session()
+        for message in ["有什么 Skill 可以把 PDF 转成 Word 吗？", "有没有能处理 PDF 的 Skill？", "有哪些适合视频剪辑的 Skill？", "Are there any skills for PDF conversion?"] {
+            #expect(DiscoveryConversation.action(for: message, session: session) == .search, "Wrong action: \(message)")
+            let plan = DiscoveryConversation.searchPlan(message: message, session: session)
+            #expect(plan.intent.goal == message)
+            #expect(!plan.intent.targets.contains { $0.kind == .author && $0.value == "卡兹克" })
+        }
+        for message in ["这个 Skill 有什么限制？", "它有没有离线模式？", "human-writing 有哪些用法？", "这些 Skill 中有没有支持中文的？", "它支持中文吗？"] {
+            #expect(DiscoveryConversation.action(for: message, session: session) == .explain, "Wrong action: \(message)")
+        }
+        #expect(DiscoveryConversation.action(for: "这两个有什么区别？", session: session) == .compare)
+        #expect(DiscoveryConversation.action(for: "有个human writing的skill。", session: session) == .search)
+        let author = DiscoveryConversation.searchPlan(message: "有没有卡兹克的写作 Skill？", session: session)
+        #expect(author.intent.targets.contains(.init(kind: .author, value: "卡兹克")))
+        let exact = DiscoveryConversation.searchPlan(message: "有没有 human-writing Skill？", session: session)
+        #expect(exact.intent.route == .exact)
+        #expect(exact.intent.targets.contains(.init(kind: .skillName, value: "human-writing")))
+        var clarifying = session
+        clarifying.pendingClarification = "最后交付什么？"
+        let newGoal = "有什么 Skill 可以把 PDF 转成 Word 吗？"
+        #expect(DiscoveryConversation.searchPlan(message: newGoal, session: clarifying).intent.goal == newGoal)
+    }
+
+    @Test("Sending a new message does not silently resume a retained queue")
+    @MainActor
+    func newMessageKeepsRetainedQueue() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DiscoverySessionStore(root: root)
+        var session = Self.session()
+        session.queuedMessages = [.init(text: "必须中文")]
+        try await store.save(session)
+        let spy = ConversationSearchSpy()
+        let model = makeModel(root: root, spy: spy)
+        await model.reloadDiscoverySessions()
+        model.discoveryDraft = "谢谢"
+        model.startDiscoverySearch()
+        try await waitForReply(model)
+        #expect(await spy.calls == 0)
+        #expect(model.selectedDiscoverySession?.queuedMessages.count == 1)
+        model.resumeDiscoveryQueue()
+        for _ in 0..<200 {
+            if await spy.calls == 1, !model.isDiscoverySearching { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await spy.calls == 1)
+        #expect(model.selectedDiscoverySession?.queuedMessages.isEmpty == true)
+    }
+
     @MainActor
     private func makeModel(root: URL, spy: ConversationSearchSpy) -> AppModel {
         AppModel(libraryRoot: root, homeDirectory: root,

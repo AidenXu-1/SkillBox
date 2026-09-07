@@ -60,6 +60,7 @@ public enum DiscoveryConversation {
     }
 
     static func requestsSearch(_ text: String) -> Bool {
+        if DiscoveryRequestRouter.isAvailabilityQuestion(text) { return true }
         let normalized = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         return ["帮我找", "我想找", "我需要找", "继续找", "搜索", "search", "find "].contains(where: normalized.contains)
             || (normalized.hasPrefix("推荐") && normalized.contains("skill")
@@ -212,7 +213,11 @@ public enum DiscoveryConversation {
             value.route = value.targets.isEmpty ? .scenario : value.route
             value.goal = value.goal.replacingOccurrences(of: #"那(?:个|份|款)|的"#, with: "", options: .regularExpression)
         }
-        for marker in terms { value.goal = value.goal.replacingOccurrences(of: marker, with: "") }
+        if term == "作者" {
+            for marker in terms { value.goal = value.goal.replacingOccurrences(of: marker, with: "") }
+        } else {
+            value.goal = DiscoveryConstraintAssessment.removingRequirement(term, from: value.goal)
+        }
         return value
     }
 
@@ -221,11 +226,13 @@ public enum DiscoveryConversation {
         session.intent = userGroundedIntent(in: session)
         if let question = session.pendingClarification, session.intent?.route == .exact,
            session.intent?.targets.isEmpty == true,
+           !requestsSearch(message),
            !DiscoveryRequestRouter.explicitlyChangesTask(message),
            DiscoveryRequestRouter.classify(message: message, previousIntent: nil).targets.isEmpty {
             return .init(intent: session.intent!, queries: [], needsClarification: true, clarifyingQuestion: question)
         }
         if session.pendingClarification != nil, var intent = session.intent,
+           !requestsSearch(message),
            !DiscoveryRequestRouter.explicitlyChangesTask(message),
            DiscoveryRequestRouter.classify(message: message, previousIntent: nil).targets.isEmpty {
             for clause in userConditionClauses(message) {

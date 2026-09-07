@@ -21,6 +21,33 @@ public struct DiscoveryConstraintAssessment: Hashable, Sendable {
         Set(requirements(.init(goal: "", mustHaves: [value])).map { $0.label.lowercased().filter { !$0.isWhitespace } })
     }
 
+    /// The initial goal also supplies mandatory conditions. Remove the whole
+    /// requirement expression there, including aliases and its qualifier, so
+    /// ranking and the next planning request cannot reconstruct a withdrawn rule.
+    static func removingRequirement(_ term: String, from goal: String) -> String {
+        var result = goal
+        for requirement in requirements(.init(goal: "", mustHaves: [term])) {
+            let expression: String
+            switch requirement {
+            case .offline:
+                expression = #"(?:必须|只能|需要|要求|支持)?\s*(?:离线(?:运行|工作|使用)?|不联网|无需联网)|\b(?:(?:must|should)\s+)?(?:(?:work|run|operate)s?\s+)?(?:fully\s+|entirely\s+)?offline\b"#
+            case .free:
+                expression = #"(?:必须|只能|需要|要求)?\s*(?:(?:完全|永久)?免费(?:使用)?|不.{0,2}收费|不.{0,2}付费|无需付费)|\b(?:(?:must|should)\s+(?:be\s+)?)?(?:free(?:\s+to\s+use)?|no\s+cost)\b"#
+            case .chinese, .noChinese:
+                expression = #"(?:必须|只能|需要|要求|不要|排除)?\s*(?:支持)?中文|\b(?:(?:must|should)\s+)?(?:support\s+)?chinese\b"#
+            case .openSource:
+                expression = #"(?:必须|只能|需要|要求)?\s*开源|\b(?:(?:must|should)\s+(?:be\s+)?)?open[ -]?source\b"#
+            case .noUpload, .other:
+                expression = NSRegularExpression.escapedPattern(for: term)
+            }
+            result = result.replacingOccurrences(of: expression, with: "", options: [.regularExpression, .caseInsensitive])
+        }
+        return result.components(separatedBy: CharacterSet(charactersIn: "，,。；;\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "，")
+    }
+
     public static func summary(candidates: [DiscoveryCandidate], intent: DiscoveryIntent?) -> String? {
         guard let intent, intent.route != .exact else { return nil }
         let assessments = candidates.map { Self(candidate: $0, intent: intent) }
