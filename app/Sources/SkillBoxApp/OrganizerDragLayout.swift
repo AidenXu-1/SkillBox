@@ -67,14 +67,14 @@ enum OrganizerDragLayout {
         let beforeKey: OrganizerRowKey?
         switch moving {
         case .folder:
-            beforeKey = landing.beforeID.map(OrganizerRowKey.folder)
+            beforeKey = landing.beforeID.map(OrganizerRowKey.folder) ?? .uncategorized
         case .skill:
             if let beforeID = landing.beforeID { beforeKey = .skill(beforeID) }
             else {
-                // End of this group, immediately before the following folder.
+                // End of this group, before the next folder or uncategorized section.
                 let anchorIndex = order.firstIndex(of: landing.anchor) ?? order.endIndex
                 beforeKey = order.dropFirst(min(anchorIndex + 1, order.count)).first {
-                    if case .folder = $0 { true } else { false }
+                    if case .skill = $0 { false } else { true }
                 }
             }
         case .uncategorized: return original
