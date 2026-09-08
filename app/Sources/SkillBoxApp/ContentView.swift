@@ -2098,7 +2098,7 @@ private struct OrganizerFolderTitle: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 10)
                 .rotationEffect(.degrees(isCollapsed ? 0 : 90))
-            Image(systemName: "folder.fill")
+            Image(systemName: "archivebox.fill")
                 .font(.system(size: 23))
                 .foregroundStyle(.blue)
                 .frame(width: 32, height: 32)
