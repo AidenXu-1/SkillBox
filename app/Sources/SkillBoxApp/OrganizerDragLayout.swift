@@ -23,6 +23,30 @@ struct OrganizerLanding: Equatable, Sendable {
 }
 
 enum OrganizerDragLayout {
+    // Rendered rows, floating headers and hit testing share the same dimensions.
+    static func rowHeight(for key: OrganizerRowKey) -> CGFloat {
+        switch key {
+        case .folder: 54
+        case .uncategorized: 38
+        case .skill: 44
+        }
+    }
+
+    static func geometry(keys: [OrganizerRowKey], offset: CGFloat, width: CGFloat, spacing: CGFloat) -> [OrganizerRowGeometry] {
+        var y: CGFloat = 8 - offset
+        var group: UUID?
+        return keys.map { key in
+            switch key {
+            case let .folder(id): group = id
+            case .uncategorized: group = nil
+            case .skill: break
+            }
+            let height = rowHeight(for: key)
+            defer { y += height + spacing }
+            return .init(key: key, folderID: group, frame: CGRect(x: 8, y: y, width: max(0, width - 16), height: height))
+        }
+    }
+
     static func landing(
         moving: OrganizerRowKey, pointer: CGPoint, viewport: CGSize,
         rows: [OrganizerRowGeometry]

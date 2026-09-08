@@ -17,4 +17,4 @@
 
 [可操作预览](preview.html)。当前会话没有 callable OpenDesign 工具，沿用用户已在使用的本地 HTML 预览，不引入新工具安装。后续可在 OpenDesign 可用时转为可编辑设计稿。
 
-当前阶段为视觉候选，正式 App 仍是已经认可手感的 v2.51。
+2026-09-08：用户回复“OK，可以的”，该文件夹视觉方向已实施并更新本机 App。正式验收见 `docs/reviews/2026-09-08-folder-hierarchy.md`。随后提出的 Skill 左侧来源图标另有对比预览，暂未应用。

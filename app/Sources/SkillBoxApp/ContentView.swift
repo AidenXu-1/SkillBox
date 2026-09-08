@@ -1799,18 +1799,8 @@ private struct SkillOrganizerSidebar: View {
         return keys
     }
     private var rowGeometry: [OrganizerRowGeometry] {
-        var y: CGFloat = 8 - scrollMetrics.offset
-        var group: UUID?
-        return rowKeys.map { key in
-            switch key {
-            case let .folder(id): group = id
-            case .uncategorized: group = nil
-            case .skill: break
-            }
-            let height: CGFloat = if case .skill = key { 44 } else { 32 }
-            defer { y += height + SkillOrganizerRowPresentation.rowSpacing }
-            return .init(key: key, folderID: group, frame: CGRect(x: 8, y: y, width: max(0, scrollMetrics.viewport.width - 16), height: height))
-        }
+        OrganizerDragLayout.geometry(keys: rowKeys, offset: scrollMetrics.offset,
+            width: scrollMetrics.viewport.width, spacing: SkillOrganizerRowPresentation.rowSpacing)
     }
     private var previewOrder: [OrganizerRowKey] {
         guard let movingItem else { return rowKeys }
@@ -1860,7 +1850,7 @@ private struct SkillOrganizerSidebar: View {
                 LazyVStack(alignment: .leading, spacing: SkillOrganizerRowPresentation.rowSpacing) {
                     ForEach(rowKeys, id: \.self) { key in
                         organizerRow(key)
-                            .frame(height: rowHeight(key))
+                            .frame(height: OrganizerDragLayout.rowHeight(for: key))
                             .offset(y: key == movingItem ? 0 : (visualOffsets[key] ?? 0))
                             .zIndex(key == movingItem ? 20 : 0)
                             .transaction { if key == movingItem { $0.animation = nil } }
@@ -1880,9 +1870,10 @@ private struct SkillOrganizerSidebar: View {
             .overlay(alignment: .topLeading) {
                 if let movingItem, let landing, landing.edge != .inside,
                    let frame = rowGeometry.first(where: { $0.key == movingItem })?.frame {
+                    let inset: CGFloat = if case .skill = movingItem, landing.folderID != nil { 24 } else { 0 }
                     RoundedRectangle(cornerRadius: 2).fill(Color.accentColor)
-                        .frame(width: frame.width, height: 3)
-                        .offset(x: 8, y: frame.minY + (offsets[movingItem] ?? 0) - 2)
+                        .frame(width: max(0, frame.width - inset), height: 3)
+                        .offset(x: 8 + inset, y: frame.minY + (offsets[movingItem] ?? 0) - 2)
                         .allowsHitTesting(false)
                         .accessibilityLabel(dragHint)
                 }
@@ -1949,12 +1940,14 @@ private struct SkillOrganizerSidebar: View {
                     selectedSkillID: $selectedSkillID, showSyncPreview: $showSyncPreview,
                     dragSession: dragSession, dragOffsetY: floatingOffset(key), previewOffsetY: 0,
                     onDragChanged: { updateDrag(key, value: $0) }, onDragEnded: { finishDrag(key, value: $0) })
+                    .padding(.leading, folderID == nil ? 0 : 24)
             }
         case let .folder(id):
             if let folder = folders.first(where: { $0.id == id }) {
                 ZStack {
                     OrganizerFolderHeader(model: model, folder: folder,
                         count: model.orderedSkills(in: id).count, isCollapsed: collapsedFolderIDs.contains(id),
+                        isDropTarget: landing?.anchor == key && landing?.edge == .inside,
                         onToggle: {
                             guard movingItem == nil else { return }
                             if collapsedFolderIDs.contains(id) { collapsedFolderIDs.remove(id) }
@@ -1963,15 +1956,17 @@ private struct SkillOrganizerSidebar: View {
                         .opacity(movingItem == key ? 0.18 : 1)
                         .background(highlight(key), in: RoundedRectangle(cornerRadius: 8))
                     if movingItem == key {
-                        HStack(spacing: 8) {
-                            Image(systemName: "folder.fill").foregroundStyle(.blue)
-                            Text(folder.name).font(.caption.weight(.semibold))
-                            Spacer()
-                            Text("\(model.orderedSkills(in: id).count)").font(.caption2).foregroundStyle(.secondary)
-                        }.padding(.horizontal, 12).frame(height: 32)
-                            .background(.background, in: RoundedRectangle(cornerRadius: 8))
-                            .shadow(color: .black.opacity(0.14), radius: 8, y: 4)
-                            .offset(y: floatingOffset(key)).allowsHitTesting(false)
+                        HStack(spacing: 5) {
+                            OrganizerFolderTitle(name: folder.name, count: model.orderedSkills(in: id).count,
+                                                 isCollapsed: collapsedFolderIDs.contains(id))
+                            Image(systemName: "ellipsis").frame(width: 22, height: 22).foregroundStyle(.secondary)
+                        }
+                        .padding(.leading, 10).padding(.trailing, 8)
+                        .frame(height: OrganizerDragLayout.rowHeight(for: key))
+                        .background(.background, in: RoundedRectangle(cornerRadius: 11))
+                        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(Color.primary.opacity(0.08)))
+                        .shadow(color: .black.opacity(0.14), radius: 8, y: 4)
+                        .offset(y: floatingOffset(key)).allowsHitTesting(false)
                     }
                 }
                 .simultaneousGesture(DragGesture(minimumDistance: 6, coordinateSpace: .named(SkillOrganizerCoordinateSpace.name))
@@ -1980,7 +1975,6 @@ private struct SkillOrganizerSidebar: View {
         }
     }
 
-    private func rowHeight(_ key: OrganizerRowKey) -> CGFloat { if case .skill = key { 44 } else { 32 } }
     private func highlight(_ key: OrganizerRowKey) -> Color {
         landing?.anchor == key && landing?.edge == .inside ? .accentColor.opacity(0.19) : .clear
     }
@@ -2086,7 +2080,37 @@ private struct OrganizerGroupHeader: View {
             Text("\(count)").font(.caption2).foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 9)
-        .padding(.vertical, 7)
+        .frame(maxHeight: .infinity)
+        .overlay(alignment: .top) { Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1) }
+        .contentShape(Rectangle())
+    }
+}
+
+private struct OrganizerFolderTitle: View {
+    let name: String
+    let count: Int
+    let isCollapsed: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 10)
+                .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+            Image(systemName: "folder.fill")
+                .font(.system(size: 23))
+                .foregroundStyle(.blue)
+                .frame(width: 32, height: 32)
+                .background(Color.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
+            Text(name).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+            Spacer(minLength: 6)
+            Text("\(count)").font(.system(size: 12, weight: .medium)).monospacedDigit()
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6).frame(minWidth: 24, minHeight: 23)
+                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 6))
+        }
+        .frame(maxHeight: .infinity)
         .contentShape(Rectangle())
     }
 }
@@ -2096,6 +2120,7 @@ private struct OrganizerFolderHeader: View {
     let folder: SkillFolder
     let count: Int
     let isCollapsed: Bool
+    let isDropTarget: Bool
     let onToggle: () -> Void
     @State private var isHovered = false
     @State private var showRename = false
@@ -2105,16 +2130,7 @@ private struct OrganizerFolderHeader: View {
     var body: some View {
         HStack(spacing: 5) {
             Button(action: onToggle) {
-                HStack(spacing: 8) {
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .rotationEffect(.degrees(isCollapsed ? 0 : 90))
-                    Image(systemName: "folder.fill").foregroundStyle(.blue)
-                    Text(folder.name).font(.caption.weight(.semibold))
-                    Spacer()
-                    Text("\(count)").font(.caption2).foregroundStyle(.tertiary)
-                }
-                .contentShape(Rectangle())
+                OrganizerFolderTitle(name: folder.name, count: count, isCollapsed: isCollapsed)
             }
             .buttonStyle(.plain)
             Menu {
@@ -2131,10 +2147,12 @@ private struct OrganizerFolderHeader: View {
             .menuIndicator(.hidden)
             .opacity(isHovered ? 1 : 0.35)
         }
-        .padding(.leading, 8)
-        .padding(.trailing, 5)
-        .padding(.vertical, 5)
-        .background(isHovered ? Color.primary.opacity(0.055) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .padding(.leading, 10)
+        .padding(.trailing, 8)
+        .frame(maxHeight: .infinity)
+        .background(isDropTarget ? Color.accentColor.opacity(0.18) : Color.primary.opacity(isHovered ? 0.075 : 0.04),
+                    in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(isDropTarget ? Color.accentColor : Color.primary.opacity(0.055)))
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
         .alert("重命名文件夹", isPresented: $showRename) {
