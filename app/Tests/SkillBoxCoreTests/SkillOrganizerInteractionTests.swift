@@ -116,7 +116,7 @@ struct SkillOrganizerInteractionTests {
         #expect(SkillOrganizerRowPresentation.sourceLabel(for: .agentDirectory) == "应用导入")
     }
 
-    @Test("Trailing source icons use recognizable GitHub and local folder metaphors")
+    @Test("Source icons use recognizable GitHub and local folder metaphors")
     func skillSourcesExposeRecognizableTrailingIcons() {
         #expect(SkillOrganizerRowPresentation.sourceIcon(for: .github) == .githubMark)
         #expect(SkillOrganizerRowPresentation.sourceIcon(for: .localFolder) == .system(

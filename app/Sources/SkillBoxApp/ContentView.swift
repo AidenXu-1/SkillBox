@@ -2295,17 +2295,13 @@ private struct SkillOrganizerRow: View {
     private var rowCard: some View {
         Button { selectedSkillID = skill.id } label: {
             HStack(spacing: 9) {
-                Text(skillInitial)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.blue)
+                SkillOrganizerSourceIconView(sourceKind: skill.source.kind)
+                    .frame(width: 22, height: 22)
                     .frame(width: 26, height: 26)
-                    .background(.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 7))
                 Text(skill.displayName)
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
                 Spacer(minLength: 6)
-                SkillOrganizerSourceIconView(sourceKind: skill.source.kind)
-                    .frame(width: 18, height: 18)
                 Text(storageText)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -2325,11 +2321,6 @@ private struct SkillOrganizerRow: View {
         if isDragging || isSelected { return .accentColor.opacity(0.16) }
         if isHovered { return .primary.opacity(0.055) }
         return .clear
-    }
-
-    private var skillInitial: String {
-        let name = skill.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.first.map { String($0).uppercased() } ?? "S"
     }
 
     private var storageText: String {
