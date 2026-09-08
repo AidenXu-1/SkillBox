@@ -1787,21 +1787,26 @@ private struct SkillOrganizerSidebar: View {
     }
     private var folders: [SkillFolder] { model.orderedFolders() }
     private var rowKeys: [OrganizerRowKey] {
-        var keys: [OrganizerRowKey] = [.uncategorized]
-        keys += displayedSkills(in: nil).map { .skill($0.id) }
+        var keys: [OrganizerRowKey] = []
         for folder in folders {
             keys.append(.folder(folder.id))
             if !collapsedFolderIDs.contains(folder.id), movingItem != .folder(folder.id) {
                 keys += displayedSkills(in: folder.id).map { .skill($0.id) }
             }
         }
+        keys.append(.uncategorized)
+        keys += displayedSkills(in: nil).map { .skill($0.id) }
         return keys
     }
     private var rowGeometry: [OrganizerRowGeometry] {
         var y: CGFloat = 8 - scrollMetrics.offset
         var group: UUID?
         return rowKeys.map { key in
-            if case let .folder(id) = key { group = id }
+            switch key {
+            case let .folder(id): group = id
+            case .uncategorized: group = nil
+            case .skill: break
+            }
             let height: CGFloat = if case .skill = key { 44 } else { 32 }
             defer { y += height + SkillOrganizerRowPresentation.rowSpacing }
             return .init(key: key, folderID: group, frame: CGRect(x: 8, y: y, width: max(0, scrollMetrics.viewport.width - 16), height: height))
