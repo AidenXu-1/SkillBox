@@ -15,3 +15,12 @@
 备份 `~/Library/Application Support/SkillBoxBackups/source-leading-20260908-114531/`；回执在忽略的 `scratch/source-leading-20260908/`。保留用户当前 7 份 Skill、两个文件夹。本机仍沿用 v0.2.2 Build 6 版本号；公开下载未更新，没有付费调用或修改 Skill 安装。
 
 用户看实际窗口后指出归类文件夹与本地来源图形重复。叠层候选被用户否定，已改为收纳盒／标签两种候选，位于 `design/ui/skill-source-leading-20260908/category-preview.html`，仅预览，待确认后实施，不混同当前已安装的来源位置改动。
+
+
+## 收纳盒归类图标已交付（v2.54）
+
+用户不采用叠层图形，在收纳盒／标签对比中明确选择收纳盒。归类标题改为系统 `archivebox.fill`，静态标题与拖动浮层复用同一组件；大小、蓝色底托、布局和手势不变。下层本地来源文件夹与 GitHub 标志保留。
+
+完整检查仍为 534 项实际通过、1 项公网跳过，Release／签名／隐私通过。本机已更新、打开并置前，真实截图确认上层收纳盒与下层来源文件夹形状不同、用户两个文件夹及 7 份 Skill 正常。此次单个符号改动没有另做原生拖动测试；沿用现有组件和行为检查。
+
+程序 SHA `ffef1ccb45902e4123ebdf58de364d2ae2192b41f499e7c5c7ca8baa2fcc4964`。替换前 748 个资料文件完整备份，替换时全部一致；启动后安装关系、事务和 Library 内容一致，分类与排序按身份比较一致。备份 `~/Library/Application Support/SkillBoxBackups/category-box-20260908-115426/`，回执 `scratch/category-box-20260908/`。公开下载未更新。
