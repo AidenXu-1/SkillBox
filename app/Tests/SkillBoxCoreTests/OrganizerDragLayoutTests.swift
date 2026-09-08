@@ -85,6 +85,23 @@ struct OrganizerDragLayoutTests {
         #expect(OrganizerDragLayout.landing(moving: .skill(a), pointer: CGPoint(x: -10, y: 160), viewport: CGSize(width: 316, height: 400), rows: rows) == nil)
         #expect(OrganizerDragLayout.previewOrder(moving: .skill(a), landing: nil, rows: rows) == rows.map(\.key))
     }
+    @Test("Displayed header geometry keeps the whole title a drop target and resets the bottom group")
+    func displayedGeometryPreservesGroupBoundaries() {
+        let keys: [OrganizerRowKey] = [.folder(f), .skill(b), .folder(g), .uncategorized, .skill(a)]
+        let geometry = OrganizerDragLayout.geometry(keys: keys, offset: 0, width: 316, spacing: 5)
+        let folder = geometry[0].frame
+        #expect(land(.skill(a), folder.maxY - 1, rows: geometry)?.folderID == f)
+        let last = geometry.last!
+        #expect(land(.skill(b), last.frame.midY - 1, rows: geometry)?.folderID == nil)
+        #expect(land(.skill(b), last.frame.midY - 1, rows: geometry)?.beforeID == a)
+        let scrolled = OrganizerDragLayout.geometry(keys: keys, offset: 50, width: 316, spacing: 5)
+        #expect(land(.skill(b), last.frame.midY - 51, rows: scrolled)
+            == land(.skill(b), last.frame.midY - 1, rows: geometry))
+        let end = land(.folder(f), last.frame.midY, rows: geometry)
+        let collapsed = OrganizerDragLayout.geometry(keys: keys.filter { $0 != .skill(b) }, offset: 0, width: 316, spacing: 5)
+        #expect(OrganizerDragLayout.previewOrder(moving: .folder(f), landing: end, rows: collapsed)
+            == [.folder(g), .folder(f), .uncategorized, .skill(a)])
+    }
     @Test("Edge scrolling is gradual and stops outside the list")
     func edgeScrollingStopsOutside() {
         let viewport = CGSize(width: 316, height: 400)
