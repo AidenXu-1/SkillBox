@@ -1,3 +1,5 @@
+<div align="center">
+
 # SkillBox
 
 <img src="design/brand/skillbox-app-icon-master.png" width="96" alt="SkillBox 图标">
@@ -11,6 +13,8 @@ SkillBox 是一款原生 macOS 应用。你可以从本地开发文件夹或 Git
 **适用系统：Apple Silicon Mac · macOS 15.0 及以上**
 
 无需注册 SkillBox 账号。核心管理功能不依赖 AI，Skill 内容默认保存在本机。
+
+</div>
 
 <!-- 界面截图：〔待补〕。按 github-readme-draft 规则保留占位，不生成截图或下载量、Star 等数据。 -->
 
