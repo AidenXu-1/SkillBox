@@ -192,11 +192,16 @@ final class AppModel: ObservableObject {
 
     @Published var snapshot = LibrarySnapshot()
     @Published var scanResult: ScanResult?
-    @Published var pendingCandidates: [SkillCandidate] = []
+    @Published var pendingCandidates: [SkillCandidate] = [] {
+        didSet { scheduleDeferredStartupBackupCheckIfReady() }
+    }
     @Published var selectedCandidateIDs: Set<String> = []
     @Published var activeConflict: ConflictGroup?
     @Published var syncPlan: SyncPlan?
-    @Published var isBusy = false
+    @Published var isBusy = false {
+        didSet { scheduleDeferredStartupBackupCheckIfReady() }
+    }
+    @Published private(set) var isCheckingLocalSources = false
     @Published var statusMessage = "准备查看本机 Skills"
     @Published var errorMessage: String?
     @Published var noticeMessage: String?
@@ -216,12 +221,16 @@ final class AppModel: ObservableObject {
     @Published var operationProgress: SkillBoxOperationProgress?
     @Published private(set) var lastDeletedSkill: DeletedSkillBackup?
     @Published private(set) var pendingDeletionAfterSyncSkillID: UUID?
-    @Published private(set) var pendingUndoTransaction: SyncTransaction?
+    @Published private(set) var pendingUndoTransaction: SyncTransaction? {
+        didSet { scheduleDeferredStartupBackupCheckIfReady() }
+    }
     @Published var canRetryGitHubWithDefaultBranch = false
     @Published var canRetryGitHubConnection = false
     @Published var pendingReleasePackageChoice: GitHubReleasePackageChoice?
     @Published var pendingInstallContentChoice: GitHubInstallContentChoice?
-    @Published var pendingLocalSourceSetup: LocalSourceSetup?
+    @Published var pendingLocalSourceSetup: LocalSourceSetup? {
+        didSet { scheduleDeferredStartupBackupCheckIfReady() }
+    }
     @Published var pendingLocalIgnoredChangedPaths: [String] = []
     @Published var discoverySessions: [DiscoverySession] = []
     @Published var selectedDiscoverySessionID: UUID?
@@ -254,7 +263,13 @@ final class AppModel: ObservableObject {
     private let planner: any SyncPlanner
     private let executor = TransactionalSyncExecutor()
     private let updateCoordinator = SkillUpdateCoordinator()
-    private let localPackageResolver = LocalSkillPackageResolver()
+    private let localPackageResolver: LocalSkillPackageResolver
+    private var localSourceMonitoringTask: Task<Void, Never>?
+    @Published private(set) var isCheckingRollbackBackups = false
+    @Published private(set) var backupCheckResult: String?
+    private var startupBackupCheckPending = false
+    private var deferredStartupBackupCheckTask: Task<Void, Never>?
+    private var lastReportedBackupMaintenanceIssue: String?
     private let homeDirectory: URL
     private lazy var githubDeviceClient = GitHubDeviceFlowClient(clientID: githubClientID)
     private lazy var githubSession = GitHubAuthenticatedSession(
@@ -304,6 +319,7 @@ final class AppModel: ObservableObject {
         aiProvider providedAIProvider: (any AIProvider)? = nil,
         githubProvider providedGitHubProvider: GitHubSourceProvider? = nil,
         routedDiscoveryProvider providedRoutedDiscoveryProvider: RoutedSkillDiscoveryProvider? = nil,
+        localPackageResolver: LocalSkillPackageResolver = LocalSkillPackageResolver(),
         discoveryAIRequestTimeout: Duration = .seconds(20),
         userDefaults: UserDefaults = .standard,
         startBootstrap: Bool = true
@@ -329,6 +345,7 @@ final class AppModel: ObservableObject {
             fatalError("无法准备 SkillBox 的本地保存位置：\(error.localizedDescription)")
         }
         self.planner = planner
+        self.localPackageResolver = localPackageResolver
         aiKeyStore = providedAIKeyStore ?? KeychainAIKeyStore()
         aiProvider = providedAIProvider ?? OpenAICompatibleProvider()
         self.discoveryAIRequestTimeout = discoveryAIRequestTimeout
@@ -340,6 +357,11 @@ final class AppModel: ObservableObject {
         if startBootstrap {
             Task { await bootstrap() }
         }
+    }
+
+    deinit {
+        localSourceMonitoringTask?.cancel()
+        deferredStartupBackupCheckTask?.cancel()
     }
 
     func needsRiskAcknowledgement(for skill: SkillRecord) -> Bool {
@@ -428,11 +450,14 @@ final class AppModel: ObservableObject {
         await reloadDiscoverySessions()
         await reloadCredentialHints()
         await scanInstalledSkills()
+        startLocalSourceMonitoring()
+        await checkRollbackBackupsOnStartup()
         await checkAllGitHubUpdatesIfStale()
     }
 
     func reload() async {
         snapshot = await store.currentSnapshot()
+        await refreshBackupMaintenanceIssue()
         refreshPlan()
     }
 
@@ -1481,6 +1506,156 @@ final class AppModel: ObservableObject {
         statusMessage = "安装状态已刷新"
     }
 
+    func refreshSkills() async {
+        guard !isBusy, !isCheckingLocalSources else { return }
+        await scanInstalledSkills()
+        await checkAllLocalSources(reportResult: true)
+    }
+
+    func startLocalSourceMonitoring(interval: Duration = .seconds(30)) {
+        guard localSourceMonitoringTask == nil else { return }
+        localSourceMonitoringTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.checkAllLocalSources()
+                do { try await Task.sleep(for: interval) } catch { return }
+            }
+        }
+    }
+
+    func stopLocalSourceMonitoring() {
+        localSourceMonitoringTask?.cancel()
+        localSourceMonitoringTask = nil
+    }
+
+    func checkRollbackBackupsOnStartup() async {
+        // An already-running manual check also satisfies this launch request.
+        guard !isCheckingRollbackBackups else { return }
+        startupBackupCheckPending = true
+        guard canCheckRollbackBackups else { return }
+        await cleanRollbackBackups()
+    }
+
+    private var canCheckRollbackBackups: Bool {
+        !isBusy && pendingUndoTransaction == nil && pendingCandidates.isEmpty && pendingLocalSourceSetup == nil
+    }
+
+    private func scheduleDeferredStartupBackupCheckIfReady() {
+        guard startupBackupCheckPending, canCheckRollbackBackups, !isCheckingRollbackBackups,
+              deferredStartupBackupCheckTask == nil else { return }
+        deferredStartupBackupCheckTask = Task { [weak self] in
+            guard let self else { return }
+            self.deferredStartupBackupCheckTask = nil
+            // Confirming a preview can clear it and set isBusy in the same turn.
+            // Read the final state here instead of trusting the state at enqueue.
+            guard !Task.isCancelled, self.startupBackupCheckPending,
+                  self.canCheckRollbackBackups, !self.isCheckingRollbackBackups else { return }
+            await self.cleanRollbackBackups()
+        }
+    }
+
+    private func refreshBackupMaintenanceIssue() async {
+        let issue = await store.currentBackupMaintenanceIssue()
+        if let issue {
+            let message = "备份清理未完成：\(issue)"
+            backupCheckResult = message
+            if lastReportedBackupMaintenanceIssue != issue { noticeMessage = message }
+        } else if let previous = lastReportedBackupMaintenanceIssue {
+            let message = "备份清理未完成：\(previous)"
+            if backupCheckResult == message { backupCheckResult = "上次备份清理问题已解决。" }
+            if noticeMessage == message { noticeMessage = nil }
+        }
+        lastReportedBackupMaintenanceIssue = issue
+    }
+
+    func cleanRollbackBackups() async {
+        guard !isCheckingRollbackBackups else { return }
+        guard canCheckRollbackBackups else {
+            backupCheckResult = "请先完成当前操作，再检查备份。"
+            return
+        }
+        startupBackupCheckPending = false
+        isCheckingRollbackBackups = true
+        isBusy = true
+        statusMessage = ""
+        defer {
+            isCheckingRollbackBackups = false
+            isBusy = false
+        }
+        do {
+            let removed = try await store.pruneRollbackBackups()
+            snapshot = await store.currentSnapshot()
+            await refreshBackupMaintenanceIssue()
+            let root = libraryRoot
+            let appRemoved = try await Task.detached(priority: .utility) {
+                try AppRollbackBackups.clean(libraryRoot: root)
+            }.value
+            await refreshBackupMaintenanceIssue()
+            guard lastReportedBackupMaintenanceIssue == nil else { return }
+            let total = removed + appRemoved
+            backupCheckResult = total == 0 ? "检查完成，没有需要清理的备份。" : "检查完成，已清理 \(total) 份过期或被替代的备份。"
+            statusMessage = total == 0 ? "备份检查完成" : "已清理 \(total) 份备份"
+        } catch {
+            snapshot = await store.currentSnapshot()
+            await refreshBackupMaintenanceIssue()
+            backupCheckResult = "检查未全部完成，请重试：\(error.localizedDescription)"
+            noticeMessage = backupCheckResult
+        }
+    }
+
+    /// Check sources without preparing an update transaction or opening a sheet.
+    /// The existing per-Skill action still owns the explicit update preview.
+    func checkAllLocalSources(reportResult: Bool = false) async {
+        guard !isBusy, !isCheckingLocalSources,
+              pendingCandidates.isEmpty, pendingLocalSourceSetup == nil
+        else { return }
+        isCheckingLocalSources = true
+        defer { isCheckingLocalSources = false }
+        let current = await store.currentSnapshot()
+        let trackedIDs = Set(current.skills.filter { $0.source.kind == .localFolder }.map(\.id))
+        let states = current.localSourceStates.filter { trackedIDs.contains($0.skillID) }
+        var checkedStates: [LocalSourceState] = []
+        var saveFailed = false
+        for state in states {
+            guard !Task.isCancelled, !isBusy, pendingCandidates.isEmpty, pendingLocalSourceSetup == nil else { break }
+            let resolver = localPackageResolver
+            var checked: LocalSourceState
+            do {
+                // File reads, hashing and temporary packaging stay off the UI thread.
+                let result = try await Task.detached(priority: .utility) {
+                    try await resolver.check(state: state)
+                }.value
+                if let candidate = result.candidate { cleanupLocalCandidates([candidate]) }
+                checked = result.state
+            } catch {
+                checked = state
+                checked.lastCheckError = error.localizedDescription
+            }
+            guard !Task.isCancelled, !isBusy, pendingCandidates.isEmpty, pendingLocalSourceSetup == nil else { break }
+            do {
+                if try await store.recordLocalSourceCheck(checked, expected: state) {
+                    checkedStates.append(checked)
+                }
+            } catch {
+                saveFailed = true
+            }
+        }
+        snapshot = await store.currentSnapshot()
+        if reportResult {
+            let updates = checkedStates.filter { $0.lastCheckError == nil && $0.status == .updateAvailable }.count
+            let reviews = checkedStates.filter { $0.lastCheckError == nil && $0.status == .packageReviewRequired }.count
+            let unavailable = checkedStates.filter { $0.lastCheckError != nil || $0.status == .sourceUnavailable }.count
+            if saveFailed || checkedStates.count != states.count {
+                statusMessage = "安装状态已刷新；部分本地来源尚未完成检查，请重试"
+            } else if unavailable > 0 {
+                statusMessage = "已检查本地来源：\(updates) 份有更新，\(reviews) 份需确认内容，\(unavailable) 份无法检查"
+            } else if updates > 0 || reviews > 0 {
+                statusMessage = "已检查本地来源：\(updates) 份有更新，\(reviews) 份需确认内容"
+            } else {
+                statusMessage = states.isEmpty ? "安装状态已刷新" : "安装状态已刷新；\(states.count) 份本地 Skill 本次检查一致"
+            }
+        }
+    }
+
     func finishOnboarding() {
         UserDefaults.standard.set(true, forKey: "SkillBoxOnboardingCompleted")
         showOnboarding = false
@@ -1609,7 +1784,7 @@ final class AppModel: ObservableObject {
     }
 
     func checkLocalSource(_ skill: SkillRecord) async {
-        guard !isBusy,
+        guard !isBusy, !isCheckingLocalSources,
               let state = snapshot.localSourceStates.first(where: { $0.skillID == skill.id })
         else { return }
         isBusy = true
@@ -1623,7 +1798,10 @@ final class AppModel: ObservableObject {
             isBusy = false
         }
         do {
-            let result = try await localPackageResolver.check(state: state)
+            let resolver = localPackageResolver
+            let result = try await Task.detached(priority: .userInitiated) {
+                try await resolver.check(state: state)
+            }.value
             pendingLocalIgnoredChangedPaths = result.ignoredChangedPaths
             switch result.state.status {
             case .current:
@@ -1661,7 +1839,13 @@ final class AppModel: ObservableObject {
                 )
                 try await prepareLocalPendingUpdate(prepared, skill: skill, state: result.state)
             }
-        } catch { present(error) }
+        } catch {
+            var failed = state
+            failed.lastCheckError = error.localizedDescription
+            _ = try? await store.recordLocalSourceCheck(failed, expected: state)
+            await reload()
+            present(error)
+        }
     }
 
     func prepareLocalContentReview(_ skill: SkillRecord) async {
@@ -2378,21 +2562,22 @@ final class AppModel: ObservableObject {
             detail: "正在安全保存 Skill 和恢复记录…",
             canCancel: false
         )
-        let result = try await updateCoordinator.updateCentralOnly(
-            skillID: skill.id,
-            candidate: package.candidate,
-            store: store
-        )
         let state = sourceState(
             skillID: skill.id,
             skillPath: package.recipe.skillPath,
             remote: version,
             recipe: package.recipe
         )
-        if let transaction = result.transaction {
-            try await store.recordGitHubSourceUpdate(state, transactionID: transaction.id)
-        } else {
-            try await store.updateSourceState(state)
+        do {
+            _ = try await updateCoordinator.updateCentralOnly(
+                skillID: skill.id,
+                candidate: package.candidate,
+                store: store,
+                nextGitHubSourceState: state
+            )
+        } catch {
+            await reload()
+            throw error
         }
         cleanupGitHubCandidates([package.candidate])
         if activeGitHubPreviewOperationID == operationID {
@@ -2498,23 +2683,12 @@ final class AppModel: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         do {
-            let result = deployToExisting
-                ? try await updateCoordinator.updateAndDeploy(
-                    skillID: skillID,
-                    candidate: candidate,
-                    store: store,
-                    authorizingHighRisk: authorizingHighRisk
-                )
-                : try await updateCoordinator.updateCentralOnly(
-                    skillID: skillID,
-                    candidate: candidate,
-                    store: store,
-                    authorizingHighRisk: authorizingHighRisk
-                )
+            var nextLocalSourceState: LocalSourceState?
+            var nextGitHubSourceState: GitHubSourceState?
             if var localState = pendingLocalUpdateState,
                candidate.source.kind == .localFolder
             {
-                localState.currentPackageFingerprint = result.record.fingerprint
+                localState.currentPackageFingerprint = candidate.fingerprint
                 localState.topLevelFingerprints = localState.availableTopLevelFingerprints ??
                     pendingLocalPackages[candidate.id]?.package.topLevelFingerprints ??
                     localState.topLevelFingerprints
@@ -2522,24 +2696,32 @@ final class AppModel: ObservableObject {
                 localState.availableTopLevelFingerprints = nil
                 localState.lastCheckedAt = Date()
                 localState.status = .current
-                if let transaction = result.transaction {
-                    try await store.recordLocalSourceUpdate(localState, transactionID: transaction.id)
-                } else {
-                    try await store.updateLocalSourceState(localState)
-                }
+                nextLocalSourceState = localState
             } else if let remote = pendingGitHubVersion {
-                let updatedSourceState = sourceState(
+                nextGitHubSourceState = sourceState(
                     skillID: skillID,
                     skillPath: candidate.source.skillPath,
                     remote: remote,
                     recipe: pendingGitHubPackageRecipes[candidate.id]
                 )
-                if let transaction = result.transaction {
-                    try await store.recordGitHubSourceUpdate(updatedSourceState, transactionID: transaction.id)
-                } else {
-                    try await store.updateSourceState(updatedSourceState)
-                }
             }
+            let result = deployToExisting
+                ? try await updateCoordinator.updateAndDeploy(
+                    skillID: skillID,
+                    candidate: candidate,
+                    store: store,
+                    authorizingHighRisk: authorizingHighRisk,
+                    nextLocalSourceState: nextLocalSourceState,
+                    nextGitHubSourceState: nextGitHubSourceState
+                )
+                : try await updateCoordinator.updateCentralOnly(
+                    skillID: skillID,
+                    candidate: candidate,
+                    store: store,
+                    authorizingHighRisk: authorizingHighRisk,
+                    nextLocalSourceState: nextLocalSourceState,
+                    nextGitHubSourceState: nextGitHubSourceState
+                )
             cleanupGitHubCandidates(pendingCandidates)
             cleanupLocalCandidates(pendingCandidates)
             pendingCandidates = []
@@ -2553,10 +2735,16 @@ final class AppModel: ObservableObject {
             pendingLocalUpdateState = nil
             pendingLocalIgnoredChangedPaths = []
             updatingSkillID = nil
-            statusMessage = result.transaction.map { "已更新并安装到 \($0.backups.count) 个应用" } ?? "已更新「我的 Skills」中的原件"
+            let installationCount = result.transaction?.backups.count ?? 0
+            statusMessage = deployToExisting && installationCount > 0
+                ? "已更新并安装到 \(installationCount) 个应用"
+                : "已更新「我的 Skills」中的原件"
             await reload()
             await scanInstalledSkills()
-        } catch { present(error) }
+        } catch {
+            await reload()
+            present(error)
+        }
     }
 
     func ignoreAvailableUpdate(_ skill: SkillRecord) async {
@@ -2875,6 +3063,7 @@ final class AppModel: ObservableObject {
 
             let result = try await executor.execute(plan: SyncPlan(actions: [action]), store: store)
             snapshot = await store.currentSnapshot()
+            await refreshBackupMaintenanceIssue()
             _ = try await refreshAssignmentPlan(proposal)
             guard result.status == .succeeded else {
                 noticeMessage = "操作未完成，请查看操作记录中的原因。"
@@ -3258,7 +3447,7 @@ final class AppModel: ObservableObject {
 
     func prepareUndoPreview(_ transaction: SyncTransaction) -> Bool {
         guard let current = snapshot.transactions.first(where: { $0.id == transaction.id }),
-              current.status == .succeeded
+              current.canRestore()
         else {
             noticeMessage = "这条操作记录已经无法恢复，请刷新后再查看。"
             return false
@@ -3286,7 +3475,10 @@ final class AppModel: ObservableObject {
             statusMessage = "已恢复到操作前"
             await reload()
             await scanInstalledSkills()
-        } catch { present(error) }
+        } catch {
+            await reload()
+            present(error)
+        }
     }
 
     func addCustomTarget(name: String, url: URL) async {

@@ -104,6 +104,7 @@ public protocol SyncExecutor: Sendable {
         transaction: SyncTransaction?
     ) async throws -> SyncTransaction
     func undo(transactionID: UUID, store: LibraryStore) async throws -> SyncTransaction
+    func rollback(transactionID: UUID, store: LibraryStore, reason: String) async throws -> SyncTransaction
 }
 
 public extension SyncExecutor {
@@ -119,6 +120,7 @@ public enum SyncExecutorError: LocalizedError {
     case undoWouldOverwrite(String)
     case targetUnavailable(String)
     case injectedFailure
+    case rollbackExpired
 
     public var errorDescription: String? {
         switch self {
@@ -128,6 +130,7 @@ public enum SyncExecutorError: LocalizedError {
         case let .undoWouldOverwrite(path): "文件在安装后又被改过。为了保护新内容，暂时不能恢复：\(path)"
         case let .targetUnavailable(path): "应用的 Skills 文件夹不存在或无法写入，SkillBox 不会代为创建：\(path)"
         case .injectedFailure: "测试注入的写入中断"
+        case .rollbackExpired: "这份回退备份已被更新的备份替代，或已满 7 天，无法再恢复"
         }
     }
 }
@@ -262,8 +265,11 @@ public actor TransactionalSyncExecutor: SyncExecutor {
         } catch {
             transaction.errors.append(error.localizedDescription)
             do {
-                try rollback(transaction: transaction, transactionRoot: transactionRoot)
-                transaction.status = .rolledBack
+                var completion = transaction
+                completion.status = .rolledBack
+                completion.completedAt = Date()
+                transaction = try await performRestoration(completion: completion, store: store,
+                    installations: snapshot.installations, assignments: snapshot.assignments)
             } catch {
                 transaction.errors.append("恢复失败：\(error.localizedDescription)")
                 transaction.status = .failed
@@ -274,16 +280,65 @@ public actor TransactionalSyncExecutor: SyncExecutor {
         }
     }
 
+    /// Update coordination uses the same prepared, compensatable restoration
+    /// as deployment failures and startup recovery. Only its final saved
+    /// restoration may call the original transaction rolled back.
+    public func rollback(transactionID: UUID, store: LibraryStore, reason: String) async throws -> SyncTransaction {
+        let snapshot = await store.currentSnapshot()
+        guard var transaction = snapshot.transactions.first(where: { $0.id == transactionID }) else {
+            throw SyncExecutorError.transactionNotFound
+        }
+        guard transaction.status == .running,
+              !snapshot.transactions.contains(where: {
+                  $0.restorationContext?.originalTransactionID == transactionID && ($0.status == .running || $0.status == .failed)
+              }) else {
+            throw SyncExecutorError.stateChanged("自动恢复尚未完成，救援资料已保留")
+        }
+        var installations = snapshot.installations
+        for backup in transaction.backups {
+            installations.removeAll { $0.destinationPath == backup.destinationPath }
+            if let previous = backup.previousInstallation { installations.append(previous) }
+        }
+        transaction.status = .rolledBack
+        transaction.completedAt = Date()
+        transaction.errors.append(reason)
+        do {
+            return try await performRestoration(completion: transaction, store: store,
+                installations: installations, assignments: snapshot.assignments)
+        } catch {
+            var failed = await store.currentSnapshot().transactions.first { $0.id == transactionID } ?? transaction
+            failed.status = .failed
+            failed.completedAt = Date()
+            failed.errors.append("自动恢复未完成：\(error.localizedDescription)")
+            try await store.recordTransaction(failed)
+            throw SyncExecutorError.stateChanged("自动恢复未完成，救援资料已保留，请查看「设置 → 操作记录与恢复」")
+        }
+    }
+
     public func recoverInterruptedTransactions(store: LibraryStore) async throws -> [SyncTransaction] {
         let snapshot = await store.currentSnapshot()
-        let interrupted = snapshot.transactions
-            .filter { $0.status == .running }
-            .sorted { $0.createdAt < $1.createdAt }
+        let rescueJournals = snapshot.transactions.filter { $0.restorationContext != nil && ($0.status == .running || $0.status == .failed) }
         var recovered: [SyncTransaction] = []
-        var installations = snapshot.installations
+        for journal in rescueJournals where journal.status == .running {
+            do {
+                let original = try await compensateRestoration(journal, store: store)
+                if original.status != .running { recovered.append(original) }
+            }
+            catch {
+                if let original = await store.currentSnapshot().transactions.first(where: { $0.id == journal.restorationContext?.originalTransactionID }) {
+                    recovered.append(original)
+                }
+            }
+        }
+        let refreshed = await store.currentSnapshot()
+        let recoveringOriginals = Set(refreshed.transactions.filter {
+            $0.restorationContext != nil && ($0.status == .running || $0.status == .failed)
+        }.compactMap { $0.restorationContext?.originalTransactionID })
+        let interrupted = refreshed.transactions
+            .filter { $0.status == .running && $0.restorationContext == nil && !recoveringOriginals.contains($0.id) }
+            .sorted { $0.createdAt < $1.createdAt }
 
         for var transaction in interrupted {
-            let transactionRoot = store.transactionsDirectory.appendingPathComponent(transaction.id.uuidString)
             do {
                 for backup in transaction.backups.reversed() {
                     let actual = fingerprintIfExists(URL(fileURLWithPath: backup.destinationPath))
@@ -306,20 +361,25 @@ public actor TransactionalSyncExecutor: SyncExecutor {
                     else {
                         throw SyncExecutorError.undoWouldOverwrite("SkillBox 中的原件")
                     }
+                    if actualFingerprint != libraryUpdate.previousRecord.fingerprint {
+                        let archive = contentURL.deletingLastPathComponent()
+                            .appendingPathComponent("versions/\(libraryUpdate.previousRecord.fingerprint)")
+                        guard fingerprintIfExists(archive) == libraryUpdate.previousRecord.fingerprint else {
+                            throw SyncExecutorError.rollbackExpired
+                        }
+                    }
                 }
-                try rollback(transaction: transaction, transactionRoot: transactionRoot)
-                if let libraryUpdate = transaction.libraryUpdate {
-                    _ = try await store.restoreSkillVersion(libraryUpdate)
-                    try await store.restoreGitHubSourceState(libraryUpdate)
-                    try await store.restoreLocalSourceState(libraryUpdate)
-                }
+                let currentSnapshot = await store.currentSnapshot()
+                var installations = currentSnapshot.installations
                 for backup in transaction.backups {
                     installations.removeAll { $0.destinationPath == backup.destinationPath }
                     if let previous = backup.previousInstallation { installations.append(previous) }
                 }
-                try await store.replaceInstallations(installations)
                 transaction.status = .rolledBack
+                transaction.completedAt = Date()
                 transaction.errors.append("应用上次异常退出，SkillBox 已恢复这次未完成的操作")
+                transaction = try await performRestoration(completion: transaction, store: store,
+                    installations: installations, assignments: currentSnapshot.assignments)
             } catch {
                 transaction.status = .failed
                 transaction.errors.append("启动恢复失败：\(error.localizedDescription)")
@@ -334,9 +394,25 @@ public actor TransactionalSyncExecutor: SyncExecutor {
     public func undo(transactionID: UUID, store: LibraryStore) async throws -> SyncTransaction {
         let snapshot = await store.currentSnapshot()
         guard var transaction = snapshot.transactions.first(where: { $0.id == transactionID }) else { throw SyncExecutorError.transactionNotFound }
+        guard transaction.canRestore() else { throw SyncExecutorError.rollbackExpired }
         let transactionRoot = store.transactionsDirectory.appendingPathComponent(transaction.id.uuidString)
+        // Verify every restore source before touching even the first destination.
+        for backup in transaction.backups {
+            if let relative = backup.backupRelativePath {
+                guard let expected = backup.beforeFingerprint,
+                      fingerprintIfExists(transactionRoot.appendingPathComponent(relative)) == expected else {
+                    throw SyncExecutorError.rollbackExpired
+                }
+            }
+        }
         if let libraryUpdate = transaction.libraryUpdate {
-            guard snapshot.skills.first(where: { $0.id == libraryUpdate.previousRecord.id })?.fingerprint == libraryUpdate.updatedFingerprint else {
+            let previous = libraryUpdate.previousRecord
+            let contentPath = snapshot.skills.first { $0.id == previous.id }?.contentRelativePath ?? previous.contentRelativePath
+            let archive = store.root.appendingPathComponent(contentPath)
+                .deletingLastPathComponent().appendingPathComponent("versions/\(previous.fingerprint)")
+            guard fingerprintIfExists(archive) == previous.fingerprint else { throw SyncExecutorError.rollbackExpired }
+            guard snapshot.skills.first(where: { $0.id == libraryUpdate.previousRecord.id })?.fingerprint == libraryUpdate.updatedFingerprint,
+                  fingerprintIfExists(store.root.appendingPathComponent(contentPath)) == libraryUpdate.updatedFingerprint else {
                 throw SyncExecutorError.undoWouldOverwrite("SkillBox 中的原件")
             }
             if let expectedVersion = libraryUpdate.updatedSourceVersionIdentifier,
@@ -358,12 +434,6 @@ public actor TransactionalSyncExecutor: SyncExecutor {
                 try await store.recordTransaction(transaction)
                 throw SyncExecutorError.undoWouldOverwrite(destination.path)
             }
-        }
-        for backup in transaction.backups.reversed() { try restore(backup: backup, transactionRoot: transactionRoot) }
-        if let libraryUpdate = transaction.libraryUpdate {
-            _ = try await store.restoreSkillVersion(libraryUpdate)
-            try await store.restoreGitHubSourceState(libraryUpdate)
-            try await store.restoreLocalSourceState(libraryUpdate)
         }
         var installations = snapshot.installations
         for backup in transaction.backups {
@@ -404,28 +474,196 @@ public actor TransactionalSyncExecutor: SyncExecutor {
         }
         transaction.status = .undone
         transaction.completedAt = Date()
-        try await store.replaceInstallations(installations)
-        try await store.replaceAssignments(assignments)
-        try await store.recordTransaction(transaction)
-        return transaction
+        return try await performRestoration(completion: transaction, store: store, installations: installations, assignments: assignments)
     }
 
-    private func rollback(transaction: SyncTransaction, transactionRoot: URL) throws {
-        for backup in transaction.backups.reversed() {
-            let destination = URL(fileURLWithPath: backup.destinationPath)
-            let actual = fingerprintIfExists(destination)
-            guard actual == backup.beforeFingerprint || actual == backup.afterFingerprint else {
-                throw SyncExecutorError.undoWouldOverwrite(backup.destinationPath)
+    private func performRestoration(completion: SyncTransaction, store: LibraryStore,
+                                    installations: [ManagedInstallation], assignments: [Assignment]) async throws -> SyncTransaction {
+        let before = await store.currentSnapshot()
+        guard let original = before.transactions.first(where: { $0.id == completion.id }) else { throw SyncExecutorError.transactionNotFound }
+        var rescue = SyncTransaction(status: .running, actions: [])
+        let stagedPaths = original.backups.map {
+            URL(fileURLWithPath: $0.destinationPath).deletingLastPathComponent()
+                .appendingPathComponent(".skillbox-restore-\(UUID())").path
+        }
+        rescue.restorationContext = .init(originalTransactionID: original.id, originalStatus: original.status,
+            originalCompletedAt: original.completedAt, originalErrors: original.errors,
+            originalBackupsExpiredAt: original.backupsExpiredAt, installations: before.installations,
+            assignments: before.assignments, stagedPaths: stagedPaths)
+        for (index, backup) in original.backups.enumerated() {
+            let current = fingerprintIfExists(URL(fileURLWithPath: backup.destinationPath))
+            rescue.backups.append(.init(destinationPath: backup.destinationPath,
+                backupRelativePath: current == nil ? nil : "backups/\(index)-current", beforeFingerprint: current,
+                afterFingerprint: backup.beforeFingerprint, actionKind: .update,
+                previousInstallation: before.installations.first { $0.destinationPath == backup.destinationPath }))
+        }
+        if let update = original.libraryUpdate,
+           var current = before.skills.first(where: { $0.id == update.previousRecord.id }) {
+            // A crash may have replaced content just before saving its catalog.
+            // The rescue copy describes the bytes actually present at entry.
+            if let actual = fingerprintIfExists(await store.contentURL(for: current)) { current.fingerprint = actual }
+            rescue.libraryUpdate = .init(previousRecord: current, updatedFingerprint: update.previousRecord.fingerprint,
+                previousSourceState: before.sourceStates.first { $0.skillID == current.id },
+                updatedSourceVersionIdentifier: update.updatedSourceVersionIdentifier,
+                previousLocalSourceState: before.localSourceStates.first { $0.skillID == current.id },
+                updatedLocalSourceFingerprint: update.updatedLocalSourceFingerprint)
+        }
+        if rescue.libraryUpdate != nil {
+            rescue.restorationContext?.centralStagedPath = store.libraryDirectory.appendingPathComponent(".restore-\(rescue.id)").path
+        }
+        try await store.recordTransaction(rescue)
+        let rescueRoot = store.transactionsDirectory.appendingPathComponent(rescue.id.uuidString)
+        do {
+            try fileManager.createDirectory(at: rescueRoot.appendingPathComponent("backups"), withIntermediateDirectories: true)
+            for backup in rescue.backups {
+                if let relative = backup.backupRelativePath, let expected = backup.beforeFingerprint {
+                    let copy = rescueRoot.appendingPathComponent(relative)
+                    try SafeFileOperations.copyDirectory(from: URL(fileURLWithPath: backup.destinationPath), to: copy, fileManager: fileManager)
+                    guard fingerprintIfExists(copy) == expected else { throw FileOperationError.fingerprintMismatch }
+                }
             }
-            try restore(backup: backup, transactionRoot: transactionRoot)
+            if let libraryUpdate = rescue.libraryUpdate { try await store.prepareRestorationRescue(libraryUpdate) }
+            let originalRoot = store.transactionsDirectory.appendingPathComponent(original.id.uuidString)
+            try prepareRestorationTargets(original, transactionRoot: originalRoot, stagedPaths: stagedPaths)
+            for index in original.backups.indices.reversed() {
+                try applyPreparedRestore(original.backups[index], staged: URL(fileURLWithPath: stagedPaths[index]), notify: true)
+            }
+            if let update = original.libraryUpdate {
+                _ = try await store.restoreSkillVersion(update,
+                    stagingURL: rescue.restorationContext?.centralStagedPath.map { URL(fileURLWithPath: $0) }, retainExchangedContent: true)
+                try await store.restoreGitHubSourceState(update)
+                try await store.restoreLocalSourceState(update)
+            }
+            rescue.status = .rolledBack
+            rescue.completedAt = Date()
+            try await store.finishRestoration(original: completion, rescue: rescue, installations: installations, assignments: assignments)
+            return completion
+        } catch {
+            let failure = error
+            do { _ = try await compensateRestoration(rescue, store: store) }
+            catch { throw SyncExecutorError.stateChanged("恢复未完成，救援资料已保留，请查看「设置 → 操作记录与恢复」") }
+            throw failure
         }
     }
 
-    private func restore(backup: TransactionBackup, transactionRoot: URL) throws {
+    private func compensateRestoration(_ initial: SyncTransaction, store: LibraryStore) async throws -> SyncTransaction {
+        var rescue = initial
+        guard let context = rescue.restorationContext,
+              var original = await store.currentSnapshot().transactions.first(where: { $0.id == context.originalTransactionID }) else {
+            throw SyncExecutorError.transactionNotFound
+        }
+        var failures: [String] = []
+        // Each registered stage contains either the desired copy or the actual
+        // exchanged current copy. Only restore a destination still matching us.
+        for index in rescue.backups.indices.reversed() {
+            let backup = rescue.backups[index]
+            do {
+                let destination = URL(fileURLWithPath: backup.destinationPath)
+                let actual = fingerprintIfExists(destination)
+                if actual == backup.beforeFingerprint { continue }
+                guard actual == backup.afterFingerprint else { throw SyncExecutorError.undoWouldOverwrite(backup.destinationPath) }
+                let staged = URL(fileURLWithPath: context.stagedPaths[index])
+                if let expected = backup.beforeFingerprint, fingerprintIfExists(staged) != expected {
+                    // An absent stage can be rebuilt from the separately saved
+                    // rescue copy; an unexpected existing stage is preserved.
+                    guard !fileManager.fileExists(atPath: staged.path), let relative = backup.backupRelativePath else {
+                        throw SyncExecutorError.undoWouldOverwrite(staged.path)
+                    }
+                    let source = store.transactionsDirectory.appendingPathComponent("\(rescue.id)/\(relative)")
+                    guard fingerprintIfExists(source) == expected else { throw SyncExecutorError.rollbackExpired }
+                    try SafeFileOperations.copyDirectory(from: source, to: staged, fileManager: fileManager)
+                    guard fingerprintIfExists(staged) == expected else { throw FileOperationError.fingerprintMismatch }
+                }
+                try applyPreparedRestore(backup, staged: staged, notify: false)
+            } catch { failures.append(error.localizedDescription) }
+        }
+        if let update = rescue.libraryUpdate {
+            do {
+                _ = try await store.restoreSkillVersion(update,
+                    stagingURL: context.centralStagedPath.map { URL(fileURLWithPath: $0) }, retainExchangedContent: true)
+                try await store.restoreGitHubSourceState(update)
+                try await store.restoreLocalSourceState(update)
+            } catch { failures.append(error.localizedDescription) }
+        }
+        if failures.isEmpty {
+            original.status = context.originalStatus
+            original.completedAt = context.originalCompletedAt
+            original.errors = context.originalErrors
+            original.backupsExpiredAt = context.originalBackupsExpiredAt
+            rescue.status = .rolledBack
+            rescue.completedAt = Date()
+            do {
+                try await store.finishRestoration(original: original, rescue: rescue,
+                    installations: context.installations, assignments: context.assignments)
+                return original
+            } catch { failures.append(error.localizedDescription) }
+        }
+        rescue.status = .failed
+        rescue.errors.append(contentsOf: failures)
+        original.status = .failed
+        original.errors.append("恢复补偿未完成，救援资料已保留：" + failures.joined(separator: "；"))
+        try await store.recordTransaction(rescue)
+        try await store.recordTransaction(original)
+        throw SyncExecutorError.stateChanged("恢复补偿未完成，救援资料已保留")
+    }
+
+    private func prepareRestorationTargets(_ transaction: SyncTransaction, transactionRoot: URL, stagedPaths: [String]) throws {
+        for backup in transaction.backups {
+            let destination = URL(fileURLWithPath: backup.destinationPath)
+            let actual = fingerprintIfExists(destination)
+            guard (!fileManager.fileExists(atPath: destination.path) || actual != nil),
+                  actual == backup.beforeFingerprint || actual == backup.afterFingerprint else {
+                throw SyncExecutorError.undoWouldOverwrite(backup.destinationPath)
+            }
+            if actual != backup.beforeFingerprint { try validateRestoreSource(backup: backup, transactionRoot: transactionRoot) }
+        }
+        for (index, backup) in transaction.backups.enumerated() {
+            if fingerprintIfExists(URL(fileURLWithPath: backup.destinationPath)) == backup.beforeFingerprint { continue }
+            if let relative = backup.backupRelativePath, let expected = backup.beforeFingerprint {
+                let staged = URL(fileURLWithPath: stagedPaths[index])
+                try SafeFileOperations.copyDirectory(from: transactionRoot.appendingPathComponent(relative), to: staged, fileManager: fileManager)
+                guard fingerprintIfExists(staged) == expected else { throw FileOperationError.fingerprintMismatch }
+            }
+        }
+    }
+
+    private func applyPreparedRestore(_ backup: TransactionBackup, staged: URL, notify: Bool) throws {
         let destination = URL(fileURLWithPath: backup.destinationPath)
-        if fileManager.fileExists(atPath: destination.path) { try fileManager.removeItem(at: destination) }
-        if let relative = backup.backupRelativePath {
-            try SafeFileOperations.copyDirectory(from: transactionRoot.appendingPathComponent(relative), to: destination, fileManager: fileManager)
+        let actual = fingerprintIfExists(destination)
+        guard !fileManager.fileExists(atPath: destination.path) || actual != nil else { throw SyncExecutorError.undoWouldOverwrite(destination.path) }
+        if actual == backup.beforeFingerprint { return }
+        guard actual == backup.afterFingerprint else { throw SyncExecutorError.undoWouldOverwrite(destination.path) }
+        if let expected = backup.beforeFingerprint {
+            guard fingerprintIfExists(staged) == expected else { throw SyncExecutorError.rollbackExpired }
+        } else if fileManager.fileExists(atPath: staged.path) {
+            throw SyncExecutorError.undoWouldOverwrite(staged.path)
+        }
+        if notify { beforeDestinationMutation(destination) }
+        if actual != nil, backup.beforeFingerprint != nil {
+            try atomicRename(from: destination, to: staged, flags: UInt32(RENAME_SWAP))
+            guard fingerprintIfExists(staged) == actual else {
+                _ = try? atomicRename(from: destination, to: staged, flags: UInt32(RENAME_SWAP))
+                throw SyncExecutorError.undoWouldOverwrite(destination.path)
+            }
+        } else if backup.beforeFingerprint == nil {
+            try atomicRename(from: destination, to: staged, flags: UInt32(RENAME_EXCL))
+            guard fingerprintIfExists(staged) == actual else {
+                if !fileManager.fileExists(atPath: destination.path) { _ = try? atomicRename(from: staged, to: destination, flags: UInt32(RENAME_EXCL)) }
+                throw SyncExecutorError.undoWouldOverwrite(destination.path)
+            }
+        } else {
+            try atomicRename(from: staged, to: destination, flags: UInt32(RENAME_EXCL))
+        }
+    }
+
+    private func validateRestoreSource(backup: TransactionBackup, transactionRoot: URL) throws {
+        if let expected = backup.beforeFingerprint {
+            guard let relative = backup.backupRelativePath,
+                  fingerprintIfExists(transactionRoot.appendingPathComponent(relative)) == expected else {
+                throw SyncExecutorError.rollbackExpired
+            }
+        } else if backup.backupRelativePath != nil {
+            throw SyncExecutorError.rollbackExpired
         }
     }
 

@@ -7,7 +7,7 @@
 
   本地优先 · 安装前预览 · 操作可撤销 · 无账号 · 无遥测
 
-  [下载 v0.2.3](https://github.com/AidenXu-1/SkillBox/releases/tag/v0.2.3) · [反馈问题](https://github.com/AidenXu-1/SkillBox/issues)
+  [下载 v0.2.4](https://github.com/AidenXu-1/SkillBox/releases/tag/v0.2.4) · [反馈问题](https://github.com/AidenXu-1/SkillBox/issues)
 </div>
 
 ## SkillBox 能做什么
@@ -28,20 +28,20 @@ SkillBox 管理的是跨项目使用的全局 Skills，不扫描或管理项目�
 
 ## 下载与安装
 
-当前发行版本：**v0.2.3（Build 7）**。
+当前发行版本：**v0.2.4（Build 14）**。
 
-[**下载 v0.2.3 安装包**](https://github.com/AidenXu-1/SkillBox/releases/tag/v0.2.3) · [历史版本](https://github.com/AidenXu-1/SkillBox/releases)
+[**下载 v0.2.4 安装包**](https://github.com/AidenXu-1/SkillBox/releases/tag/v0.2.4) · [历史版本](https://github.com/AidenXu-1/SkillBox/releases)
 
 系统要求：Apple Silicon Mac，macOS 15.0 或更高版本。
 
-1. 打开上方下载页，下载并打开 `SkillBox-0.2.3.dmg`。
+1. 打开上方下载页，下载并打开 `SkillBox-0.2.4.dmg`。
 2. 把 SkillBox 拖进「应用程序」。
 3. 第一次打开时，如果 macOS 提示无法验证开发者，请进入「系统设置 → 隐私与安全」。
 4. 找到 SkillBox，点击「仍要打开」，按系统提示输入这台 Mac 的登录密码。
 
 > SkillBox 当前采用 ad-hoc 签名并启用 Hardened Runtime，没有使用 Apple Developer ID，也没有经过 Apple 公证。macOS 无法通过 Apple 证书确认开发者身份，首次打开需要你亲自放行；应用更新后，系统可能再次要求确认。请从项目官方 GitHub 下载。
 
-本版本已完成现有安装环境中的核心流程验收；另一台 Mac 或干净账户的首次安装、手动放行与核心操作体验尚未单独实测。此限制也记录在版本说明中。
+本版本的更新、失败恢复和备份清理已通过自动化测试；现有安装环境中的启动与手动备份检查已实测。部分异常恢复场景尚未完成真实窗口逐步点击验证，另一台 Mac 或干净账户的首次安装、手动放行也尚未单独实测。此限制同样记录在版本说明中。
 
 ## 隐私与安全
 
@@ -50,7 +50,7 @@ SkillBox 管理的是跨项目使用的全局 Skills，不扫描或管理项目�
 - API Key 只保存到 macOS 钥匙串，不写入设置文件。
 - 公开 GitHub 来源可在应用打开期间检查版本；下载、更新和安装由你确认。私人仓库需要你明确授权。
 - AI 仅在你主动发起相关操作后使用所配置服务，不随应用启动或切换 Skill 自动生成介绍；API 费用按服务商规则计算。
-- 安装、覆盖、更新、卸载等文件操作均需用户确认，并保留恢复点。
+- 安装、覆盖、更新、卸载等文件操作均需用户确认，并保留上一份可用恢复点；普通回退备份保留 7 天，到期后在启动或手动检查时清理。
 
 同一发行版本会附带 DMG、`.sha256` 校验文件和 `-release.json` 来源清单。可用 `shasum -a 256` 计算下载文件的摘要，与同版本校验文件核对。
 
@@ -72,6 +72,6 @@ cd app
 
 准备发行候选可运行 `app/Scripts/release-distribution.sh`（从仓库根目录执行）。脚本会发现并执行全量测试，完成 Release 构建、签名、图标与隐私检查，生成 DMG、SHA-256 和来源清单，并模拟下载后的隔离属性；它不会自动安装或上传 GitHub。
 
-测试数量和结果以当次执行为准。默认发行检查还包括真实主流程、干净账户安装体验，以及发布后下载附件的校验；v0.2.3 在已披露首次安装未实测的范围下获准发布，未将该项记为通过。
+测试数量和结果以当次执行为准。默认发行检查还包括真实主流程、干净账户安装体验，以及发布后下载附件的校验；v0.2.4 按负责人确认的代码测试验收方式获准发布，保留上述未实测范围，未将其记为通过。
 
 开发说明：[`docs/spec.md`](docs/spec.md) · [`docs/agent-guide.md`](docs/agent-guide.md) · [`docs/progress.md`](docs/progress.md) · [`app/README.md`](app/README.md)

@@ -40,6 +40,7 @@ public struct LocalSourceState: Codable, Hashable, Identifiable, Sendable {
     public var topLevelFingerprints: [String: String]
     public var availableTopLevelFingerprints: [String: String]?
     public var lastCheckedAt: Date?
+    public var lastCheckError: String?
     public var status: LocalSourceStatus
 
     public init(
@@ -52,7 +53,8 @@ public struct LocalSourceState: Codable, Hashable, Identifiable, Sendable {
         topLevelFingerprints: [String: String] = [:],
         availableTopLevelFingerprints: [String: String]? = nil,
         lastCheckedAt: Date? = nil,
-        status: LocalSourceStatus = .current
+        status: LocalSourceStatus = .current,
+        lastCheckError: String? = nil
     ) {
         self.skillID = skillID
         self.projectRootPath = projectRootPath
@@ -64,6 +66,7 @@ public struct LocalSourceState: Codable, Hashable, Identifiable, Sendable {
         self.availableTopLevelFingerprints = availableTopLevelFingerprints
         self.lastCheckedAt = lastCheckedAt
         self.status = status
+        self.lastCheckError = lastCheckError
     }
 }
 
@@ -276,6 +279,7 @@ public struct LocalSkillPackageResolver: Sendable {
 
     public func check(state: LocalSourceState) async throws -> LocalSourceCheckResult {
         var state = state
+        state.lastCheckError = nil
         state.lastCheckedAt = Date()
         guard let access = projectRootAccess(for: state) else {
             state.status = .sourceUnavailable
