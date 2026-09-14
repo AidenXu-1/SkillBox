@@ -8,7 +8,8 @@ SkillBox 是一款原生 macOS 应用。你可以从本地开发文件夹或 Git
 
 [**下载 v0.2.4**](https://github.com/AidenXu-1/SkillBox/releases/tag/v0.2.4) · [反馈问题](https://github.com/AidenXu-1/SkillBox/issues) · [历史版本](https://github.com/AidenXu-1/SkillBox/releases)
 
-**适用系统：Apple Silicon Mac · macOS 15.0 及以上**  
+**适用系统：Apple Silicon Mac · macOS 15.0 及以上**
+
 无需注册 SkillBox 账号。核心管理功能不依赖 AI，Skill 内容默认保存在本机。
 
 <!-- 界面截图：〔待补〕。按 github-readme-draft 规则保留占位，不生成截图或下载量、Star 等数据。 -->
