@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 public enum SkillDeletionMode: Sendable {
     case requireNoManagedInstallations
@@ -57,6 +58,7 @@ public enum LibraryStoreError: LocalizedError {
     case candidateChanged
     case centralContentChanged
     case centralArchiveChanged
+    case centralUpdateRecoveryFailed
     case duplicateRecord
     case duplicateDesiredDestination
     case skillNotFound
@@ -74,6 +76,7 @@ public enum LibraryStoreError: LocalizedError {
         case .candidateChanged: "Skill 在你确认前发生了变化，请重新查看"
         case .centralContentChanged: "「我的 Skills」中的原件已被其他程序修改。SkillBox 没有覆盖它，请先重新检查"
         case .centralArchiveChanged: "这份 Skill 的历史恢复点已损坏或被修改。SkillBox 已停止更新，请先保留现场并检查"
+        case .centralUpdateRecoveryFailed: "更新后的自动恢复尚未完成，当前内容和恢复资料已保留，请查看「设置 → 操作记录与恢复」"
         case .duplicateRecord: "「我的 Skills」中已经有相同内容"
         case .duplicateDesiredDestination: "同一个应用里，同名 Skill 一次只能选择一份"
         case .skillNotFound: "在「我的 Skills」中找不到这份内容"
@@ -97,6 +100,7 @@ public actor LibraryStore {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private var snapshot: LibrarySnapshot
+    private var backupMaintenanceIssue: String?
     public let recoveryWarnings: [String]
 
     public init(
@@ -151,6 +155,14 @@ public actor LibraryStore {
         )
         warnings.append(contentsOf: restorationRecovery.warnings)
         snapshot = loadedSnapshot
+        let maintenanceIssueURL = normalizedRoot.appendingPathComponent("backup-maintenance-issue.json")
+        if fileManager.fileExists(atPath: maintenanceIssueURL.path) {
+            do {
+                backupMaintenanceIssue = try decoder.decode(String.self, from: Data(contentsOf: maintenanceIssueURL))
+            } catch {
+                backupMaintenanceIssue = "上次备份检查的结果暂时无法读取，请在「设置 → 存储与记录」重新检查备份。"
+            }
+        }
         recoveryWarnings = warnings
         if loaded.didMigrate || !storageMoves.isEmpty || deletionRecovery.didChange || restorationRecovery.didChange {
             do {
@@ -168,6 +180,146 @@ public actor LibraryStore {
     }
 
     public func currentSnapshot() -> LibrarySnapshot { snapshot }
+
+    public func currentBackupMaintenanceIssue() -> String? { backupMaintenanceIssue }
+
+    /// Persist disabled undo entries before deleting their payload, so a crash
+    /// cannot leave an apparently usable undo command pointing at removed files.
+    @discardableResult
+    public func pruneRollbackBackups(now: Date = Date()) throws -> Int {
+        do {
+            let removed = try performRollbackBackupPruning(now: now)
+            let issueURL = root.appendingPathComponent("backup-maintenance-issue.json")
+            if fileManager.fileExists(atPath: issueURL.path) { try fileManager.removeItem(at: issueURL) }
+            backupMaintenanceIssue = nil
+            return removed
+        } catch {
+            let message = "备份清理尚未完成，请在「设置 → 存储与记录」重试检查。\(error.localizedDescription)"
+            backupMaintenanceIssue = message
+            do {
+                try SafeFileOperations.atomicWrite(message, to: root.appendingPathComponent("backup-maintenance-issue.json"),
+                                                   encoder: encoder, fileManager: fileManager)
+            } catch {
+                backupMaintenanceIssue = message + " 这条提示暂时无法保存，关闭应用前请重试检查。"
+            }
+            throw error
+        }
+    }
+
+    private func performRollbackBackupPruning(now: Date) throws -> Int {
+        var plan = BackupRetentionPolicy.plan(snapshot: snapshot, root: root, now: now)
+        let recoveringIDs = Set(snapshot.transactions.filter { $0.status == .running || $0.status == .failed }
+            .compactMap { $0.libraryUpdate?.previousRecord.id })
+        for skill in snapshot.skills where !recoveringIDs.contains(skill.id) {
+            let versions = recordRoot(for: skill).appendingPathComponent("versions").standardizedFileURL
+            guard versions.path.hasPrefix(libraryDirectory.path + "/"),
+                  fileManager.fileExists(atPath: versions.path) else { continue }
+            try validateBackupRemovalPath(versions)
+            for url in try fileManager.contentsOfDirectory(at: versions, includingPropertiesForKeys: nil) {
+                let name = url.lastPathComponent
+                let path = url.standardizedFileURL.path
+                if name.count == 64, name.allSatisfy(\.isHexDigit), !plan.retainedPaths.contains(path) {
+                    plan.removablePaths.insert(path)
+                }
+            }
+        }
+        let previous = snapshot
+        var didChange = false
+        for index in snapshot.transactions.indices where plan.expiredTransactionIDs.contains(snapshot.transactions[index].id) {
+            if snapshot.transactions[index].backupsExpiredAt == nil {
+                snapshot.transactions[index].backupsExpiredAt = now
+                didChange = true
+            }
+        }
+        if didChange {
+            do { try persist() } catch { snapshot = previous; throw error }
+        }
+        var removed = 0
+        // Exchanged directories remain owned by the compensation journal until
+        // it finishes. Failed/running rescue data is never disposable history.
+        for transaction in snapshot.transactions where transaction.status == .rolledBack {
+            guard let context = transaction.restorationContext else { continue }
+            if let path = context.centralStagedPath, fileManager.fileExists(atPath: path) {
+                let url = URL(fileURLWithPath: path).standardizedFileURL
+                guard url.deletingLastPathComponent().path == libraryDirectory.path,
+                      url.lastPathComponent == ".restore-\(transaction.id)", let update = transaction.libraryUpdate else {
+                    throw FileOperationError.invalidRelativePath(path)
+                }
+                try validateBackupRemovalPath(url)
+                let allowed = [update.previousRecord.fingerprint, update.updatedFingerprint]
+                guard allowed.contains(try fingerprinter.fingerprint(directory: url)) else { throw FileOperationError.fingerprintMismatch }
+                try fileManager.removeItem(at: url)
+                removed += 1
+            }
+            for (index, path) in context.stagedPaths.enumerated() {
+                guard index < transaction.backups.count else { throw FileOperationError.invalidRelativePath(path) }
+                let backup = transaction.backups[index]
+                let url = URL(fileURLWithPath: path).standardizedFileURL
+                guard fileManager.fileExists(atPath: url.path) else { continue }
+                let parent = URL(fileURLWithPath: backup.destinationPath).deletingLastPathComponent().standardizedFileURL
+                guard url.deletingLastPathComponent().path == parent.path,
+                      url.lastPathComponent.hasPrefix(".skillbox-restore-"),
+                      UUID(uuidString: String(url.lastPathComponent.dropFirst(".skillbox-restore-".count))) != nil,
+                      (try url.resourceValues(forKeys: [.isSymbolicLinkKey])).isSymbolicLink != true else {
+                    throw FileOperationError.invalidRelativePath(path)
+                }
+                let allowed = [backup.beforeFingerprint, backup.afterFingerprint].compactMap { $0 }
+                guard allowed.contains(try fingerprinter.fingerprint(directory: url)) else {
+                    throw FileOperationError.fingerprintMismatch
+                }
+                try fileManager.removeItem(at: url)
+                removed += 1
+            }
+        }
+        for path in plan.removablePaths.sorted() {
+            let url = URL(fileURLWithPath: path).standardizedFileURL
+            guard fileManager.fileExists(atPath: url.path) else { continue }
+            // Refuse symlinks anywhere below our own root; never follow a backup
+            // name out to an original or an application installation.
+            try validateBackupRemovalPath(url)
+            try fileManager.removeItem(at: url)
+            removed += 1
+        }
+        let previousAfterCleanup = snapshot
+        var cleanedRescueIDs = Set<UUID>()
+        for transaction in snapshot.transactions {
+            guard transaction.status == .rolledBack, let context = transaction.restorationContext else { continue }
+            let hasStage = (context.stagedPaths + [context.centralStagedPath].compactMap { $0 })
+                .contains { fileManager.fileExists(atPath: $0) }
+            let hasBackup = transaction.backups.contains { backup in
+                guard let relative = backup.backupRelativePath else { return false }
+                return fileManager.fileExists(atPath: transactionsDirectory.appendingPathComponent("\(transaction.id)/\(relative)").path)
+            }
+            guard !hasStage && !hasBackup else { continue }
+            let transactionRoot = transactionsDirectory.appendingPathComponent(transaction.id.uuidString)
+            for directory in [transactionRoot.appendingPathComponent("backups"), transactionRoot] {
+                guard fileManager.fileExists(atPath: directory.path) else { continue }
+                try validateBackupRemovalPath(directory)
+                // rmdir refuses unknown contents atomically; never recursively
+                // delete an internal journal directory to make it look clean.
+                let result = directory.withUnsafeFileSystemRepresentation { path in
+                    path.map { Darwin.rmdir($0) } ?? -1
+                }
+                if result != 0 { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            }
+            cleanedRescueIDs.insert(transaction.id)
+        }
+        snapshot.transactions.removeAll { cleanedRescueIDs.contains($0.id) }
+        if snapshot.transactions.count != previousAfterCleanup.transactions.count {
+            do { try persist() } catch { snapshot = previousAfterCleanup; throw error }
+        }
+        return removed
+    }
+
+    private func validateBackupRemovalPath(_ url: URL) throws {
+        var cursor = url.standardizedFileURL
+        while cursor.path != root.path {
+            guard cursor.path.hasPrefix(root.path + "/"),
+                  (try cursor.resourceValues(forKeys: [.isSymbolicLinkKey])).isSymbolicLink != true
+            else { throw FileOperationError.invalidRelativePath(url.path) }
+            cursor.deleteLastPathComponent()
+        }
+    }
 
     public func mostRecentRestorableDeletion() -> DeletedSkillBackup? {
         snapshot.transactions
@@ -292,6 +444,22 @@ public actor LibraryStore {
         try persist()
     }
 
+    /// A background read must never revive removed tracking or overwrite an
+    /// association/version that changed while the source was being checked.
+    public func recordLocalSourceCheck(_ state: LocalSourceState, expected: LocalSourceState) throws -> Bool {
+        guard state.skillID == expected.skillID,
+              snapshot.skills.contains(where: { $0.id == state.skillID && $0.source.kind == .localFolder }),
+              let index = snapshot.localSourceStates.firstIndex(where: { $0.skillID == expected.skillID }),
+              snapshot.localSourceStates[index] == expected
+        else { return false }
+        snapshot.localSourceStates[index] = state
+        do { try persist() } catch {
+            snapshot.localSourceStates[index] = expected
+            throw error
+        }
+        return true
+    }
+
     public func recordLocalSourceUpdate(_ state: LocalSourceState, transactionID: UUID) throws {
         guard let transactionIndex = snapshot.transactions.firstIndex(where: { $0.id == transactionID }),
               snapshot.transactions[transactionIndex].libraryUpdate != nil
@@ -313,6 +481,7 @@ public actor LibraryStore {
 
     public func restoreLocalSourceState(_ backup: LibraryUpdateBackup) throws {
         guard backup.previousLocalSourceState != nil || backup.updatedLocalSourceFingerprint != nil else { return }
+        let previousStates = snapshot.localSourceStates
         let skillID = backup.previousRecord.id
         if let previous = backup.previousLocalSourceState {
             if let index = snapshot.localSourceStates.firstIndex(where: { $0.skillID == skillID }) {
@@ -323,7 +492,7 @@ public actor LibraryStore {
         } else {
             snapshot.localSourceStates.removeAll { $0.skillID == skillID }
         }
-        try persist()
+        do { try persist() } catch { snapshot.localSourceStates = previousStates; throw error }
     }
 
     public func stopTrackingLocalSource(skillID: UUID) throws {
@@ -393,6 +562,7 @@ public actor LibraryStore {
 
     public func restoreGitHubSourceState(_ backup: LibraryUpdateBackup) throws {
         guard backup.previousSourceState != nil || backup.updatedSourceVersionIdentifier != nil else { return }
+        let previousStates = snapshot.sourceStates
         let skillID = backup.previousRecord.id
         if let previous = backup.previousSourceState {
             if let index = snapshot.sourceStates.firstIndex(where: { $0.skillID == skillID }) {
@@ -403,7 +573,7 @@ public actor LibraryStore {
         } else {
             snapshot.sourceStates.removeAll { $0.skillID == skillID }
         }
-        try persist()
+        do { try persist() } catch { snapshot.sourceStates = previousStates; throw error }
     }
 
     private func localCopySource(for record: SkillRecord) -> SkillSource {
@@ -495,7 +665,8 @@ public actor LibraryStore {
             }
         }
         let temporary = libraryDirectory.appendingPathComponent(".update-\(id.uuidString)-\(UUID().uuidString)")
-        defer { try? fileManager.removeItem(at: temporary) }
+        var mayRemoveTemporary = true
+        defer { if mayRemoveTemporary { try? fileManager.removeItem(at: temporary) } }
         try SafeFileOperations.copyDirectory(from: candidate.sourceURL, to: temporary, fileManager: fileManager)
         guard try fingerprinter.fingerprint(directory: temporary) == candidate.fingerprint else {
             try? fileManager.removeItem(at: temporary)
@@ -514,7 +685,19 @@ public actor LibraryStore {
         guard try fingerprinter.fingerprint(directory: content) == old.fingerprint else {
             throw LibraryStoreError.centralContentChanged
         }
-        _ = try fileManager.replaceItemAt(content, withItemAt: temporary)
+        try exchangeRestorationDirectories(content, temporary)
+        mayRemoveTemporary = false
+        // The exchanged directory is the actual old content. Preserve it if
+        // either verification or exchanging back fails; it is no longer just
+        // a disposable candidate copy.
+        guard (try? fingerprinter.fingerprint(directory: temporary)) == old.fingerprint else {
+            if (try? fingerprinter.fingerprint(directory: content)) == candidate.fingerprint,
+               (try? exchangeRestorationDirectories(content, temporary)) != nil {
+                mayRemoveTemporary = true
+                throw LibraryStoreError.centralContentChanged
+            }
+            throw LibraryStoreError.centralUpdateRecoveryFailed
+        }
         snapshot.skills[index].canonicalName = candidate.canonicalName
         snapshot.skills[index].displayName = candidate.displayName
         snapshot.skills[index].description = candidate.description
@@ -526,14 +709,20 @@ public actor LibraryStore {
             try persist()
         } catch {
             snapshot.skills[index] = old
-            try? fileManager.removeItem(at: content)
-            try? SafeFileOperations.copyDirectory(from: archived, to: content, fileManager: fileManager)
+            guard (try? fingerprinter.fingerprint(directory: content)) == candidate.fingerprint,
+                  (try? fingerprinter.fingerprint(directory: temporary)) == old.fingerprint,
+                  (try? exchangeRestorationDirectories(content, temporary)) != nil else {
+                throw LibraryStoreError.centralUpdateRecoveryFailed
+            }
+            mayRemoveTemporary = true
             throw error
         }
+        mayRemoveTemporary = true
         return snapshot.skills[index]
     }
 
-    public func restoreSkillVersion(_ backup: LibraryUpdateBackup) throws -> SkillRecord {
+    public func restoreSkillVersion(_ backup: LibraryUpdateBackup, stagingURL: URL? = nil,
+                                    retainExchangedContent: Bool = false) throws -> SkillRecord {
         let previous = backup.previousRecord
         guard let index = snapshot.skills.firstIndex(where: { $0.id == previous.id }) else {
             throw LibraryStoreError.candidateChanged
@@ -563,22 +752,56 @@ public actor LibraryStore {
               try fingerprinter.fingerprint(directory: previousContent) == previous.fingerprint
         else { throw LibraryStoreError.candidateChanged }
         let currentArchive = versions.appendingPathComponent(actualFingerprint)
-        if !fileManager.fileExists(atPath: currentArchive.path) {
+        if fileManager.fileExists(atPath: currentArchive.path) {
+            guard try fingerprinter.fingerprint(directory: currentArchive) == actualFingerprint else {
+                throw LibraryStoreError.centralArchiveChanged
+            }
+        } else {
             try SafeFileOperations.copyDirectory(from: content, to: currentArchive, fileManager: fileManager)
         }
-        let temporary = libraryDirectory.appendingPathComponent(".restore-\(previous.id.uuidString)-\(UUID().uuidString)")
-        try SafeFileOperations.copyDirectory(from: previousContent, to: temporary, fileManager: fileManager)
-        _ = try fileManager.replaceItemAt(content, withItemAt: temporary)
+        let temporary = stagingURL ?? libraryDirectory.appendingPathComponent(".restore-\(previous.id.uuidString)-\(UUID().uuidString)")
+        var mayRemoveTemporary = !retainExchangedContent
+        defer { if mayRemoveTemporary { try? fileManager.removeItem(at: temporary) } }
+        if fileManager.fileExists(atPath: temporary.path) {
+            guard try fingerprinter.fingerprint(directory: temporary) == previous.fingerprint else {
+                throw LibraryStoreError.centralArchiveChanged
+            }
+        } else {
+            try SafeFileOperations.copyDirectory(from: previousContent, to: temporary, fileManager: fileManager)
+        }
+        guard try fingerprinter.fingerprint(directory: temporary) == previous.fingerprint else {
+            throw FileOperationError.fingerprintMismatch
+        }
+        try exchangeRestorationDirectories(content, temporary)
+        mayRemoveTemporary = false
+        // Verify the actual directory exchanged out, not an earlier observation.
+        guard (try? fingerprinter.fingerprint(directory: temporary)) == actualFingerprint else {
+            if (try? exchangeRestorationDirectories(content, temporary)) != nil { mayRemoveTemporary = !retainExchangedContent }
+            throw LibraryStoreError.centralContentChanged
+        }
         snapshot.skills[index] = previous
         do { try persist() } catch {
             snapshot.skills[index] = current
-            let rollback = libraryDirectory.appendingPathComponent(".restore-rollback-\(previous.id.uuidString)-\(UUID().uuidString)")
-            if (try? SafeFileOperations.copyDirectory(from: currentArchive, to: rollback, fileManager: fileManager)) != nil {
-                _ = try? fileManager.replaceItemAt(content, withItemAt: rollback)
+            // Only undo our own replacement; newer external contents stay put.
+            if (try? fingerprinter.fingerprint(directory: content)) == previous.fingerprint,
+               (try? fingerprinter.fingerprint(directory: temporary)) == actualFingerprint,
+               (try? exchangeRestorationDirectories(content, temporary)) != nil {
+                mayRemoveTemporary = !retainExchangedContent
             }
             throw error
         }
+        mayRemoveTemporary = !retainExchangedContent
         return previous
+    }
+
+    private func exchangeRestorationDirectories(_ first: URL, _ second: URL) throws {
+        let result = first.withUnsafeFileSystemRepresentation { firstPath in
+            second.withUnsafeFileSystemRepresentation { secondPath in
+                guard let firstPath, let secondPath else { return Int32(-1) }
+                return renameatx_np(AT_FDCWD, firstPath, AT_FDCWD, secondPath, UInt32(RENAME_SWAP))
+            }
+        }
+        guard result == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
     }
 
     public func contentURL(for skill: SkillRecord) -> URL {
@@ -828,17 +1051,63 @@ public actor LibraryStore {
     }
 
     public func recordTransaction(_ transaction: SyncTransaction) throws {
+        let previousTransactions = snapshot.transactions
+        var transaction = transaction
         if let index = snapshot.transactions.firstIndex(where: { $0.id == transaction.id }) {
+            transaction.backupsExpiredAt = snapshot.transactions[index].backupsExpiredAt ?? transaction.backupsExpiredAt
             snapshot.transactions[index] = transaction
         } else {
             snapshot.transactions.insert(transaction, at: 0)
         }
-        try persist()
+        do { try persist() } catch { snapshot.transactions = previousTransactions; throw error }
+        if transaction.status == .succeeded || transaction.status == .undone {
+            // Retention failure must not turn a successful write into a rollback.
+            // Failures remain visible through currentBackupMaintenanceIssue()
+            // and are retried on launch, manual checks, or the next success.
+            _ = try? pruneRollbackBackups()
+        }
+    }
+
+    /// Save the current central version before any destination is changed.
+    func prepareRestorationRescue(_ backup: LibraryUpdateBackup) throws {
+        let content = contentURL(for: backup.previousRecord)
+        let fingerprint = backup.previousRecord.fingerprint
+        guard try fingerprinter.fingerprint(directory: content) == fingerprint else {
+            throw LibraryStoreError.centralContentChanged
+        }
+        let archive = content.deletingLastPathComponent().appendingPathComponent("versions/\(fingerprint)")
+        if fileManager.fileExists(atPath: archive.path) {
+            guard try fingerprinter.fingerprint(directory: archive) == fingerprint else { throw LibraryStoreError.centralArchiveChanged }
+            return
+        }
+        try fileManager.createDirectory(at: archive.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let staged = archive.deletingLastPathComponent().appendingPathComponent(".rescue-\(UUID())")
+        defer { try? fileManager.removeItem(at: staged) }
+        try SafeFileOperations.copyDirectory(from: content, to: staged, fileManager: fileManager)
+        guard try fingerprinter.fingerprint(directory: staged) == fingerprint else { throw FileOperationError.fingerprintMismatch }
+        try fileManager.moveItem(at: staged, to: archive)
+    }
+
+    /// Both journals and their ownership metadata change in one saved snapshot.
+    /// This is a recoverable cross-directory operation, not a multi-volume atomic commit.
+    func finishRestoration(original: SyncTransaction, rescue: SyncTransaction,
+                           installations: [ManagedInstallation], assignments: [Assignment]) throws {
+        let previous = snapshot
+        for transaction in [original, rescue] {
+            if let index = snapshot.transactions.firstIndex(where: { $0.id == transaction.id }) {
+                snapshot.transactions[index] = transaction
+            } else { snapshot.transactions.insert(transaction, at: 0) }
+        }
+        snapshot.installations = installations
+        snapshot.assignments = assignments
+        do { try persist() } catch { snapshot = previous; throw error }
+        _ = try? pruneRollbackBackups()
     }
 
     public func replaceInstallations(_ installations: [ManagedInstallation]) throws {
+        let previousInstallations = snapshot.installations
         snapshot.installations = installations
-        try persist()
+        do { try persist() } catch { snapshot.installations = previousInstallations; throw error }
     }
 
     private func recordRoot(for record: SkillRecord) -> URL {

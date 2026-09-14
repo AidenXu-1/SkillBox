@@ -817,6 +817,19 @@ public struct LibraryRestorationJournal: Codable, Hashable, Sendable {
     }
 }
 
+/// A compensation journal is internal: it never offers a user-facing undo.
+public struct SyncRestorationContext: Codable, Hashable, Sendable {
+    public var originalTransactionID: UUID
+    public var originalStatus: TransactionStatus
+    public var originalCompletedAt: Date?
+    public var originalErrors: [String]
+    public var originalBackupsExpiredAt: Date?
+    public var installations: [ManagedInstallation]
+    public var assignments: [Assignment]
+    public var stagedPaths: [String]
+    public var centralStagedPath: String? = nil
+}
+
 public struct SyncTransaction: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var createdAt: Date
@@ -828,6 +841,14 @@ public struct SyncTransaction: Codable, Hashable, Identifiable, Sendable {
     public var libraryUpdate: LibraryUpdateBackup?
     public var libraryDeletion: LibraryDeletionJournal?
     public var libraryRestoration: LibraryRestorationJournal?
+    public var backupsExpiredAt: Date?
+    public var restorationContext: SyncRestorationContext?
+
+    public func canRestore(at now: Date = Date()) -> Bool {
+        guard restorationContext == nil, status == .succeeded || status == .undoBlocked, backupsExpiredAt == nil else { return false }
+        if libraryDeletion != nil || libraryRestoration != nil { return true }
+        return now.timeIntervalSince(createdAt) < BackupRetentionPolicy.lifetime
+    }
 
     public init(
         id: UUID = UUID(),
@@ -839,7 +860,9 @@ public struct SyncTransaction: Codable, Hashable, Identifiable, Sendable {
         errors: [String] = [],
         libraryUpdate: LibraryUpdateBackup? = nil,
         libraryDeletion: LibraryDeletionJournal? = nil,
-        libraryRestoration: LibraryRestorationJournal? = nil
+        libraryRestoration: LibraryRestorationJournal? = nil,
+        backupsExpiredAt: Date? = nil,
+        restorationContext: SyncRestorationContext? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -851,6 +874,8 @@ public struct SyncTransaction: Codable, Hashable, Identifiable, Sendable {
         self.libraryUpdate = libraryUpdate
         self.libraryDeletion = libraryDeletion
         self.libraryRestoration = libraryRestoration
+        self.backupsExpiredAt = backupsExpiredAt
+        self.restorationContext = restorationContext
     }
 }
 

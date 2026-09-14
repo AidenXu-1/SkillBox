@@ -323,15 +323,15 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .navigationTitle(selection?.rawValue ?? "SkillBox")
             .toolbar {
-                if model.isBusy && model.operationProgress == nil {
+                if (model.isBusy || model.isCheckingLocalSources) && model.operationProgress == nil {
                     ProgressView()
                         .controlSize(.small)
                 }
-                Button { Task { await model.scanInstalledSkills() } } label: {
-                    Label("刷新安装状态", systemImage: "arrow.clockwise")
+                Button { Task { await model.refreshSkills() } } label: {
+                    Label("刷新安装状态与本地来源", systemImage: "arrow.clockwise")
                 }
-                .help("刷新应用位置与已管理的安装状态")
-                .disabled(model.isBusy)
+                .help("检查本地开发文件夹的变化，并刷新应用安装状态；GitHub 更新可在来源菜单中检查")
+                .disabled(model.isBusy || model.isCheckingLocalSources)
             }
             .overlay(alignment: .topTrailing) {
                 if let visibleStatusMessage, !model.isBusy {
@@ -2805,7 +2805,7 @@ private struct LocalSourceCard: View {
                     Spacer(minLength: 12)
                     Button(primaryTitle) { primaryAction(state) }
                         .buttonStyle(SkillBoxHoverButtonStyle(kind: isActionable ? .primary : .secondary))
-                        .disabled(model.isBusy)
+                        .disabled(model.isBusy || model.isCheckingLocalSources)
                     Menu {
                         Button("在 Finder 中显示") { model.openLocalSource(state) }
                         Button("编辑可使用内容") {
@@ -2877,7 +2877,8 @@ private struct LocalSourceCard: View {
     }
 
     private var title: String {
-        switch state?.status {
+        if state?.lastCheckError != nil { return "本地来源检查失败" }
+        return switch state?.status {
         case .current: "本地开发源已核对"
         case .updateAvailable: "有可使用内容更新"
         case .packageReviewRequired: "需要确认可使用内容"
@@ -2888,6 +2889,7 @@ private struct LocalSourceCard: View {
 
     private var subtitle: String {
         guard let state else { return "" }
+        if let error = state.lastCheckError { return error }
         switch state.status {
         case .current:
             if let checked = state.lastCheckedAt {
@@ -2904,7 +2906,9 @@ private struct LocalSourceCard: View {
     }
 
     private var primaryTitle: String {
-        switch state?.status {
+        if model.isCheckingLocalSources { return "正在检查…" }
+        if state?.lastCheckError != nil { return "重新检查" }
+        return switch state?.status {
         case .updateAvailable: "查看更新"
         case .packageReviewRequired: "确认内容"
         case .sourceUnavailable: "重新关联"
@@ -2913,7 +2917,8 @@ private struct LocalSourceCard: View {
     }
 
     private var icon: String {
-        switch state?.status {
+        if state?.lastCheckError != nil { return "exclamationmark.circle" }
+        return switch state?.status {
         case .current: "checkmark.circle.fill"
         case .updateAvailable: "arrow.down.circle.fill"
         case .packageReviewRequired: "checklist"
@@ -2923,7 +2928,8 @@ private struct LocalSourceCard: View {
     }
 
     private var color: Color {
-        switch state?.status {
+        if state?.lastCheckError != nil { return .orange }
+        return switch state?.status {
         case .current: .green
         case .updateAvailable: .blue
         case .packageReviewRequired: .orange
@@ -2933,10 +2939,14 @@ private struct LocalSourceCard: View {
     }
 
     private var isActionable: Bool {
-        state?.status != .current
+        state?.lastCheckError != nil || state?.status != .current
     }
 
     private func primaryAction(_ state: LocalSourceState) {
+        if state.lastCheckError != nil {
+            Task { await model.checkLocalSource(skill) }
+            return
+        }
         switch state.status {
         case .current, .updateAvailable:
             Task { await model.checkLocalSource(skill) }
@@ -3028,7 +3038,7 @@ private struct SkillDetailView: View {
                 detailHeader
                 detailMetaGrid
 
-                if sourceNeedsAttention {
+                if sourceNeedsAttention || localState != nil {
                     sourceAttentionCard
                 }
 
@@ -3426,7 +3436,7 @@ private struct SkillDetailView: View {
             return githubState.lastCheckIssue != nil || githubState.status != .current
         }
         if let localState {
-            return localState.status != .current
+            return localState.lastCheckError != nil || localState.status != .current
         }
         return false
     }
@@ -3476,8 +3486,9 @@ private struct SkillDetailView: View {
             }
         }
         if let localState {
+            if localState.lastCheckError != nil { return "暂时无法检查" }
             return switch localState.status {
-            case .current: "与开发文件夹一致"
+            case .current: localState.lastCheckedAt == nil ? "尚未检查" : "上次检查一致"
             case .updateAvailable: "开发内容有更新"
             case .packageReviewRequired: "更新前需确认"
             case .sourceUnavailable: "找不到开发文件夹"
@@ -5214,6 +5225,9 @@ private struct AgentAssignmentSheet: View {
 private struct HistoryView: View {
     @ObservedObject var model: AppModel
     var embeddedInSettings = false
+    private var visibleTransactions: [SyncTransaction] {
+        model.snapshot.transactions.filter { $0.restorationContext == nil }
+    }
 
     var body: some View {
         ScrollView {
@@ -5227,10 +5241,10 @@ private struct HistoryView: View {
                         subtitle: "安装、更新和卸载都会留下记录，需要时可以恢复到操作前。"
                     )
                 }
-                if model.snapshot.transactions.isEmpty {
+                if visibleTransactions.isEmpty {
                     ContentUnavailableView("还没有操作记录", systemImage: "clock.arrow.circlepath", description: Text("第一次安装、更新或卸载完成后会出现在这里"))
                 } else {
-                    ForEach(model.snapshot.transactions) { transaction in
+                    ForEach(visibleTransactions) { transaction in
                         HistoryTransactionCard(model: model, transaction: transaction)
                     }
                 }
@@ -5279,9 +5293,13 @@ private struct HistoryTransactionCard: View {
                 Spacer()
                 Button(showDetails ? "收起详情" : "查看详情") { showDetails.toggle() }
                     .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                if transaction.status == .succeeded {
+                if transaction.canRestore() {
                     Button("恢复到操作前") { _ = model.prepareUndoPreview(transaction) }
                         .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                } else if transaction.status == .succeeded && transaction.libraryDeletion == nil {
+                    Text("回退备份已到期或被替代")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             if showDetails {
@@ -5336,13 +5354,32 @@ private struct HistoryTransactionCard: View {
     }
 }
 
+struct UndoPreviewContent {
+    let transaction: SyncTransaction
+
+    var installationActions: [SyncAction] {
+        transaction.actions.filter { [.create, .update, .remove, .takeover].contains($0.kind) }
+    }
+
+    var savedVersion: SkillRecord? { transaction.libraryUpdate?.previousRecord }
+    var canConfirm: Bool { transaction.canRestore() && (savedVersion != nil || !installationActions.isEmpty) }
+    var summary: String {
+        if savedVersion != nil {
+            return installationActions.isEmpty ? "将恢复保存版本" : "将恢复保存版本和 \(installationActions.count) 个安装位置"
+        }
+        return "将恢复 \(installationActions.count) 个安装位置"
+    }
+    var confirmation: String {
+        if savedVersion != nil { return installationActions.isEmpty ? "确认恢复保存版本" : "确认恢复" }
+        return "确认恢复 \(installationActions.count) 个安装位置"
+    }
+}
+
 private struct UndoPreviewView: View {
     @ObservedObject var model: AppModel
     let transaction: SyncTransaction
 
-    private var visibleActions: [SyncAction] {
-        transaction.actions.filter { [.create, .update, .remove, .takeover].contains($0.kind) }
-    }
+    private var content: UndoPreviewContent { .init(transaction: transaction) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -5362,11 +5399,29 @@ private struct UndoPreviewView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("将恢复 \(visibleActions.count) 个位置")
+                Text(content.summary)
                     .font(.headline)
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(visibleActions) { action in
+                        if let record = content.savedVersion {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "shippingbox")
+                                    .foregroundStyle(.blue)
+                                    .frame(width: 22)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("我的 Skills · \(record.displayName)")
+                                        .font(.callout.weight(.medium))
+                                    Text("恢复这次更新前保存的版本")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                            }
+                            .padding(11)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 10))
+                        }
+                        ForEach(content.installationActions) { action in
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: undoIcon(for: action.kind))
                                     .foregroundStyle(.blue)
@@ -5403,12 +5458,12 @@ private struct UndoPreviewView: View {
                     .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("确认恢复 \(visibleActions.count) 个位置") {
+                Button(content.confirmation) {
                     Task { await model.confirmPendingUndo() }
                 }
                 .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
                 .keyboardShortcut(.defaultAction)
-                .disabled(model.isBusy || visibleActions.isEmpty)
+                .disabled(model.isBusy || !content.canConfirm)
             }
         }
         .padding(24)
@@ -6117,6 +6172,32 @@ private struct SettingsView: View {
 
     @ViewBuilder
     private var storageContent: some View {
+        SettingsSectionHeading(title: "回退备份")
+
+        SettingsCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("只留上一版，保留 7 天")
+                            .font(.callout.weight(.semibold))
+                        Text("启动时自动检查，也可以在这里手动清理到期备份。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(model.isCheckingRollbackBackups ? "正在检查…" : "检查并清理备份") {
+                        Task { await model.cleanRollbackBackups() }
+                    }
+                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                    .disabled(model.isBusy || model.isCheckingRollbackBackups)
+                }
+                Text(model.backupCheckResult ?? "仅在本机检查，不调用 AI。到期后在下次启动或手动检查时清理。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+
         SettingsSectionHeading(title: "SkillBox 保存位置")
 
         SettingsCard {
@@ -6345,7 +6426,7 @@ private struct SettingsNavigationPane: View {
         case .storage:
             return "\(model.discoverySessions.count) 条寻找记录 · \(ByteCountFormatter.string(fromByteCount: model.discoveryStorageBytes, countStyle: .file))"
         case .history:
-            guard let latest = model.snapshot.transactions.first else { return "还没有操作记录" }
+            guard let latest = model.snapshot.transactions.first(where: { $0.restorationContext == nil }) else { return "还没有操作记录" }
             return "最近操作 · \(latest.createdAt.formatted(date: .omitted, time: .shortened))"
         case .privacy:
             return "读取、联网与密钥保护"

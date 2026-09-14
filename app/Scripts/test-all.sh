@@ -39,3 +39,5 @@ for (( offset = 1; offset <= ${#source_tests[@]}; offset += batch_size )); do
     filter="${(j:|:)batch}"
     swift test --filter "$filter"
 done
+
+python3 -m unittest discover -s Tests/Packaging -p 'test_rollback_backups.py'
