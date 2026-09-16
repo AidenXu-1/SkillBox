@@ -138,11 +138,14 @@ public enum DiscoveryRequestRouter {
     }
 
     private static func githubPathWithoutRequest(_ value: String) -> String {
-        // Preserve Unicode directory names; only split recognizable prose or
-        // punctuation. A Chinese character alone is not a URL boundary.
-        let boundary = #"[，。！？；、）】」》]|(?:请)?帮我(?:找到|找|查找|搜索|看看|查看|安装)|(?:这个|这份|这款)(?:\s*)[Ss][Kk][Ii][Ll][Ll]"#
-        guard let range = value.range(of: boundary, options: .regularExpression) else { return value }
-        return String(value[..<range.lowerBound])
+        // A directory may itself contain punctuation or words like 帮我找图.
+        // Only a complete request at the end of the token can be separated;
+        // a whole path component with that name must remain a directory.
+        let suffix = #"[，。！？；、]*(?:请)?帮我(?:找到|找|查找|搜索|看看|查看|安装)(?:一下)?(?:这个|这份|这款)(?:Agent)?Skills?[。！？!.,，]*$"#
+        guard let range = value.range(of: suffix, options: [.regularExpression, .caseInsensitive]) else { return value }
+        let prefix = String(value[..<range.lowerBound])
+        guard !prefix.isEmpty, !prefix.hasSuffix("/") else { return value }
+        return prefix
     }
 
     private static func bareRepositoryTarget(in text: String) -> DiscoveryTarget? {

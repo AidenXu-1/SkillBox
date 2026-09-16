@@ -20,8 +20,8 @@
 
 ## 本机身份与回退
 
-- 当前 App：`/Users/aiden/Applications/SkillBox.app`，0.2.4 Build 15。
+- 当前 App：`~/Applications/SkillBox.app`，0.2.4 Build 15。
 - 程序 SHA-256：`116fe03eea985bb71a19b8fe56c98493f14d341c3c18744854c2ffa068a6cf29`。
 - 更新前退出 App，通过现有脚本建立上一版 App 和完整用户资料备份；按已有一份/7天规则淘汰被替代的旧备份。
-- 本次备份：`/Users/aiden/AidenWorkflow/2-AI/01产品开发/01APP/SkillBox/scratch/rollback-backups/20260916-190231-333074d7-229f-4ed3-8980-02d29dc840f5`。登记到期为北京时间 2026-09-24 03:02。
+- 本次备份：`scratch/rollback-backups/20260916-190231-333074d7-229f-4ed3-8980-02d29dc840f5`。登记到期为北京时间 2026-09-24 03:02。
 - 测试、打包、备份回执与落盘核验：`scratch/storage-analyzer-diagnosis/`。
