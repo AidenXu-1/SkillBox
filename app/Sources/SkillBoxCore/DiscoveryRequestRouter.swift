@@ -128,13 +128,21 @@ public enum DiscoveryRequestRouter {
         let repository = values[1].replacingOccurrences(of: ".git", with: "", options: [.anchored, .backwards])
         let fullName = "\(owner)/\(repository)"
         let revision = values.count > 2 ? values[2] : nil
-        var path = values.count > 3 ? cleanPath(values[3]) : nil
+        var path = values.count > 3 ? cleanPath(githubPathWithoutRequest(values[3])) : nil
         if path?.lowercased().hasSuffix("/skill.md") == true {
             path = String(path!.dropLast("/SKILL.md".count))
         } else if path?.lowercased() == "skill.md" {
             path = ""
         }
         return .init(kind: .repository, value: fullName, repositoryFullName: fullName, skillPath: path, revision: revision)
+    }
+
+    private static func githubPathWithoutRequest(_ value: String) -> String {
+        // Preserve Unicode directory names; only split recognizable prose or
+        // punctuation. A Chinese character alone is not a URL boundary.
+        let boundary = #"[，。！？；、）】」》]|(?:请)?帮我(?:找到|找|查找|搜索|看看|查看|安装)|(?:这个|这份|这款)(?:\s*)[Ss][Kk][Ii][Ll][Ll]"#
+        guard let range = value.range(of: boundary, options: .regularExpression) else { return value }
+        return String(value[..<range.lowerBound])
     }
 
     private static func bareRepositoryTarget(in text: String) -> DiscoveryTarget? {

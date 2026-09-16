@@ -581,7 +581,7 @@ struct SourceProviderTests {
 
     @Test("Confirmed updates download a complete immutable snapshot")
     func completeSnapshotDownload() async throws {
-        let fixture = try GitHubArchiveFixture()
+        let fixture = try GitHubArchiveFixture(includeSiblingSymlink: true)
         defer { fixture.remove() }
         let provider = GitHubSourceProvider(session: fixture.session())
         let version = GitHubRemoteVersion(
@@ -755,6 +755,43 @@ struct SourceProviderTests {
         #expect(candidate.source.revision == "main")
         #expect(candidate.riskReport.findings.contains { $0.category == .network && $0.severity == .info })
         removeRetainedGitHubTemporaryDirectory(for: candidate.sourceURL)
+    }
+
+    @Test("Selected Skill imports ignore and never extract sibling symlinks")
+    func selectedSkillIgnoresSiblingSymlink() async throws {
+        let fixture = try GitHubArchiveFixture(includeSiblingSymlink: true)
+        defer { fixture.remove() }
+        let provider = GitHubSourceProvider(session: fixture.session())
+        let candidates = try await provider.preview(locator: "https://github.com/example/skills/tree/main/skills/demo")
+        let candidate = try #require(candidates.first)
+        defer { removeRetainedGitHubTemporaryDirectory(for: candidate.sourceURL) }
+        #expect(candidates.count == 1)
+        #expect(candidate.source.skillPath == "skills/demo")
+        #expect(!FileManager.default.fileExists(atPath: candidate.sourceURL.deletingLastPathComponent().appendingPathComponent("demo-other").path))
+    }
+
+    @Test("ZIP wildcard characters in directory names stay literal", arguments: ["demo[1]", "demo*", "demo?"])
+    func selectedSkillEscapesArchivePatterns(directory: String) async throws {
+        let fixture = try GitHubArchiveFixture(includeSiblingSymlink: true, directoryName: directory)
+        defer { fixture.remove() }
+        let provider = GitHubSourceProvider(session: fixture.session())
+        let encoded = directory.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        let candidates = try await provider.preview(locator: "https://github.com/example/skills/tree/main/skills/" + encoded)
+        let candidate = try #require(candidates.first)
+        defer { removeRetainedGitHubTemporaryDirectory(for: candidate.sourceURL) }
+        #expect(candidate.source.skillPath == "skills/" + directory)
+        #expect(!FileManager.default.fileExists(atPath: candidate.sourceURL.deletingLastPathComponent().appendingPathComponent("demo-other").path))
+    }
+
+    @Test("Selected Skill still rejects its own symlinks")
+    func selectedSkillRejectsOwnSymlink() async throws {
+        let fixture = try GitHubArchiveFixture(includeSymlink: true)
+        defer { fixture.remove() }
+        let provider = GitHubSourceProvider(session: fixture.session())
+        do {
+            _ = try await provider.preview(locator: "https://github.com/example/skills/tree/main/skills/demo")
+            Issue.record("Expected unsafe archive rejection")
+        } catch GitHubSourceError.unsafeArchivePath { }
     }
 
     @Test("Archive file-count limits stop imports")
@@ -1209,15 +1246,23 @@ private struct GitHubArchiveFixture {
     let root: URL
     let archive: URL
 
-    init(includeSymlink: Bool = false) throws {
+    init(includeSymlink: Bool = false, includeSiblingSymlink: Bool = false, directoryName: String = "demo") throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("SkillBoxGitHubTests-\(UUID().uuidString)")
-        let repo = root.appendingPathComponent("skills-main/skills/demo")
+        let repo = root.appendingPathComponent("skills-main/skills/\(directoryName)")
         try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
         try "---\nname: demo\ndescription: Demo\n---\n\nRun curl https://example.com manually.\n".write(to: repo.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
         try "reference".write(to: repo.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
         if includeSymlink {
             try FileManager.default.createSymbolicLink(
                 at: repo.appendingPathComponent("outside-link"),
+                withDestinationURL: URL(fileURLWithPath: "/etc/passwd")
+            )
+        }
+        if includeSiblingSymlink {
+            let sibling = root.appendingPathComponent("skills-main/skills/demo-other")
+            try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(
+                at: sibling.appendingPathComponent("AGENTS.md"),
                 withDestinationURL: URL(fileURLWithPath: "/etc/passwd")
             )
         }
