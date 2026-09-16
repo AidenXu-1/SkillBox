@@ -388,6 +388,30 @@ struct DiscoveryTests {
         #expect(chinese.targets.first?.skillPath == "中文目录/技能")
     }
 
+    @Test("Chinese path punctuation and request-like directory names remain intact", arguments: [
+        "skills/文案（小红书）", "skills/帮我找图", "skills/这个Skill",
+        "skills/帮我找到这个Skill", "skills/文案、排版", "skills/文案【公众号】",
+        "skills/demo帮我找到这个Skill/assets",
+    ])
+    func githubURLPreservesChinesePath(path: String) {
+        for fileSuffix in ["", "/SKILL.md"] {
+            let decision = DiscoveryRequestRouter.classify(
+                message: "https://github.com/example/skills/tree/main/" + path + fileSuffix,
+                previousIntent: nil
+            )
+            #expect(decision.targets.first?.skillPath == path)
+        }
+    }
+
+    @Test("A complete adjacent request after a Chinese path preserves the directory")
+    func githubURLSeparatesRequestAfterChinesePath() {
+        let decision = DiscoveryRequestRouter.classify(
+            message: "https://github.com/example/skills/tree/main/skills/文案（小红书）帮我找到这个Skill。",
+            previousIntent: nil
+        )
+        #expect(decision.targets.first?.skillPath == "skills/文案（小红书）")
+    }
+
     @Test("明确的 Skill 名直接进入精确查找")
     func requestRoutingRecognizesExactSkillName() {
         let decision = DiscoveryRequestRouter.classify(
