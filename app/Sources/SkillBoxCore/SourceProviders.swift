@@ -452,50 +452,13 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         let archiveURL = URL(string: "https://codeload.github.com/\(reference.owner)/\(reference.repository)/zip/\(revision)")!
         let data = try await downloadData(request: URLRequest(url: archiveURL))
 
-        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("SkillBoxGitHub-\(UUID().uuidString)")
-        let archive = temporary.appendingPathComponent("source.zip")
-        let extracted = temporary.appendingPathComponent("extracted")
-        var retainTemporaryDirectory = false
-        defer {
-            if !retainTemporaryDirectory { try? FileManager.default.removeItem(at: temporary) }
-        }
-        try FileManager.default.createDirectory(at: extracted, withIntermediateDirectories: true)
-        try data.write(to: archive, options: .atomic)
-
-        let entries = try await listArchive(archive)
-        guard entries.count <= limits.maximumFileCount else { throw GitHubSourceError.tooManyFiles }
-        for entry in entries {
-            let components = entry.split(separator: "/", omittingEmptySubsequences: false)
-            if entry.hasPrefix("/") || components.contains("..") { throw GitHubSourceError.unsafeArchivePath(entry) }
-        }
-        let metadata = try await run("/usr/bin/unzip", arguments: ["-Z", "-l", archive.path])
-        if metadata.split(separator: "\n").contains(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("l") }) {
-            throw GitHubSourceError.unsafeArchivePath("压缩包包含软链接")
-        }
-        let expandedBytes = try await archiveExpandedSize(archive)
-        guard expandedBytes <= limits.maximumExpandedBytes else { throw GitHubSourceError.archiveTooLarge }
-        try await run("/usr/bin/ditto", arguments: ["-x", "-k", archive.path, extracted.path])
-        try validateExpandedTree(extracted)
-
-        let repositoryRoot = try archiveContentRoot(in: extracted)
-        let selectedRoot = reference.skillPath.map { repositoryRoot.appendingPathComponent($0) } ?? repositoryRoot
-        let result = await scanner.scan(roots: [selectedRoot], sourceName: { _ in "GitHub" })
-        guard !result.candidates.isEmpty else { throw GitHubSourceError.noSkillsFound }
-        let candidates = result.candidates.map { candidate in
-            var updated = candidate
-            let relative = String(candidate.sourceURL.standardizedFileURL.path.dropFirst(repositoryRoot.standardizedFileURL.path.count + 1))
-            updated.source = .init(
-                kind: .github,
-                displayName: "\(reference.owner)/\(reference.repository)",
-                locator: locator,
-                repository: "\(reference.owner)/\(reference.repository)",
-                revision: revision,
-                skillPath: relative
-            )
-            return updated
-        }
-        retainTemporaryDirectory = true
-        return candidates
+        return try await extractCandidates(
+            data: data,
+            repositoryFullName: "\(reference.owner)/\(reference.repository)",
+            locator: locator,
+            revision: revision,
+            selectedSkillPath: reference.skillPath
+        )
     }
 
     public func preview(locator: String, trackingMode: GitHubTrackingMode) async throws -> GitHubSnapshot {
@@ -894,12 +857,19 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
             let components = entry.split(separator: "/", omittingEmptySubsequences: false)
             if entry.hasPrefix("/") || components.contains("..") { throw GitHubSourceError.unsafeArchivePath(entry) }
         }
-        let metadata = try await run("/usr/bin/unzip", arguments: ["-Z", "-l", archive.path])
+        // Only selected entries are ever expanded. Sibling links cannot affect
+        // this Skill, while traversal and resource bounds remain archive-wide.
+        let selection = try archiveSelection(entries: entries, skillPath: archiveIsReleaseAsset ? nil : selectedSkillPath)
+        let metadata = try await run("/usr/bin/unzip", arguments: ["-Z", "-l", archive.path] + selection)
         if metadata.split(separator: "\n").contains(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("l") }) {
             throw GitHubSourceError.unsafeArchivePath("压缩包包含软链接")
         }
         guard try await archiveExpandedSize(archive) <= limits.maximumExpandedBytes else { throw GitHubSourceError.archiveTooLarge }
-        try await run("/usr/bin/ditto", arguments: ["-x", "-k", archive.path, extracted.path])
+        if selection.isEmpty {
+            try await run("/usr/bin/ditto", arguments: ["-x", "-k", archive.path, extracted.path])
+        } else {
+            try await run("/usr/bin/unzip", arguments: ["-q", archive.path] + selection + ["-d", extracted.path])
+        }
         try Task.checkCancellation()
         try validateExpandedTree(extracted)
         let repositoryRoot = try archiveContentRoot(in: extracted)
@@ -927,6 +897,30 @@ public struct GitHubSourceProvider: SourceProvider, GitHubRemoteVersionChecking,
         }
         retainTemporaryDirectory = true
         return candidates
+    }
+
+    private func archiveSelection(entries: [String], skillPath: String?) throws -> [String] {
+        guard let skillPath, !skillPath.isEmpty else { return [] }
+        let components = skillPath.split(separator: "/", omittingEmptySubsequences: false)
+        guard !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }),
+              !skillPath.contains("\\")
+        else { throw GitHubSourceError.unsafeArchivePath(skillPath) }
+        let roots = Set(entries.compactMap { $0.split(separator: "/").first.map(String.init) }
+            .filter { $0 != "__MACOSX" })
+        guard roots.count == 1, let root = roots.first else {
+            throw GitHubSourceError.extractionFailed("无法确定仓库根目录")
+        }
+        let prefix = "\(root)/\(skillPath)/"
+        guard entries.contains(where: { $0.hasPrefix(prefix) && !$0.hasSuffix("/") }) else {
+            throw GitHubSourceError.skillPathMissing(skillPath)
+        }
+        // unzip interprets patterns even without a shell. Escape literal folder
+        // names so brackets or wildcards never widen the selected subtree.
+        let escaped = prefix.reduce(into: "") { result, character in
+            if "\\*?[]".contains(character) { result.append("\\") }
+            result.append(character)
+        }
+        return [escaped + "*"]
     }
 
     private func listArchive(_ archive: URL) async throws -> [String] {

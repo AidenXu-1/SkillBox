@@ -370,6 +370,24 @@ struct DiscoveryTests {
         #expect(decision.executionQueries == ["repo:openai/skills"])
     }
 
+    @Test("GitHub URL separates adjacent Chinese requests and preserves Chinese directories")
+    func githubURLSeparatesAdjacentRequest() {
+        for suffix in ["帮我找到这个Skill。", "，帮我找到这个Skill。", " 这个 Skill", "\n帮我找到这个Skill。"] {
+            let decision = DiscoveryRequestRouter.classify(
+                message: "https://github.com/KKKKhazix/khazix-skills/tree/main/storage-analyzer" + suffix,
+                previousIntent: nil
+            )
+            #expect(decision.route == .exact)
+            #expect(decision.targets.first?.skillPath == "storage-analyzer")
+            #expect(decision.targets.first?.revision == "main")
+        }
+        let chinese = DiscoveryRequestRouter.classify(
+            message: "帮我找 https://github.com/example/skills/tree/main/中文目录/技能 这个 Skill",
+            previousIntent: nil
+        )
+        #expect(chinese.targets.first?.skillPath == "中文目录/技能")
+    }
+
     @Test("明确的 Skill 名直接进入精确查找")
     func requestRoutingRecognizesExactSkillName() {
         let decision = DiscoveryRequestRouter.classify(
