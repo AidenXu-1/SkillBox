@@ -32,7 +32,7 @@ enum SidebarLayout {
 }
 
 enum SettingsLayout {
-    static let pageTitles = ["AI 服务", "GitHub", "存储与记录", "操作记录与恢复", "隐私与安全"]
+    static let pageTitles = ["AI 服务", "GitHub", "存储与记录", "操作记录与恢复", "隐私与安全", "关于"]
     static let aiServiceSymbol = "brain.head.profile"
     static let githubUsesOfficialMark = true
     static let rowMinimumHitHeight: CGFloat = 62
@@ -266,6 +266,7 @@ private struct SidebarNavigationButton: View {
 }
 
 struct ContentView: View {
+    @EnvironmentObject private var applicationUpdater: ApplicationUpdater
     @ObservedObject var model: AppModel
     @State private var selection: SidebarItem? = .library
     @State private var selectedSkillID: UUID?
@@ -343,6 +344,11 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 1100, minHeight: 720)
+        .onChange(of: applicationUpdater.aboutRequest, initial: true) { _, request in
+            guard request != nil else { return }
+            selection = .settings
+            selectedSettingsPage = .about
+        }
         .sheet(isPresented: $model.showOnboarding) { OnboardingView(model: model) }
         .sheet(isPresented: $showGitHub) { GitHubImportView(model: model, isPresented: $showGitHub) }
         .sheet(item: $model.pendingReleasePackageChoice) { choice in
@@ -519,23 +525,37 @@ private struct OperationProgressView: View {
 private struct DeleteUndoToast: View {
     @ObservedObject var model: AppModel
     let deletion: DeletedSkillBackup
+    @State private var isHovering = false
+    @FocusState private var focusedAction: Int?
+    @Environment(\.scenePhase) private var scenePhase
+
+    private var shouldPause: Bool { isHovering || focusedAction != nil || scenePhase != .active }
 
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "trash").foregroundStyle(.secondary)
-            Text("已移到废纸篓：\(deletion.record.displayName)").font(.callout.weight(.medium))
+            VStack(alignment: .leading, spacing: 3) {
+                Text("已移到废纸篓：\(deletion.record.displayName)").font(.callout.weight(.medium)).lineLimit(1)
+                Text("可在「操作记录与恢复」中找回").font(.caption2).foregroundStyle(.secondary)
+            }
             Button("撤销") { Task { await model.restoreLastDeletedSkill() } }
                 .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                .focused($focusedAction, equals: 0)
+                .disabled(model.isBusy)
             Button { model.dismissDeleteUndo() } label: { Image(systemName: "xmark") }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("关闭")
+                .focused($focusedAction, equals: 1)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(.regularMaterial, in: Capsule())
         .overlay(Capsule().stroke(.separator.opacity(0.4)))
         .shadow(color: .black.opacity(0.10), radius: 16, y: 5)
+        .onHover { isHovering = $0 }
+        .onChange(of: shouldPause, initial: true) { _, paused in model.setDeleteUndoPaused(paused) }
+        .onDisappear { model.setDeleteUndoPaused(false) }
     }
 }
 
@@ -2368,7 +2388,7 @@ private struct SkillOrganizerSourceIconView: View {
     }
 }
 
-private struct GitHubSourceMark: View {
+struct GitHubSourceMark: View {
     var body: some View {
         Image(nsImage: Self.image)
             .resizable()
@@ -2426,7 +2446,7 @@ private enum OrganizerDragItem: Sendable {
     }
 }
 
-private struct SkillBoxHoverButtonStyle: ButtonStyle {
+struct SkillBoxHoverButtonStyle: ButtonStyle {
     enum Kind {
         case primary
         case secondary
@@ -5293,10 +5313,10 @@ private struct HistoryTransactionCard: View {
                 Spacer()
                 Button(showDetails ? "收起详情" : "查看详情") { showDetails.toggle() }
                     .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                if transaction.canRestore() {
+                if model.canRestoreTransaction(transaction) {
                     Button("恢复到操作前") { _ = model.prepareUndoPreview(transaction) }
                         .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
-                } else if transaction.status == .succeeded && transaction.libraryDeletion == nil {
+                } else if transaction.status == .succeeded && transaction.libraryDeletion == nil && transaction.libraryRestoration == nil {
                     Text("回退备份已到期或被替代")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -5325,6 +5345,12 @@ private struct HistoryTransactionCard: View {
     }
 
     private var title: String {
+        if let deletion = transaction.libraryDeletion {
+            return "删除了 \(deletion.deletion.record.displayName)"
+        }
+        if let restoration = transaction.libraryRestoration {
+            return "恢复了 \(restoration.restoredRecord.displayName)"
+        }
         if let update = transaction.libraryUpdate {
             return transaction.backups.isEmpty ? "更新了 \(update.previousRecord.displayName)" : "更新并重新安装了 \(update.previousRecord.displayName)"
         }
@@ -5362,14 +5388,17 @@ struct UndoPreviewContent {
     }
 
     var savedVersion: SkillRecord? { transaction.libraryUpdate?.previousRecord }
-    var canConfirm: Bool { transaction.canRestore() && (savedVersion != nil || !installationActions.isEmpty) }
+    var deletedSkill: SkillRecord? { transaction.libraryDeletion?.deletion.record }
+    var canConfirm: Bool { transaction.canRestore() && (savedVersion != nil || deletedSkill != nil || !installationActions.isEmpty) }
     var summary: String {
+        if let deletedSkill { return "将恢复 \(deletedSkill.displayName)" }
         if savedVersion != nil {
             return installationActions.isEmpty ? "将恢复保存版本" : "将恢复保存版本和 \(installationActions.count) 个安装位置"
         }
         return "将恢复 \(installationActions.count) 个安装位置"
     }
     var confirmation: String {
+        if deletedSkill != nil { return "确认恢复 Skill" }
         if savedVersion != nil { return installationActions.isEmpty ? "确认恢复保存版本" : "确认恢复" }
         return "确认恢复 \(installationActions.count) 个安装位置"
     }
@@ -5403,6 +5432,13 @@ private struct UndoPreviewView: View {
                     .font(.headline)
                 ScrollView {
                     LazyVStack(spacing: 8) {
+                        if let record = content.deletedSkill {
+                            Label("我的 Skills · \(record.displayName)", systemImage: "arrow.uturn.backward.circle")
+                                .font(.callout.weight(.medium))
+                                .padding(11)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 10))
+                        }
                         if let record = content.savedVersion {
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: "shippingbox")
@@ -5516,6 +5552,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
     case storage = "存储与记录"
     case history = "操作记录与恢复"
     case privacy = "隐私与安全"
+    case about = "关于"
 
     var id: String { rawValue }
 
@@ -5526,6 +5563,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .storage: "externaldrive.fill"
         case .history: "clock.arrow.circlepath"
         case .privacy: "checkmark.shield.fill"
+        case .about: "info.circle"
         }
     }
 
@@ -5536,6 +5574,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .storage: .blue
         case .history: .orange
         case .privacy: .green
+        case .about: .blue
         }
     }
 
@@ -5546,6 +5585,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .storage: "查看 SkillBox 在这台 Mac 上保存了什么，并清理不再需要的寻找记录。"
         case .history: "安装、更新和卸载都会留下记录，需要时可以恢复到操作前。"
         case .privacy: "了解 SkillBox 什么时候读取文件、访问网络，以及如何保护你的内容。"
+        case .about: "版本、更新与作者。"
         }
     }
 }
@@ -5673,6 +5713,8 @@ private struct SettingsView: View {
             HistoryView(model: model, embeddedInSettings: true)
         case .privacy:
             SettingsDetailPage(page: .privacy) { privacyContent }
+        case .about:
+            AboutSettingsView(model: model)
         }
     }
 
@@ -6430,6 +6472,8 @@ private struct SettingsNavigationPane: View {
             return "最近操作 · \(latest.createdAt.formatted(date: .omitted, time: .shortened))"
         case .privacy:
             return "读取、联网与密钥保护"
+        case .about:
+            return "版本、更新与作者"
         }
     }
 }

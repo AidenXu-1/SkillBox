@@ -12,6 +12,7 @@ if [[ ! -d "$bundle" || "$bundle" != *.app ]]; then
 fi
 
 required_files=(
+    "Contents/Resources/Sparkle-LICENSE.txt"
     "Contents/Info.plist"
     "Contents/MacOS/SkillBox"
     "Contents/Resources/Assets.car"
@@ -37,7 +38,9 @@ for relative in "${required_files[@]}"; do
     fi
 done
 
-unexpected=$(/usr/bin/find "$bundle" -type f -print | while IFS= read -r path; do
+python3 "$script_dir/verify-sparkle-bundle.py" "$bundle"
+
+unexpected=$(/usr/bin/find "$bundle" -path "$bundle/Contents/Frameworks/Sparkle.framework" -prune -o -type f -print | while IFS= read -r path; do
     relative=${path#"$bundle/"}
     if (( ${required_files[(Ie)$relative]} == 0 )); then
         print -r -- "$relative"
@@ -48,7 +51,7 @@ if [[ -n "$unexpected" ]]; then
     print -u2 -r -- "$unexpected"
     exit 65
 fi
-if /usr/bin/find "$bundle" -type l -print -quit | /usr/bin/grep -q .; then
+if /usr/bin/find "$bundle" -path "$bundle/Contents/Frameworks/Sparkle.framework" -prune -o -type l -print | /usr/bin/grep -q .; then
     print -u2 -r -- "Release bundle must not contain symbolic links."
     exit 65
 fi
@@ -68,7 +71,9 @@ if [[ -n "$unexpected_xattrs" ]]; then
 fi
 
 private_pattern='/Users/[A-Za-z0-9._-]+|/home/[A-Za-z0-9._-]+|AidenWorkflow|-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|[A-Za-z0-9._%+-]+@(gmail|qq|163|icloud|outlook)\.[A-Za-z]{2,}'
-if /usr/bin/find "$bundle" -type f -exec /usr/bin/grep -aE -q "$private_pattern" {} +; then
+# Vendor contents were compared byte-for-byte above, including their public
+# copyright contacts. Scan our own files for developer paths and credentials.
+if /usr/bin/find "$bundle" \( -path "$bundle/Contents/Frameworks/Sparkle.framework" -o -path "$bundle/Contents/Resources/Sparkle-LICENSE.txt" \) -prune -o -type f -exec /usr/bin/grep -aE -q "$private_pattern" {} +; then
     print -u2 -r -- "Release bundle contains a forbidden private path or credential-like value."
     exit 66
 fi

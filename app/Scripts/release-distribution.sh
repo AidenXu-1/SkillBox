@@ -59,6 +59,9 @@ manifest_name="SkillBox-$version-release.json"
 manifest_path="$distribution_root/$manifest_name"
 checksum_name="SkillBox-$version.sha256"
 checksum_path="$distribution_root/$checksum_name"
+update_name="SkillBox-$version-update.zip"
+update_path="$distribution_root/$update_name"
+feed_path="$distribution_root/appcast.xml"
 
 /bin/mkdir -p "$distribution_root"
 stage_root=$(/usr/bin/mktemp -d "$distribution_root/stage.XXXXXX")
@@ -97,6 +100,15 @@ icon_check="$distribution_root/AppIconIntegrationCheck"
     -ov \
     "$dmg_path"
 /usr/bin/hdiutil verify "$dmg_path"
+
+# This prepares the signed in-app update locally. Publishing the ZIP and the
+# feed remains a separately authorized release step.
+/bin/rm -f "$update_path"
+/usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app_bundle" "$update_path"
+python3 "$script_dir/create-update-feed.py" \
+    --app "$app_bundle" --archive "$update_path" \
+    --base-url "https://github.com/AidenXu-1/SkillBox/releases/download/v$version" \
+    --output "$feed_path" --notes "$app_root/Resources/UPDATE-NOTES.txt"
 
 # Bind the artifact to the exact current source snapshot, including uncommitted
 # and untracked non-ignored files, without falsely claiming that Git is clean.
@@ -153,6 +165,8 @@ fi
 /usr/bin/plutil -insert appExecutableSHA256 -string "$app_sha256" "$manifest_path"
 /usr/bin/plutil -insert diskImage -string "$dmg_name" "$manifest_path"
 /usr/bin/plutil -insert diskImageSHA256 -string "$dmg_sha256" "$manifest_path"
+/usr/bin/plutil -insert updateArchive -string "$update_name" "$manifest_path"
+/usr/bin/plutil -insert updateArchiveSHA256 -string "$(/usr/bin/shasum -a 256 "$update_path" | /usr/bin/awk '{print $1}')" "$manifest_path"
 /usr/bin/plutil -insert cdHash -string "$cdhash" "$manifest_path"
 /usr/bin/plutil -insert generatedAt -string "$generated_at" "$manifest_path"
 /usr/bin/plutil -convert json "$manifest_path"
@@ -160,7 +174,7 @@ fi
 
 (
     cd "$distribution_root"
-    /usr/bin/shasum -a 256 "$dmg_name" "$manifest_name"
+    /usr/bin/shasum -a 256 "$dmg_name" "$manifest_name" "$update_name" "appcast.xml"
 ) > "$checksum_path"
 
 print -r -- "Gatekeeper simulation: $gatekeeper_result (exit $gatekeeper_exit)"
@@ -170,3 +184,5 @@ fi
 print -r -- "$dmg_path"
 print -r -- "$manifest_path"
 print -r -- "$checksum_path"
+print -r -- "$update_path"
+print -r -- "$feed_path"

@@ -6,6 +6,51 @@ import Testing
 @MainActor
 @Suite("Skill removal flow")
 struct SkillRemovalFlowTests {
+    @Test("Interaction pauses the delete notice and closing it does not remove recovery")
+    func deletionNoticePausesAndCloses() async throws {
+        let fixture = try await makeManagedSkill()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let model = AppModel(libraryRoot: fixture.root.appendingPathComponent("store"), store: fixture.store,
+                             homeDirectory: fixture.root.appendingPathComponent("home"), startBootstrap: false,
+                             deleteUndoDuration: .milliseconds(40))
+        await model.reload()
+        model.setDeleteUndoPaused(true)
+        #expect(await model.deleteSkill(fixture.record, preservingInstalledCopies: true))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(model.lastDeletedSkill != nil)
+        model.setDeleteUndoPaused(false)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(model.lastDeletedSkill == nil)
+        #expect(await fixture.store.mostRecentRestorableDeletion() != nil)
+        let restarted = AppModel(libraryRoot: fixture.root.appendingPathComponent("store"), store: fixture.store,
+                                 homeDirectory: fixture.root.appendingPathComponent("home"), startBootstrap: false)
+        await restarted.reload()
+        #expect(restarted.lastDeletedSkill == nil)
+        #expect(restarted.snapshot.transactions.contains { $0.libraryDeletion != nil })
+    }
+
+    @Test("Delete notice expires while its persisted recovery remains usable")
+    func deletionNoticeExpiresWithoutLosingRecovery() async throws {
+        let fixture = try await makeManagedSkill()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let model = AppModel(libraryRoot: fixture.root.appendingPathComponent("store"), store: fixture.store,
+                             homeDirectory: fixture.root.appendingPathComponent("home"), startBootstrap: false)
+        await model.reload()
+        #expect(await model.deleteSkill(fixture.record, preservingInstalledCopies: true))
+        #expect(model.lastDeletedSkill != nil)
+        try await Task.sleep(for: .milliseconds(6250))
+        #expect(model.lastDeletedSkill == nil)
+        #expect(await fixture.store.mostRecentRestorableDeletion() != nil)
+        let transaction = try #require(model.snapshot.transactions.first { $0.libraryDeletion != nil })
+        #expect(model.prepareUndoPreview(transaction))
+        #expect(UndoPreviewContent(transaction: transaction).canConfirm)
+        await model.confirmPendingUndo()
+        #expect(model.snapshot.skills.contains { $0.id == fixture.record.id })
+        #expect(!model.canRestoreTransaction(transaction))
+        #expect(!model.prepareUndoPreview(transaction))
+        #expect(FileManager.default.fileExists(atPath: fixture.destination.appendingPathComponent("SKILL.md").path))
+    }
+
     @Test("Uninstall-all prepares the existing transaction preview without deleting the central Skill")
     func uninstallAllWaitsForConfirmedPlan() async throws {
         let fixture = try await makeManagedSkill()
