@@ -28,6 +28,10 @@ swift build "${build_arguments[@]}"
 
 /bin/rm -rf "$bundle_root"
 /bin/mkdir -p "$contents/MacOS" "$contents/Resources"
+sparkle_framework="$app_root/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+/bin/mkdir -p "$contents/Frameworks"
+/usr/bin/ditto "$sparkle_framework" "$contents/Frameworks/Sparkle.framework"
+/usr/bin/install -m 644 "$app_root/.build/checkouts/Sparkle/LICENSE" "$contents/Resources/Sparkle-LICENSE.txt"
 /usr/bin/install -m 755 "$app_root/.build/$configuration/SkillBox" "$contents/MacOS/SkillBox"
 /usr/bin/install -m 644 "$app_root/Config/Info.plist" "$contents/Info.plist"
 /usr/bin/install -m 644 "$app_root/Resources/SkillBox.icns" "$contents/Resources/SkillBox.icns"
@@ -65,7 +69,7 @@ fi
 /usr/bin/plutil -lint "$contents/Info.plist"
 /usr/bin/xattr -cr "$bundle_root"
 if [[ "$identity" == "-" ]]; then
-    /usr/bin/codesign --force --options runtime --timestamp=none --sign "$identity" "$bundle_root"
+    /usr/bin/codesign --force --options runtime --timestamp=none --entitlements "$app_root/Config/AdHoc.entitlements" --sign "$identity" "$bundle_root"
 else
     /usr/bin/codesign --force --options runtime --timestamp --sign "$identity" "$bundle_root"
 fi

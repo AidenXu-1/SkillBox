@@ -346,7 +346,7 @@ struct NavigationAndAgentCatalogTests {
         #expect(SidebarLayout.rowMinimumHitHeight >= 44)
     }
 
-    @Test("设置页使用已确认的五项任务目录和完整点击热区")
+    @Test("设置页包含关于与原有任务目录和完整点击热区")
     func settingsLayoutMatchesTheApprovedV31Hierarchy() {
         #expect(SettingsLayout.pageTitles == [
             "AI 服务",
@@ -354,6 +354,7 @@ struct NavigationAndAgentCatalogTests {
             "存储与记录",
             "操作记录与恢复",
             "隐私与安全",
+            "关于",
         ])
         #expect(SettingsLayout.aiServiceSymbol == "brain.head.profile")
         #expect(SettingsLayout.githubUsesOfficialMark)

@@ -219,7 +219,12 @@ final class AppModel: ObservableObject {
     @Published var githubLoginStatus = ""
     @Published var githubAuthorizedRepositories: [GitHubRepositorySummary] = []
     @Published var operationProgress: SkillBoxOperationProgress?
-    @Published private(set) var lastDeletedSkill: DeletedSkillBackup?
+    @Published private(set) var lastDeletedSkill: DeletedSkillBackup? {
+        didSet { scheduleDeleteUndoDismissal() }
+    }
+    private var deleteUndoDismissTask: Task<Void, Never>?
+    private var deleteUndoPaused = false
+    private let deleteUndoDuration: Duration
     @Published private(set) var pendingDeletionAfterSyncSkillID: UUID?
     @Published private(set) var pendingUndoTransaction: SyncTransaction? {
         didSet { scheduleDeferredStartupBackupCheckIfReady() }
@@ -322,8 +327,10 @@ final class AppModel: ObservableObject {
         localPackageResolver: LocalSkillPackageResolver = LocalSkillPackageResolver(),
         discoveryAIRequestTimeout: Duration = .seconds(20),
         userDefaults: UserDefaults = .standard,
-        startBootstrap: Bool = true
+        startBootstrap: Bool = true,
+        deleteUndoDuration: Duration = .seconds(6)
     ) {
+        self.deleteUndoDuration = deleteUndoDuration
         homeDirectory = customHomeDirectory ?? FileManager.default.homeDirectoryForCurrentUser
         libraryRoot = customLibraryRoot ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/SkillBox")
@@ -445,7 +452,7 @@ final class AppModel: ObservableObject {
         do { try await store.replaceTargets(targets) } catch { present(error) }
         do { try await store.refreshRiskReports(using: StaticRiskAnalyzer()) } catch { present(error) }
         await reload()
-        lastDeletedSkill = await store.mostRecentRestorableDeletion()
+        // Persisted deletions remain available in History, not as new notices on launch.
         do { _ = try await discoveryStore.recoverInterruptedRuns() } catch { present(error) }
         await reloadDiscoverySessions()
         await reloadCredentialHints()
@@ -3191,6 +3198,9 @@ final class AppModel: ObservableObject {
     }
 
     func deleteSkill(_ skill: SkillRecord, preservingInstalledCopies: Bool = false) async -> Bool {
+        guard !isBusy else { return false }
+        isBusy = true
+        defer { isBusy = false }
         do {
             let mode: SkillDeletionMode = preservingInstalledCopies
                 ? .preserveInstalledCopies
@@ -3213,7 +3223,9 @@ final class AppModel: ObservableObject {
     }
 
     func restoreLastDeletedSkill() async {
-        guard let deletion = lastDeletedSkill else { return }
+        guard !isBusy, let deletion = lastDeletedSkill else { return }
+        isBusy = true
+        defer { isBusy = false }
         do {
             let restored = try await store.restoreDeletedSkill(deletion)
             lastDeletedSkill = nil
@@ -3224,6 +3236,24 @@ final class AppModel: ObservableObject {
 
     func dismissDeleteUndo() {
         lastDeletedSkill = nil
+    }
+
+    func setDeleteUndoPaused(_ paused: Bool) {
+        guard deleteUndoPaused != paused else { return }
+        deleteUndoPaused = paused
+        scheduleDeleteUndoDismissal()
+    }
+
+    private func scheduleDeleteUndoDismissal() {
+        deleteUndoDismissTask?.cancel()
+        guard let deletion = lastDeletedSkill, !deleteUndoPaused else { return }
+        let duration = deleteUndoDuration
+        deleteUndoDismissTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: duration) } catch { return }
+            guard let self, !Task.isCancelled, !self.deleteUndoPaused,
+                  self.lastDeletedSkill == deletion else { return }
+            self.lastDeletedSkill = nil
+        }
     }
 
     func hasManagedInstallation(for skill: SkillRecord) -> Bool {
@@ -3451,9 +3481,18 @@ final class AppModel: ObservableObject {
         } catch { present(error) }
     }
 
+    func canRestoreTransaction(_ transaction: SyncTransaction) -> Bool {
+        guard transaction.canRestore(), transaction.libraryRestoration == nil else { return false }
+        if let deletion = transaction.libraryDeletion?.deletion {
+            return !snapshot.skills.contains(where: { $0.id == deletion.record.id })
+                && deletion.archivedURL.map { FileManager.default.fileExists(atPath: $0.path) } == true
+        }
+        return true
+    }
+
     func prepareUndoPreview(_ transaction: SyncTransaction) -> Bool {
         guard let current = snapshot.transactions.first(where: { $0.id == transaction.id }),
-              current.canRestore()
+              canRestoreTransaction(current)
         else {
             noticeMessage = "这条操作记录已经无法恢复，请刷新后再查看。"
             return false
@@ -3474,10 +3513,20 @@ final class AppModel: ObservableObject {
     }
 
     func undo(_ transaction: SyncTransaction) async {
+        guard !isBusy else { return }
         isBusy = true
         defer { isBusy = false }
         do {
-            _ = try await executor.undo(transactionID: transaction.id, store: store)
+            let persisted = await store.currentSnapshot()
+            guard let current = persisted.transactions.first(where: { $0.id == transaction.id }), current.canRestore() else {
+                throw SyncExecutorError.rollbackExpired
+            }
+            if let deletion = current.libraryDeletion?.deletion {
+                _ = try await store.restoreDeletedSkill(deletion)
+                if lastDeletedSkill?.record.id == deletion.record.id { lastDeletedSkill = nil }
+            } else {
+                _ = try await executor.undo(transactionID: transaction.id, store: store)
+            }
             statusMessage = "已恢复到操作前"
             await reload()
             await scanInstalledSkills()
