@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+  <channel>
+    <title>SkillBox Updates</title>
+    <link>https://github.com/AidenXu-1/SkillBox</link>
+    <item>
+      <title>SkillBox 0.2.5</title>
+      <pubDate>Thu, 17 Sep 2026 15:13:15 +0000</pubDate>
+      <sparkle:version>20</sparkle:version>
+      <sparkle:shortVersionString>0.2.5</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <description sparkle:format="plain-text">新增「设置 → 关于」，集中查看版本、检查更新并访问项目与作者主页。
+支持自动检查新版、可选后台下载，以及原位置重启安装。
+修复删除提示长时间停留的问题，可在操作记录中恢复已删除的 Skill。
+检查成功且没有更高版本时显示「已是最新版本」，更新服务异常与断网分别说明。
+</description>
+      <enclosure url="https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.5/SkillBox-0.2.5-update.zip" length="6687096" type="application/octet-stream" sparkle:edSignature="/LOGNvJmkIzD10DqE2rNMxercMMZGrdsJ1NzMTmdDeDUXT1PthlDT8pALRSDS8fNJQ9bk55oui9fO42GeOJ6AQ=="></enclosure>
+    </item>
+  </channel>
+</rss><!-- sparkle-signatures:
+edSignature: uLOaeWSsqPO8RK7A70C1GR+/4K1KzPeyu8EFPaGk8b9e6NW1FrZ1OCaQr4OQrHcvWaZqYQlRhY63yD/MvxyVDQ==
+length: 1606
+-->
