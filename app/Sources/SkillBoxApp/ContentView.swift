@@ -324,6 +324,14 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .navigationTitle(selection?.rawValue ?? "SkillBox")
             .toolbar {
+                if applicationUpdater.hasPendingUpdate && !(selection == .settings && selectedSettingsPage == .about) {
+                    Button { applicationUpdater.showUpdateInFocus() } label: {
+                        Label(applicationUpdater.reminderTitle, systemImage: "arrow.down.circle.fill")
+                            .foregroundStyle(.blue)
+                    }
+                    .labelStyle(.titleAndIcon)
+                    .help("查看 SkillBox 更新")
+                }
                 if (model.isBusy || model.isCheckingLocalSources) && model.operationProgress == nil {
                     ProgressView()
                         .controlSize(.small)

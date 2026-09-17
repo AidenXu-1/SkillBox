@@ -87,6 +87,21 @@ final class ApplicationUpdater: NSObject, ObservableObject, SPUUserDriver, SPUUp
         }
     }
 
+    var hasPendingUpdate: Bool { phase == .available || phase == .ready }
+    var reminderTitle: String { phase == .ready ? "更新已就绪" : "有新版本" }
+    var canDeferUpdate: Bool { phase == .available && choice != nil }
+
+    func deferUpdate() {
+        guard canDeferUpdate else { return }
+        let reply = choice
+        choice = nil
+        cancellation = nil; canCancel = false
+        availableVersion = ""; releaseNotes = ""
+        phase = .idle
+        detail = "已选择稍后更新，你可以随时重新检查。"
+        reply?(.dismiss)
+    }
+
     func start(bundle: Bundle = .main) {
         guard !started else { return }
         started = true
@@ -176,15 +191,19 @@ final class ApplicationUpdater: NSObject, ObservableObject, SPUUserDriver, SPUUp
     }
 
     func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
-        availableVersion = appcastItem.displayVersionString
         releaseNotes = appcastItem.itemDescriptionFormat == "plain-text" ? (appcastItem.itemDescription ?? "") : ""
         informationOnly = appcastItem.isInformationOnlyUpdate
         informationURL = informationOnly ? appcastItem.infoURL : nil
+        presentUpdate(version: appcastItem.displayVersionString, stage: state.stage, userInitiated: state.userInitiated, reply: reply)
+    }
+
+    func presentUpdate(version: String, stage: SPUUserUpdateStage, userInitiated: Bool, reply: @escaping (SPUUserUpdateChoice) -> Void) {
+        availableVersion = version
         cancellation = nil; canCancel = false
         choice = reply
-        phase = state.stage == .installing ? .ready : .available
-        detail = state.stage == .notDownloaded ? "查看此次更新的内容，准备好后开始下载。" : "更新已下载，准备好后即可继续安装。"
-        if state.userInitiated { showUpdateInFocus() }
+        phase = stage == .installing ? .ready : .available
+        detail = stage == .notDownloaded ? "查看此次更新的内容，准备好后开始下载。" : "更新已下载，准备好后即可继续安装。"
+        if userInitiated { showUpdateInFocus() }
     }
 
     func showUpdateReleaseNotes(with downloadData: SPUDownloadData) {}
