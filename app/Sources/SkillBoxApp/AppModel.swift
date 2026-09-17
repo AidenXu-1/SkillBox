@@ -1502,8 +1502,14 @@ final class AppModel: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         await refreshTargetStatuses()
-        scanResult = ScanResult(candidates: [], duplicateGroups: [], conflicts: [], diagnostics: [])
-        statusMessage = "安装状态已刷新"
+        do {
+            try await store.reconcileMissingInstallations()
+            await reload()
+            scanResult = ScanResult(candidates: [], duplicateGroups: [], conflicts: [], diagnostics: [])
+            statusMessage = "安装状态已刷新"
+        } catch {
+            present(error)
+        }
     }
 
     func refreshSkills() async {

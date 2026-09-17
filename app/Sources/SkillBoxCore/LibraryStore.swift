@@ -1104,6 +1104,48 @@ public actor LibraryStore {
         _ = try? pruneRollbackBackups()
     }
 
+    /// Reconcile external deletions without touching any installed content.
+    /// Missing/unreadable application roots and unfinished recovery stay intact.
+    @discardableResult
+    public func reconcileMissingInstallations() throws -> Int {
+        let protectedPaths = Set(snapshot.transactions
+            .filter { $0.status == .running || $0.status == .failed }
+            .flatMap { $0.actions.map(\.destinationPath) + $0.backups.map(\.destinationPath) })
+        var readableRoots: [UUID: URL] = [:]
+        for target in snapshot.targets {
+            let root = URL(fileURLWithPath: target.path).standardizedFileURL
+            if (try? fileManager.contentsOfDirectory(atPath: root.path)) != nil {
+                readableRoots[target.id] = root
+            }
+        }
+        let missing = snapshot.installations.filter { installation in
+            let path = URL(fileURLWithPath: installation.destinationPath).standardizedFileURL
+            guard let root = readableRoots[installation.targetID],
+                  path.deletingLastPathComponent() == root,
+                  !protectedPaths.contains(installation.destinationPath)
+            else { return false }
+            // fileExists also returns false for permission failures and dangling
+            // links. Only lstat's ENOENT is evidence of an absent directory entry.
+            var info = stat()
+            return lstat(path.path, &info) != 0 && errno == ENOENT
+        }
+        guard !missing.isEmpty else { return 0 }
+        let previous = snapshot
+        let ids = Set(missing.map(\.id))
+        snapshot.installations.removeAll { ids.contains($0.id) }
+        for index in snapshot.assignments.indices {
+            guard missing.contains(where: {
+                $0.skillID == snapshot.assignments[index].skillID && $0.targetID == snapshot.assignments[index].targetID
+            }) else { continue }
+            snapshot.assignments[index].isDesired = false
+            snapshot.assignments[index].allowReplacement = false
+            snapshot.assignments[index].allowTakeover = false
+            snapshot.assignments[index].authorizedDestinationFingerprint = nil
+        }
+        do { try persist() } catch { snapshot = previous; throw error }
+        return missing.count
+    }
+
     public func replaceInstallations(_ installations: [ManagedInstallation]) throws {
         let previousInstallations = snapshot.installations
         snapshot.installations = installations
