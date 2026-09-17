@@ -69,6 +69,10 @@ struct AboutSettingsView: View {
                                 Button("取消") { updater.cancel() }
                                     .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                             }
+                            if updater.canDeferUpdate {
+                                Button("稍后更新") { updater.deferUpdate() }
+                                    .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
+                            }
                         }.padding(20)
                         if !updater.availableVersion.isEmpty && [.available, .ready].contains(updater.phase) {
                             Divider()

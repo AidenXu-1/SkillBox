@@ -6,6 +6,41 @@ import Testing
 @MainActor
 @Suite("Application update interaction")
 struct ApplicationUpdaterTests {
+    @Test("A background offer exposes a reminder without stealing focus; later dismisses exactly once")
+    func backgroundOfferCanBeDeferred() {
+        let driver = ApplicationUpdater()
+        var replies: [SPUUserUpdateChoice] = []
+        driver.presentUpdate(version: "0.2.6", stage: .notDownloaded, userInitiated: false) { replies.append($0) }
+        #expect(driver.hasPendingUpdate)
+        #expect(driver.reminderTitle == "有新版本")
+        #expect(driver.aboutRequest == nil)
+        #expect(driver.canDeferUpdate)
+        driver.deferUpdate()
+        driver.deferUpdate()
+        #expect(replies == [.dismiss])
+        #expect(driver.phase == .idle)
+        #expect(!driver.hasPendingUpdate)
+        #expect(!driver.canDeferUpdate)
+        #expect(driver.availableVersion.isEmpty)
+        driver.presentUpdate(version: "0.2.7", stage: .notDownloaded, userInitiated: true) { replies.append($0) }
+        #expect(driver.availableVersion == "0.2.7")
+        #expect(driver.aboutRequest != nil)
+        driver.performPrimaryAction()
+        driver.deferUpdate()
+        #expect(replies == [.dismiss, .install])
+    }
+
+    @Test("A prepared update keeps its reminder and cannot be dismissed as an undownloaded offer")
+    func readyUpdateRemainsAvailable() {
+        let driver = ApplicationUpdater()
+        driver.showReady(toInstallAndRelaunch: { _ in Issue.record("Must wait for the user's restart choice") })
+        #expect(driver.hasPendingUpdate)
+        #expect(driver.reminderTitle == "更新已就绪")
+        #expect(!driver.canDeferUpdate)
+        driver.deferUpdate()
+        #expect(driver.phase == .ready)
+    }
+
     @Test("A ready update waits for user choice and cannot interrupt work or install twice")
     func readyUpdateIsSingleUseAndWaitsForWork() {
         let driver = ApplicationUpdater()
