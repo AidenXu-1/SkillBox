@@ -6,6 +6,28 @@ import Testing
 @MainActor
 @Suite("Application update interaction")
 struct ApplicationUpdaterTests {
+    @Test("A successful current-version check says latest, while unavailable services are not blamed on the user's network")
+    func latestAndServiceFailuresAreDistinct() {
+        let driver = ApplicationUpdater()
+        driver.showUpdateNotFoundWithError(NSError(domain: SUSparkleErrorDomain, code: 1001,
+            userInfo: [SPUNoUpdateFoundReasonKey: NSNumber(value: 1)])) {}
+        #expect(driver.title == "已是最新版本")
+        let serverError = NSError(domain: SUSparkleErrorDomain, code: 1002, userInfo: [
+            NSUnderlyingErrorKey: NSError(domain: SUSparkleErrorDomain, code: 2001,
+                userInfo: [NSLocalizedDescriptionKey: "Not Found (404)"])
+        ])
+        driver.showUpdaterError(serverError) {}
+        #expect(driver.phase == .failed)
+        #expect(driver.detail.contains("更新服务"))
+        #expect(!driver.detail.contains("检查网络"))
+        driver.showUpdaterError(NSError(domain: SUSparkleErrorDomain, code: 1002,
+            userInfo: [NSUnderlyingErrorKey: URLError(.notConnectedToInternet)])) {}
+        #expect(driver.detail.contains("检查网络"))
+        driver.showUpdateNotFoundWithError(NSError(domain: SUSparkleErrorDomain, code: 1001,
+            userInfo: [SPUNoUpdateFoundReasonKey: NSNumber(value: 3)])) {}
+        #expect(driver.title != "已是最新版本")
+    }
+
     @Test("A background offer exposes a reminder without stealing focus; later dismisses exactly once")
     func backgroundOfferCanBeDeferred() {
         let driver = ApplicationUpdater()
