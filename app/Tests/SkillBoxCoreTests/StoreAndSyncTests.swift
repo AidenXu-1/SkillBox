@@ -1,9 +1,85 @@
 import Foundation
 import Testing
 @testable import SkillBoxCore
+@testable import SkillBoxApp
 
 @Suite("Central library")
 struct LibraryStoreTests {
+    @MainActor
+    @Test("Refresh forgets an edited then manually deleted copy without reinstalling", arguments: [false, true])
+    func refreshForgetsDeletedCopy(desired: Bool) async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "central"))
+        let targetRoot = fixture.root.appendingPathComponent(".workbuddy/skills")
+        let destination = try fixture.writeSkill(at: targetRoot.appendingPathComponent("demo"), name: "demo", body: "original")
+        let target = BuiltinAgentAdapters.all.first { $0.kind == .workBuddy }!.makeTarget(homeDirectory: fixture.root, fileManager: .default)
+        try await store.replaceTargets([target])
+        try await store.replaceAssignments([.init(skillID: record.id, targetID: target.id, installationDirectoryName: "demo", isDesired: desired)])
+        try await store.replaceInstallations([.init(skillID: record.id, targetID: target.id, destinationPath: destination.path,
+            deployedFingerprint: try SHA256SkillFingerprinter().fingerprint(directory: destination), transactionID: UUID())])
+        _ = try fixture.writeSkill(at: destination, name: "demo", body: "modified externally")
+        let model = AppModel(libraryRoot: fixture.storeRoot, homeDirectory: fixture.root, startBootstrap: false)
+        await model.reload()
+        await model.scanInstalledSkills()
+        #expect(model.snapshot.installations.count == 1)
+        #expect(model.syncPlan?.blockedActions.first?.blockReason == .externalModification)
+        try FileManager.default.removeItem(at: destination)
+        await model.scanInstalledSkills()
+        #expect(model.snapshot.installations.isEmpty)
+        #expect(!model.snapshot.assignments.contains { $0.isDesired })
+        #expect(model.syncPlan?.actions.isEmpty == true)
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+        let reopened = try LibraryStore(root: fixture.storeRoot)
+        #expect(await reopened.currentSnapshot().installations.isEmpty)
+        #expect(await reopened.currentSnapshot().assignments.allSatisfy { !$0.isDesired })
+    }
+
+    @Test("Refresh preserves uncertain or recovering destinations", arguments: ["missingRoot", "danglingLink", "existingDirectory", "recovery"])
+    func reconcilePreservesUncertainCopies(scenario: String) async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let parent = fixture.root.appendingPathComponent("target")
+        let destination = parent.appendingPathComponent("demo")
+        if scenario != "missingRoot" { try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true) }
+        if scenario == "danglingLink" { try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: fixture.root.appendingPathComponent("absent")) }
+        if scenario == "existingDirectory" { try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true) }
+        let target = AgentTarget(kind: .custom, displayName: "Test", path: parent.path)
+        let installation = ManagedInstallation(skillID: UUID(), targetID: target.id, destinationPath: destination.path, deployedFingerprint: "original", transactionID: UUID())
+        try await store.replaceTargets([target])
+        try await store.replaceInstallations([installation])
+        if scenario == "recovery" {
+            try await store.recordTransaction(.init(status: .failed, actions: [.init(kind: .remove, skillID: installation.skillID, targetID: target.id, destinationPath: destination.path, summary: "recovery")]))
+        }
+        #expect(try await store.reconcileMissingInstallations() == 0)
+        #expect(await store.currentSnapshot().installations == [installation])
+    }
+
+    @Test("Failure saving reconciliation preserves committed installation state")
+    func reconcileSaveFailureRetainsState() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let fault = ReconciliationFault()
+        let manager = ReconciliationSaveFailure(fault: fault)
+        let store = try LibraryStore(root: fixture.storeRoot, fileManager: manager)
+        let parent = fixture.root.appendingPathComponent("target")
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        let target = AgentTarget(kind: .custom, displayName: "Test", path: parent.path)
+        let installation = ManagedInstallation(skillID: UUID(), targetID: target.id, destinationPath: parent.appendingPathComponent("demo").path, deployedFingerprint: "original", transactionID: UUID())
+        try await store.replaceTargets([target])
+        try await store.replaceInstallations([installation])
+        try await store.replaceAssignments([.init(skillID: installation.skillID, targetID: target.id, installationDirectoryName: "demo")])
+        fault.enable()
+        await #expect(throws: (any Error).self) { try await store.reconcileMissingInstallations() }
+        #expect(await store.currentSnapshot().installations == [installation])
+        #expect(await store.currentSnapshot().assignments.first?.isDesired == true)
+        let reopened = try LibraryStore(root: fixture.storeRoot)
+        #expect(await reopened.currentSnapshot().installations.map(\.id) == [installation.id])
+        #expect(await reopened.currentSnapshot().assignments.first?.isDesired == true)
+    }
+
     @Test("Import copies a verified candidate and persists schema envelopes")
     func importAndReload() async throws {
         let fixture = try SyncFixture()
@@ -1852,4 +1928,24 @@ private struct TestSkillTrash: SkillTrashHandling {
         try FileManager.default.moveItem(at: url, to: destination)
         return destination
     }
+}
+
+private final class ReconciliationSaveFailure: FileManager, @unchecked Sendable {
+    private let fault: ReconciliationFault
+    init(fault: ReconciliationFault) { self.fault = fault; super.init() }
+    override func fileExists(atPath path: String) -> Bool {
+        if fault.enabled && URL(fileURLWithPath: path).lastPathComponent == "library-state.json" { return false }
+        return super.fileExists(atPath: path)
+    }
+    override func moveItem(at srcURL: URL, to dstURL: URL) throws {
+        if fault.enabled && dstURL.lastPathComponent == "library-state.json" { throw CocoaError(.fileWriteNoPermission) }
+        try super.moveItem(at: srcURL, to: dstURL)
+    }
+}
+
+private final class ReconciliationFault: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    var enabled: Bool { lock.withLock { value } }
+    func enable() { lock.withLock { value = true } }
 }
