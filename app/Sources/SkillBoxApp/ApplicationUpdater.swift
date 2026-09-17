@@ -25,6 +25,7 @@ final class ApplicationUpdater: NSObject, ObservableObject, SPUUserDriver, SPUUp
     @Published private(set) var canCancel = false
     @Published private(set) var lastChecked: Date?
     @Published private(set) var isConfigured = false
+    @Published private(set) var isLatestVersion = false
     @Published private(set) var aboutRequest: UUID?
     var canRestart: () -> Bool = { true }
 
@@ -53,7 +54,7 @@ final class ApplicationUpdater: NSObject, ObservableObject, SPUUserDriver, SPUUp
         switch phase {
         case .idle: "检查 SkillBox 新版本"
         case .checking: "正在检查更新…"
-        case .latest: "当前没有可安装的新版本"
+        case .latest: isLatestVersion ? "已是最新版本" : "当前没有可安装的新版本"
         case .available: "发现新版本 \(availableVersion)"
         case .downloading: "正在下载更新…"
         case .extracting: "正在准备更新…"
@@ -217,6 +218,7 @@ final class ApplicationUpdater: NSObject, ObservableObject, SPUUserDriver, SPUUp
     private func showNoUpdate(_ error: Error) {
         phase = .latest
         let reason = (error as NSError).userInfo[SPUNoUpdateFoundReasonKey] as? NSNumber
+        isLatestVersion = [1, 2].contains(reason?.intValue ?? 0)
         switch reason?.intValue {
         case 1: detail = "SkillBox 已是最新版本。"
         case 2: detail = "当前版本比公开版本更新，无需降级。"
@@ -234,15 +236,24 @@ final class ApplicationUpdater: NSObject, ObservableObject, SPUUserDriver, SPUUp
 
     private func recordError(_ error: Error) {
         phase = .failed
+        isLatestVersion = false
         let value = error as NSError
-        if value.domain == SUSparkleErrorDomain && [3001, 3002].contains(value.code) {
+        var causes = [value]
+        while causes.count < 8, let underlying = causes.last?.userInfo[NSUnderlyingErrorKey] as? NSError {
+            causes.append(underlying)
+        }
+        if causes.contains(where: { $0.domain == SUSparkleErrorDomain && [3001, 3002].contains($0.code) }) {
             detail = "更新包校验未通过，已停止安装。请稍后重试或前往 GitHub。"
         } else if value.domain == SUSparkleErrorDomain && [1003, 1005].contains(value.code) {
             detail = "请先把 SkillBox 移到应用程序文件夹，再检查更新。"
         } else if value.domain == SUSparkleErrorDomain && (4000...4012).contains(value.code) {
             detail = "安装未完成，请重新打开 SkillBox 后重试，或从 GitHub 下载。"
+        } else if causes.contains(where: { $0.domain == NSURLErrorDomain && $0.code == URLError.notConnectedToInternet.rawValue }) {
+            detail = "当前未连接网络，请检查网络后重试。"
+        } else if causes.contains(where: { $0.domain == NSURLErrorDomain && $0.code == URLError.timedOut.rawValue }) {
+            detail = "连接更新服务超时，请稍后重试。"
         } else {
-            detail = "暂时无法获取更新，请检查网络后重试，或前往 GitHub 查看。"
+            detail = "更新服务暂时不可用，请稍后重试，或前往 GitHub 查看。"
         }
         choice = nil; cancellation = nil; retryTermination = nil; canCancel = false
     }
@@ -286,6 +297,7 @@ final class ApplicationUpdater: NSObject, ObservableObject, SPUUserDriver, SPUUp
     }
 
     func showUpdateInstalledAndRelaunched(_ relaunched: Bool, acknowledgement: @escaping () -> Void) {
+        isLatestVersion = true
         phase = .latest; detail = "更新安装完成。"
         acknowledgement()
     }
