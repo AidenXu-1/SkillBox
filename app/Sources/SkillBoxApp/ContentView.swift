@@ -4985,6 +4985,7 @@ private struct AgentAssignmentSheet: View {
     @ObservedObject var model: AppModel
     let proposal: AssignmentProposal
     @Environment(\.dismiss) private var dismiss
+    @State private var showUpdateDetails = false
     @State private var isConfirming = false
     @State private var confirmationMessage: String?
 
@@ -5008,6 +5009,10 @@ private struct AgentAssignmentSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
+                if action?.kind == .update || proposal.hasDifferentExistingContent {
+                    Button("查看更新") { showUpdateDetails = true }
+                        .disabled(isConfirming)
+                }
             }
 
             if isConflict {
@@ -5050,6 +5055,9 @@ private struct AgentAssignmentSheet: View {
         .padding(24)
         .frame(width: 570)
         .interactiveDismissDisabled(isConfirming)
+        .sheet(isPresented: $showUpdateDetails) {
+            AssignmentUpdateDetails(model: model, proposal: proposal)
+        }
     }
 
     private var destinationSummary: some View {
@@ -7726,10 +7734,8 @@ private struct UpdatePreviewView: View {
                     }
 
                     GroupBox("SKILL.md 更新前后") {
-                        HStack(alignment: .top, spacing: 12) {
-                            markdownPreview(title: "当前版本", text: model.pendingUpdateBeforeMarkdown)
-                            markdownPreview(title: "新版本", text: model.pendingUpdateAfterMarkdown)
-                        }
+                        SkillMarkdownComparison(before: model.pendingUpdateBeforeMarkdown,
+                                                after: model.pendingUpdateAfterMarkdown)
                         .padding(.vertical, 5)
                     }
 
@@ -7843,17 +7849,6 @@ private struct UpdatePreviewView: View {
             .padding(13)
             .background((candidate.riskReport.isBlocked ? Color.red : becameRiskier ? Color.orange : Color.green).opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
         }
-    }
-
-    private func markdownPreview(title: String, text: String) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            ReadOnlyTextView(text: text)
-                .frame(height: 220)
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-                .overlay(RoundedRectangle(cornerRadius: 9).stroke(.separator.opacity(0.45)))
-        }
-        .frame(maxWidth: .infinity)
     }
 
     private func destinationRow(_ installation: ManagedInstallation) -> some View {

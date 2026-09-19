@@ -3757,6 +3757,16 @@ final class AppModel: ObservableObject {
         } catch { present(error); return nil }
     }
 
+    func assignmentMarkdown(_ proposal: AssignmentProposal) async -> (String?, String?) {
+        guard let action = proposal.action else { return (nil, nil) }
+        let source = await store.contentURL(for: proposal.skill)
+        let destination = URL(fileURLWithPath: action.destinationPath)
+        return await Task.detached(priority: .userInitiated) {
+            (try? String(contentsOf: destination.appendingPathComponent("SKILL.md"), encoding: .utf8),
+             try? String(contentsOf: source.appendingPathComponent("SKILL.md"), encoding: .utf8))
+        }.value
+    }
+
     private func comparisonChanges(for action: SyncAction, skill: SkillRecord) async -> [SkillFileChange] {
         guard action.expectedDestinationFingerprint != nil,
               action.expectedDestinationFingerprint != action.expectedSourceFingerprint,
