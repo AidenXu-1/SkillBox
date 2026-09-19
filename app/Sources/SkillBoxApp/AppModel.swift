@@ -28,9 +28,13 @@ struct AssignmentProposal: Identifiable {
     let action: SyncAction?
     let changes: [SkillFileChange]
 
+    var canReviewExistingContent: Bool {
+        desired && (action?.blockReason == .unmanagedConflict || action?.blockReason == .externalModification) &&
+            action?.expectedSourceFingerprint != nil && action?.expectedDestinationFingerprint != nil
+    }
+
     var hasDifferentExistingContent: Bool {
-        action?.blockReason == .unmanagedConflict &&
-            action?.expectedSourceFingerprint != action?.expectedDestinationFingerprint
+        canReviewExistingContent && action?.expectedSourceFingerprint != action?.expectedDestinationFingerprint
     }
 
     var hasSameExistingContent: Bool {
@@ -2985,10 +2989,16 @@ final class AppModel: ObservableObject {
     }
 
     func prepareAssignmentProposal(skill: SkillRecord, target: AgentTarget) async -> AssignmentProposal? {
+        let currentPlan: SyncPlan
+        do {
+            try await store.reconcileMatchingInstallations(skillID: skill.id, targetID: target.id)
+            snapshot = await store.currentSnapshot()
+            currentPlan = try await assignmentPlan(snapshot: snapshot, skillID: skill.id, targetID: target.id)
+            let others = syncPlan?.actions.filter { $0.skillID != skill.id || $0.targetID != target.id } ?? []
+            syncPlan = SyncPlan(actions: (others + currentPlan.actions).sorted { $0.destinationPath < $1.destinationPath })
+        } catch { present(error); return nil }
         let existingDesired = snapshot.assignments.first { $0.skillID == skill.id && $0.targetID == target.id }?.isDesired == true
-        let pendingAction = syncPlan?.actions.first {
-            $0.skillID == skill.id && $0.targetID == target.id && $0.kind != .noChange
-        }
+        let pendingAction = currentPlan.actions.first { $0.kind != .noChange }
         if pendingAction?.kind != .remove,
            skill.source.kind == .github,
            let state = snapshot.sourceStates.first(where: { $0.skillID == skill.id }),
@@ -3053,7 +3063,7 @@ final class AppModel: ObservableObject {
         var assignments = snapshot.assignments
         setAssignment(skill: proposal.skill, target: proposal.target, desired: proposal.desired, assignments: &assignments)
         if proposal.desired,
-           proposal.action?.blockReason == .unmanagedConflict,
+           proposal.canReviewExistingContent,
            let destinationFingerprint = proposal.action?.expectedDestinationFingerprint,
            let index = assignments.firstIndex(where: { $0.skillID == proposal.skill.id && $0.targetID == proposal.target.id })
         {
@@ -3064,9 +3074,37 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            try await store.replaceAssignments(assignments)
+            let managedReplacement = proposal.canReviewExistingContent && proposal.action?.blockReason == .externalModification
+            var persistedAssignments = assignments
+            if managedReplacement,
+               let index = persistedAssignments.firstIndex(where: { $0.skillID == proposal.skill.id && $0.targetID == proposal.target.id }) {
+                // A managed replacement is a one-operation approval. Do not
+                // leave a reusable overwrite grant in the saved desired state.
+                persistedAssignments[index].allowReplacement = false
+                persistedAssignments[index].allowTakeover = false
+                persistedAssignments[index].authorizedDestinationFingerprint = nil
+            }
+            try await store.replaceAssignments(persistedAssignments)
             snapshot = await store.currentSnapshot()
-            let plan = try await refreshAssignmentPlan(proposal)
+            let plan: SyncPlan
+            if managedReplacement {
+                guard snapshot.skills.first(where: { $0.id == proposal.skill.id })?.fingerprint == proposal.action?.expectedSourceFingerprint else {
+                    noticeMessage = "我的 Skills 版本已变化，请重新查看后再确认。"
+                    return false
+                }
+                var approvedSnapshot = snapshot
+                approvedSnapshot.assignments = assignments
+                // Plan this explicitly approved location through the existing
+                // replacement path. Persisted ownership stays intact, so the
+                // executor still backs up and restores its original record.
+                approvedSnapshot.installations.removeAll {
+                    $0.skillID == proposal.skill.id && $0.targetID == proposal.target.id &&
+                        $0.destinationPath == proposal.action?.destinationPath
+                }
+                plan = try await assignmentPlan(snapshot: approvedSnapshot, skillID: proposal.skill.id, targetID: proposal.target.id)
+            } else {
+                plan = try await refreshAssignmentPlan(proposal)
+            }
             guard let action = plan.actions.first(where: { $0.kind != .noChange }) else {
                 statusMessage = proposal.desired ? "已保留当前安装" : "已取消这项安装"
                 return true

@@ -6,6 +6,70 @@ import Testing
 @Suite("Installation refresh and responsiveness")
 struct InstallationResponsivenessTests {
     @MainActor
+    @Test("Finder metadata alone never becomes an installation update or conflict")
+    func finderMetadataDoesNotBlockManagedCopy() async throws {
+        let fixture = try InstallationFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let candidate = try fixture.candidate("finder")
+        let skill = try await store.importCandidate(candidate)
+        let target = try fixture.target("App")
+        try await store.replaceTargets([target])
+        let model = AppModel(libraryRoot: fixture.storeRoot, store: store, homeDirectory: fixture.root, startBootstrap: false)
+        await model.reload()
+        let proposal = try #require(await model.prepareAssignmentProposal(skill: skill, target: target))
+        #expect(await model.confirmAssignmentProposal(proposal))
+        let destination = URL(fileURLWithPath: target.path).appendingPathComponent(skill.canonicalName)
+        try "Finder window state".write(to: destination.appendingPathComponent(".DS_Store"), atomically: true, encoding: .utf8)
+        await model.reload()
+        #expect(model.syncPlan?.actions.first?.kind == .noChange)
+        #expect(try String(contentsOf: destination.appendingPathComponent(".DS_Store"), encoding: .utf8) == "Finder window state")
+        try "Finder changed again after refresh".write(to: destination.appendingPathComponent(".DS_Store"), atomically: true, encoding: .utf8)
+        let second = try #require(await model.prepareAssignmentProposal(skill: skill, target: target))
+        #expect(second.action?.kind == .remove)
+    }
+
+    @MainActor
+    @Test("Edited managed copies can be compared and explicitly replaced", arguments: [false, true])
+    func editedManagedCopyReplacement(changedAfterPreview: Bool) async throws {
+        let fixture = try InstallationFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let skill = try await store.importCandidate(fixture.candidate("edited"))
+        let target = try fixture.target("App")
+        try await store.replaceTargets([target])
+        let model = AppModel(libraryRoot: fixture.storeRoot, store: store, homeDirectory: fixture.root, startBootstrap: false)
+        await model.reload()
+        let initial = try #require(await model.prepareAssignmentProposal(skill: skill, target: target))
+        #expect(await model.confirmAssignmentProposal(initial))
+        let destination = URL(fileURLWithPath: target.path).appendingPathComponent(skill.canonicalName).appendingPathComponent("SKILL.md")
+        let edited = "Edited locally, keep until explicit confirmation."
+        try edited.write(to: destination, atomically: true, encoding: .utf8)
+        await model.reload()
+        let proposal = try #require(await model.prepareAssignmentProposal(skill: skill, target: target))
+        #expect(proposal.hasDifferentExistingContent)
+        #expect(proposal.changes.contains { $0.path == "SKILL.md" && $0.kind == .modified })
+        #expect(try String(contentsOf: destination, encoding: .utf8) == edited)
+        let pair = await model.assignmentMarkdown(proposal)
+        #expect(pair.0 == edited && pair.1?.contains("Safe text.") == true)
+        if changedAfterPreview {
+            try "Changed again".write(to: destination, atomically: true, encoding: .utf8)
+            #expect(await model.confirmAssignmentProposal(proposal) == false)
+            #expect(try String(contentsOf: destination, encoding: .utf8) == "Changed again")
+        } else {
+            #expect(await model.confirmAssignmentProposal(proposal))
+            #expect(try String(contentsOf: destination, encoding: .utf8).contains("Safe text."))
+            let snapshot = await store.currentSnapshot()
+            let transaction = try #require(snapshot.transactions.first { $0.actions.contains { $0.kind == .update } })
+            _ = try await TransactionalSyncExecutor().undo(transactionID: transaction.id, store: store)
+            #expect(try String(contentsOf: destination, encoding: .utf8) == edited)
+            await model.reload()
+            #expect(model.syncPlan?.actions.first?.blockReason == .externalModification)
+            #expect(model.snapshot.assignments.first?.allowReplacement == false)
+        }
+    }
+
+    @MainActor
     @Test("Update details read destination then central content without changing installation")
     func updateDetailsAreReadOnlyAndDirectional() async throws {
         let fixture = try InstallationFixture()

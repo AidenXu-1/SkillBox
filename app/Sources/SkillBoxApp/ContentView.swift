@@ -4273,7 +4273,7 @@ private struct SkillInstallManagerView: View {
 
     private func statusText(_ target: AgentTarget) -> String {
         if action(for: target)?.kind == .blocked || model.hasUnmanagedSameName(skill: skill, target: target) {
-            return "已有同名"
+            return "内容待确认"
         }
         if target.detectionStatus != .available || target.writeStatus != .writable { return "应用不可用" }
         if action(for: target)?.kind == .update { return "可更新" }
@@ -4282,7 +4282,7 @@ private struct SkillInstallManagerView: View {
 
     private func statusSymbol(_ target: AgentTarget) -> String {
         switch statusText(target) {
-        case "已有同名": "square.stack.3d.up.fill"
+        case "内容待确认": "square.stack.3d.up.fill"
         case "应用不可用": "nosign"
         case "可更新": "arrow.triangle.2.circlepath"
         case "已安装": "checkmark.circle.fill"
@@ -4292,7 +4292,7 @@ private struct SkillInstallManagerView: View {
 
     private func statusColor(_ target: AgentTarget) -> Color {
         switch statusText(target) {
-        case "已有同名": .orange
+        case "内容待确认": .orange
         case "应用不可用": .secondary
         case "已安装": .green
         default: .blue
@@ -4399,7 +4399,7 @@ private struct AgentsView: View {
                     AssignmentLegend(symbol: "plus", color: .blue, text: "安装")
                     AssignmentLegend(symbol: "checkmark", color: .green, text: "已安装")
                     AssignmentLegend(symbol: "arrow.triangle.2.circlepath", color: .blue, text: "可更新")
-                    AssignmentLegend(symbol: "square.stack.3d.up.fill", color: .orange, text: "已有同名")
+                    AssignmentLegend(symbol: "square.stack.3d.up.fill", color: .orange, text: "内容待确认")
                     AssignmentLegend(symbol: "nosign", color: .secondary, text: "应用不可用")
                     Spacer()
                     Text(columnDrag.isActive ? "松手保存 · 拖出表格或按 Esc 取消" : "拖动表头调整常用顺序")
@@ -4990,7 +4990,7 @@ private struct AgentAssignmentSheet: View {
     @State private var confirmationMessage: String?
 
     private var action: SyncAction? { proposal.action }
-    private var isConflict: Bool { action?.blockReason == .unmanagedConflict }
+    private var isConflict: Bool { proposal.canReviewExistingContent }
     private var isActionable: Bool { action?.kind != .blocked || isConflict }
 
     var body: some View {
@@ -5087,7 +5087,7 @@ private struct AgentAssignmentSheet: View {
             }
             Text(proposal.hasSameExistingContent
                  ? "应用里已经是同一份 Skill。确认后，SkillBox 只记住由它继续管理，不会重复复制。"
-                 : "应用里已有同名 Skill。SkillBox 不会悄悄覆盖，只有你在这里确认后才会替换。")
+                 : "应用当前内容与「我的 Skills」不同。确认后，将用「我的 Skills」版本替换，并保留本次操作的恢复记录。")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -5167,7 +5167,7 @@ private struct AgentAssignmentSheet: View {
 
     private var title: String {
         if proposal.hasSameExistingContent { return "已找到相同的 Skill" }
-        if proposal.hasDifferentExistingContent { return "\(proposal.target.displayName) 已有同名 Skill" }
+        if proposal.hasDifferentExistingContent { return "替换 \(proposal.target.displayName) 中的 Skill？" }
         return switch action?.kind {
         case .remove: "从 \(proposal.target.displayName) 卸载？"
         case .update: "更新 \(proposal.target.displayName) 中的 Skill？"
