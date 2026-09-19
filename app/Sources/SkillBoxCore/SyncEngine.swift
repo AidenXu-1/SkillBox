@@ -44,7 +44,7 @@ public struct DefaultSyncPlanner: SyncPlanner, Sendable {
             let current = currentFingerprint(destination)
             if let managed = managedByDestination[destination.path] {
                 guard current == managed.deployedFingerprint else {
-                    actions.append(blocked(assignment, path: destination.path, reason: .externalModification, summary: "安装后的内容被其他软件改过")); continue
+                    actions.append(blocked(assignment, path: destination.path, reason: .externalModification, summary: "当前内容与上次安装记录不一致")); continue
                 }
                 let kind: SyncActionKind = current == skill.fingerprint ? .noChange : .update
                 actions.append(.init(kind: kind, skillID: skill.id, targetID: target.id, destinationPath: destination.path, expectedSourceFingerprint: skill.fingerprint, expectedDestinationFingerprint: current, summary: kind == .update ? "更新 \(skill.displayName)" : "已安装，内容一致"))

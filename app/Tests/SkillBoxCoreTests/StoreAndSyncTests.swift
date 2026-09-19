@@ -5,6 +5,70 @@ import Testing
 
 @Suite("Central library")
 struct LibraryStoreTests {
+    @Test("Matching reconciliation preserves real differences and incomplete recovery", arguments: ["different", "extraFile", "permission", "sourceChanged", "symlink", "recovery", "notDesired", "saveFailure"])
+    func matchingReconciliationBoundaries(scenario: String) async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let fault = ReconciliationFault()
+        let store = try LibraryStore(root: fixture.storeRoot, fileManager: ReconciliationSaveFailure(fault: fault))
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "current"))
+        let parent = fixture.root.appendingPathComponent("target")
+        let destination = try fixture.writeSkill(at: parent.appendingPathComponent("demo"), name: "demo", body: "current")
+        let target = AgentTarget(kind: .custom, displayName: "Test", path: parent.path)
+        let installation = ManagedInstallation(skillID: record.id, targetID: target.id, destinationPath: destination.path, deployedFingerprint: "old", transactionID: UUID())
+        try await store.replaceTargets([target])
+        try await store.replaceInstallations([installation])
+        try await store.replaceAssignments([.init(skillID: record.id, targetID: target.id, installationDirectoryName: "demo", isDesired: scenario != "notDesired")])
+        let committed = await (try LibraryStore(root: fixture.storeRoot)).currentSnapshot().installations
+        switch scenario {
+        case "different": _ = try fixture.writeSkill(at: destination, name: "demo", body: "different")
+        case "extraFile": try "extra".write(to: destination.appendingPathComponent("extra.txt"), atomically: true, encoding: .utf8)
+        case "permission": try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.appendingPathComponent("SKILL.md").path)
+        case "sourceChanged": _ = try fixture.writeSkill(at: await store.contentURL(for: record), name: "demo", body: "changed central content")
+        case "symlink":
+            let other = fixture.root.appendingPathComponent("other")
+            try FileManager.default.moveItem(at: destination, to: other)
+            try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: other)
+        case "recovery": try await store.recordTransaction(.init(status: .failed, actions: [.init(kind: .update, skillID: record.id, targetID: target.id, destinationPath: destination.path, summary: "unfinished")]))
+        case "saveFailure": fault.enable()
+        default: break
+        }
+        if scenario == "saveFailure" {
+            await #expect(throws: (any Error).self) { try await store.reconcileMatchingInstallations() }
+        } else { #expect(try await store.reconcileMatchingInstallations() == 0) }
+        #expect(await store.currentSnapshot().installations == [installation])
+        let reopened = try LibraryStore(root: fixture.storeRoot)
+        #expect(await reopened.currentSnapshot().installations == committed)
+    }
+
+    @MainActor
+    @Test("Refresh recognizes an externally converged managed copy without copying files")
+    func refreshRecognizesMatchingCurrentVersion() async throws {
+        let fixture = try SyncFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let record = try await store.importCandidate(fixture.candidate(name: "demo", body: "current"))
+        let targetRoot = fixture.root.appendingPathComponent(".workbuddy/skills")
+        let destination = try fixture.writeSkill(at: targetRoot.appendingPathComponent("demo"), name: "demo", body: "old")
+        let target = BuiltinAgentAdapters.all.first { $0.kind == .workBuddy }!.makeTarget(homeDirectory: fixture.root, fileManager: .default)
+        try await store.replaceTargets([target])
+        try await store.replaceAssignments([.init(skillID: record.id, targetID: target.id, installationDirectoryName: "demo")])
+        let old = ManagedInstallation(skillID: record.id, targetID: target.id, destinationPath: destination.path,
+            deployedFingerprint: try SHA256SkillFingerprinter().fingerprint(directory: destination), transactionID: UUID())
+        try await store.replaceInstallations([old])
+        _ = try fixture.writeSkill(at: destination, name: "demo", body: "current")
+        let modifiedAt = try FileManager.default.attributesOfItem(atPath: destination.appendingPathComponent("SKILL.md").path)[.modificationDate] as? Date
+        let model = AppModel(libraryRoot: fixture.storeRoot, homeDirectory: fixture.root, startBootstrap: false)
+        await model.reload()
+        await model.scanInstalledSkills()
+        #expect(model.syncPlan?.actions.first?.kind == .noChange)
+        #expect(model.snapshot.installations.first?.deployedFingerprint == record.fingerprint)
+        #expect(model.snapshot.installations.first?.transactionID == old.transactionID)
+        #expect(try FileManager.default.attributesOfItem(atPath: destination.appendingPathComponent("SKILL.md").path)[.modificationDate] as? Date == modifiedAt)
+        let reopened = try LibraryStore(root: fixture.storeRoot)
+        #expect(await reopened.currentSnapshot().installations.first?.deployedFingerprint == record.fingerprint)
+    }
+
     @MainActor
     @Test("Refresh forgets an edited then manually deleted copy without reinstalling", arguments: [false, true])
     func refreshForgetsDeletedCopy(desired: Bool) async throws {
