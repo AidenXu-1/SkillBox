@@ -8,6 +8,23 @@ struct SkillMarkdownComparison: View {
     var beforeTitle = "当前版本"
     var afterTitle = "新版本"
     var height: CGFloat = 220
+    private struct Input: Hashable { let before: String; let after: String }
+
+    var body: some View {
+        // Ranges belong to exactly these strings. Reset the child synchronously
+        // when preview text changes, before AppKit can render stale ranges.
+        MarkdownComparisonContent(before: before, after: after,
+            beforeTitle: beforeTitle, afterTitle: afterTitle, height: height)
+            .id(Input(before: before, after: after))
+    }
+}
+
+private struct MarkdownComparisonContent: View {
+    let before: String
+    let after: String
+    var beforeTitle = "当前版本"
+    var afterTitle = "新版本"
+    var height: CGFloat = 220
     @State private var difference: MarkdownLineDiff?
     private struct Input: Equatable { let before: String; let after: String }
 
