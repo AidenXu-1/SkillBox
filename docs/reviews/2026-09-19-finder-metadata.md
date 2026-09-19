@@ -22,3 +22,5 @@ LocalSkillPackageResolver 会完整复制已选择的目录，再计算整个包
 已构建本机候选 0.2.5 Build21，严格签名、Sparkle 组件与隐私检查通过。使用修复后的真实核心模块只读调用当前 vibe-project-foundation 的检查，结果 current、无候选；源目录 27 个文件校验值均保持（含 3 个 `.DS_Store`）。
 
 本机替换与前台验证尚未执行：CUA 明确返回 Mac 已锁屏且无法自动解锁，已请求用户手动解锁。既有正式 App 保持 Build20，未终止进程、未写入真实 Skill 状态或删除源文件；待解锁后执行候选原位置替换、点击检查并验证。本轮不公开发布，线上 v0.2.5 Build20 及签名更新清单保持不变。
+
+2026-09-20补充：随Build22完成本机原位置替换和前台验证，vibe-project-foundation更新误报已消失，源目录3个.DS_Store保留。见[本机验证](2026-09-20-custom-app-sheet.md)。

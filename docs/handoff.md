@@ -5,6 +5,8 @@
 
 ## 当前状态快照
 
+- **2026-09-20 当前本机为0.2.5 Build22**：管理应用添加窗口立即打开，入口固定顶部完成左侧，原生取消/目录选择/滚动验收通过；Finder误报修复也已安装，vibe-project-foundation状态current。完整检查通过、中央Skill内容保持，临时旧App清理。未公开发布或推送，公开Build20保持；下方待解锁安装Build21是已完成的历史记录，不再运行旧安装脚本。见[本次交付](reviews/2026-09-20-custom-app-sheet.md)。
+
 - **2026-09-19 Finder文件误报已修复，待解锁后本机验收**：候选0.2.5 Build21、全量回归和真实来源只读检查通过，源目录27个文件未改变。Mac锁屏，未退出/替换正式Build20，未发布。解锁后用 `scratch/finder-metadata-20260919/install-local.py` 原位置替换，查看 vibe-project-foundation 已无更新并清理本轮临时旧App；脚本当前尚未运行，不能把候选当成已安装。见[修复记录](reviews/2026-09-19-finder-metadata.md)。
 
 - **2026-09-17 v0.2.5 Build20 已正式发布**：GitHub Latest、DMG 与应用内更新 ZIP、签名 appcast 全部公开并回查一致。标签固定 `19ceb0a`；本机通过真实更新源从19原位置升至20，再次检查显示“已是最新版本”。5份Skill保持，无额外用户资料备份。见[发布验收](reviews/2026-09-17-release-025.md)。本轮已完成，以下“未发布/待授权”均为历史记录。
