@@ -1150,7 +1150,7 @@ public actor LibraryStore {
     /// version through another workflow. Adopt only verified identical content;
     /// never copy files or rewrite the historical transaction/date.
     @discardableResult
-    public func reconcileMatchingInstallations() throws -> Int {
+    public func reconcileMatchingInstallations(skillID: UUID? = nil, targetID: UUID? = nil) throws -> Int {
         let protectedPaths = Set(snapshot.transactions
             .filter { $0.status == .running || $0.status == .failed }
             .flatMap { $0.actions.map(\.destinationPath) + $0.backups.map(\.destinationPath) })
@@ -1159,9 +1159,10 @@ public actor LibraryStore {
         let fingerprint = SHA256SkillFingerprinter()
         for index in snapshot.installations.indices {
             let installation = snapshot.installations[index]
-            guard !protectedPaths.contains(installation.destinationPath),
+            guard skillID == nil || installation.skillID == skillID,
+                  targetID == nil || installation.targetID == targetID,
+                  !protectedPaths.contains(installation.destinationPath),
                   let skill = snapshot.skills.first(where: { $0.id == installation.skillID }),
-                  skill.fingerprint != installation.deployedFingerprint,
                   let target = snapshot.targets.first(where: { $0.id == installation.targetID }),
                   let assignment = snapshot.assignments.first(where: {
                       $0.skillID == skill.id && $0.targetID == target.id && $0.isDesired
@@ -1173,10 +1174,18 @@ public actor LibraryStore {
             guard destination == expected, destination.deletingLastPathComponent() == targetRoot,
                   (try? fileManager.attributesOfItem(atPath: destination.path)[.type]) as? FileAttributeType == .typeDirectory,
                   (try? fileManager.attributesOfItem(atPath: source.path)[.type]) as? FileAttributeType == .typeDirectory,
-                  (try? fingerprint.fingerprint(directory: source)) == skill.fingerprint,
-                  (try? fingerprint.fingerprint(directory: destination)) == skill.fingerprint
+                  let actual = try? fingerprint.fingerprint(directory: destination),
+                  actual != installation.deployedFingerprint,
+                  (try? fingerprint.fingerprint(directory: source)) == skill.fingerprint
             else { continue }
-            snapshot.installations[index].deployedFingerprint = skill.fingerprint
+            let contentFingerprinter = SHA256SkillFingerprinter(ignoringFinderMetadata: true)
+            guard actual == skill.fingerprint ||
+                ((try? contentFingerprinter.fingerprint(directory: source)).map { expected in
+                    (try? contentFingerprinter.fingerprint(directory: destination)) == expected
+                } == true)
+            else { continue }
+            // Keep the full actual fingerprint for subsequent write/undo checks.
+            snapshot.installations[index].deployedFingerprint = actual
             count += 1
         }
         guard count > 0 else { return 0 }

@@ -44,9 +44,18 @@ public struct DefaultSyncPlanner: SyncPlanner, Sendable {
             let current = currentFingerprint(destination)
             if let managed = managedByDestination[destination.path] {
                 guard current == managed.deployedFingerprint else {
-                    actions.append(blocked(assignment, path: destination.path, reason: .externalModification, summary: "当前内容与上次安装记录不一致")); continue
+                    actions.append(.init(
+                        kind: .blocked,
+                        skillID: skill.id, targetID: target.id, destinationPath: destination.path,
+                        expectedSourceFingerprint: skill.fingerprint, expectedDestinationFingerprint: current,
+                        blockReason: .externalModification,
+                        summary: "当前内容与上次安装记录不一致"
+                    ))
+                    continue
                 }
-                let kind: SyncActionKind = current == skill.fingerprint ? .noChange : .update
+                let source = libraryRoot.appendingPathComponent(skill.contentRelativePath)
+                let sameContent = current == skill.fingerprint || matchesIgnoringFinderMetadata(source: source, destination: destination, expectedSource: skill.fingerprint)
+                let kind: SyncActionKind = sameContent ? .noChange : .update
                 actions.append(.init(kind: kind, skillID: skill.id, targetID: target.id, destinationPath: destination.path, expectedSourceFingerprint: skill.fingerprint, expectedDestinationFingerprint: current, summary: kind == .update ? "更新 \(skill.displayName)" : "已安装，内容一致"))
             } else if let current {
                 let authorizationMatches = assignment.authorizedDestinationFingerprint == current
@@ -80,6 +89,14 @@ public struct DefaultSyncPlanner: SyncPlanner, Sendable {
             }
         }
         return SyncPlan(actions: actions.sorted { $0.destinationPath < $1.destinationPath })
+    }
+
+    private func matchesIgnoringFinderMetadata(source: URL, destination: URL, expectedSource: String) -> Bool {
+        guard (try? fingerprinter.fingerprint(directory: source)) == expectedSource else { return false }
+        let content = SHA256SkillFingerprinter(ignoringFinderMetadata: true)
+        guard let expected = try? content.fingerprint(directory: source),
+              let actual = try? content.fingerprint(directory: destination) else { return false }
+        return expected == actual
     }
 
     private func currentFingerprint(_ url: URL) -> String? {

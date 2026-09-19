@@ -16,6 +16,6 @@ LibraryStore 在 AppModel.reload 读取快照前核对受管、仍期望安装�
 
 - 完整测试退出 0：Swift 报告 630 项，629 实际通过、1 公网跳过；Python 28 项通过。边界覆盖正文不同、额外文件、权限、中央内容变化、目录链接、恢复中、不期望安装、保存失败和重开持久状态。
 - release 打包、签名、隐私检查通过。本机 0.2.5 Build 24，程序 SHA `28d6d380df79daa8a37137a706543bc7860b838153f38ee3b9a8f728adda7505`。
-- 原位置替换期间核对 168 个资料文件一致。新版启动自动校正 GPT 安装记录，实机安装列表显示 github-readme-design GPT 已安装；ai-news WorkBuddy 的真实不一致仍保留。GPT 三个文件的字节、权限、修改时间全部未变。
+- 原位置替换期间核对 168 个资料文件一致。新版启动自动校正 GPT 安装记录，实机安装列表显示 github-readme-design GPT 已安装；ai-news WorkBuddy 当时仍被标记为不一致；后续查明仅普通 .DS_Store 不同，已在 Build 26 修复，见 2026-09-20-managed-replacement.md。GPT 三个文件的字节、权限、修改时间全部未变。
 - 证据 scratch/converged-install-20260920/evidence.json、local-install.json、installed.png；本次临时旧 App 已清理。未公开发布。
 - 前一切片的正文详情点击验收仍有工具缺口：Build 23 真实同名确认有“查看更新”按钮，点击详情后 CUA native pipe 再次中断；本轮重启 Build 24 后列表操作正常。此项不冒充已验收，详见正文对比接入记录。
