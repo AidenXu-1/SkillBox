@@ -6,6 +6,32 @@ import Testing
 @Suite("Installation refresh and responsiveness")
 struct InstallationResponsivenessTests {
     @MainActor
+    @Test("Update details read destination then central content without changing installation")
+    func updateDetailsAreReadOnlyAndDirectional() async throws {
+        let fixture = try InstallationFixture()
+        defer { fixture.remove() }
+        let store = try LibraryStore(root: fixture.storeRoot)
+        let skill = try await store.importCandidate(fixture.candidate("comparison"))
+        let target = try fixture.target("Example app")
+        try await store.replaceTargets([target])
+        let destination = URL(fileURLWithPath: target.path).appendingPathComponent(skill.canonicalName)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        let old = "---\nname: comparison\ndescription: Old\n---\nOld app content.\n"
+        try old.write(to: destination.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+        let model = AppModel(libraryRoot: fixture.storeRoot, store: store, homeDirectory: fixture.root, startBootstrap: false)
+        await model.reload()
+        let proposal = try #require(await model.prepareAssignmentProposal(skill: skill, target: target))
+        #expect(proposal.hasDifferentExistingContent)
+        let snapshot = model.snapshot
+        let pair = await model.assignmentMarkdown(proposal)
+        #expect(pair.0 == old)
+        #expect(pair.1?.contains("Safe text.") == true)
+        #expect(model.snapshot.assignments == snapshot.assignments)
+        #expect(model.snapshot.installations == snapshot.installations)
+        #expect(try String(contentsOf: destination.appendingPathComponent("SKILL.md"), encoding: .utf8) == old)
+    }
+
+    @MainActor
     @Test("Startup detects applications without discovering their installed Skill contents")
     func startupDoesNotDiscoverInstalledCopies() async throws {
         let fixture = try InstallationFixture()
