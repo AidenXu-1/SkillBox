@@ -1146,6 +1146,44 @@ public actor LibraryStore {
         return missing.count
     }
 
+    /// A managed destination may already have converged to the current central
+    /// version through another workflow. Adopt only verified identical content;
+    /// never copy files or rewrite the historical transaction/date.
+    @discardableResult
+    public func reconcileMatchingInstallations() throws -> Int {
+        let protectedPaths = Set(snapshot.transactions
+            .filter { $0.status == .running || $0.status == .failed }
+            .flatMap { $0.actions.map(\.destinationPath) + $0.backups.map(\.destinationPath) })
+        let previous = snapshot
+        var count = 0
+        let fingerprint = SHA256SkillFingerprinter()
+        for index in snapshot.installations.indices {
+            let installation = snapshot.installations[index]
+            guard !protectedPaths.contains(installation.destinationPath),
+                  let skill = snapshot.skills.first(where: { $0.id == installation.skillID }),
+                  skill.fingerprint != installation.deployedFingerprint,
+                  let target = snapshot.targets.first(where: { $0.id == installation.targetID }),
+                  let assignment = snapshot.assignments.first(where: {
+                      $0.skillID == skill.id && $0.targetID == target.id && $0.isDesired
+                  }) else { continue }
+            let destination = URL(fileURLWithPath: installation.destinationPath).standardizedFileURL
+            let targetRoot = URL(fileURLWithPath: target.path).standardizedFileURL
+            let expected = targetRoot.appendingPathComponent(assignment.installationDirectoryName).standardizedFileURL
+            let source = root.appendingPathComponent(skill.contentRelativePath)
+            guard destination == expected, destination.deletingLastPathComponent() == targetRoot,
+                  (try? fileManager.attributesOfItem(atPath: destination.path)[.type]) as? FileAttributeType == .typeDirectory,
+                  (try? fileManager.attributesOfItem(atPath: source.path)[.type]) as? FileAttributeType == .typeDirectory,
+                  (try? fingerprint.fingerprint(directory: source)) == skill.fingerprint,
+                  (try? fingerprint.fingerprint(directory: destination)) == skill.fingerprint
+            else { continue }
+            snapshot.installations[index].deployedFingerprint = skill.fingerprint
+            count += 1
+        }
+        guard count > 0 else { return 0 }
+        do { try persist() } catch { snapshot = previous; throw error }
+        return count
+    }
+
     public func replaceInstallations(_ installations: [ManagedInstallation]) throws {
         let previousInstallations = snapshot.installations
         snapshot.installations = installations

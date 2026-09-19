@@ -463,6 +463,8 @@ final class AppModel: ObservableObject {
     }
 
     func reload() async {
+        do { try await store.reconcileMatchingInstallations() }
+        catch { present(error) }
         snapshot = await store.currentSnapshot()
         await refreshBackupMaintenanceIssue()
         refreshPlan()
