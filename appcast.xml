@@ -5,21 +5,22 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <title>SkillBox Updates</title>
     <link>https://github.com/AidenXu-1/SkillBox</link>
     <item>
-      <title>SkillBox 0.2.5</title>
-      <pubDate>Thu, 17 Sep 2026 15:13:15 +0000</pubDate>
-      <sparkle:version>20</sparkle:version>
-      <sparkle:shortVersionString>0.2.5</sparkle:shortVersionString>
+      <title>SkillBox 0.2.6</title>
+      <pubDate>Sat, 19 Sep 2026 21:04:51 +0000</pubDate>
+      <sparkle:version>27</sparkle:version>
+      <sparkle:shortVersionString>0.2.6</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <description sparkle:format="plain-text">新增「设置 → 关于」，集中查看版本、检查更新并访问项目与作者主页。
-支持自动检查新版、可选后台下载，以及原位置重启安装。
-修复删除提示长时间停留的问题，可在操作记录中恢复已删除的 Skill。
-检查成功且没有更高版本时显示「已是最新版本」，更新服务异常与断网分别说明。
+      <description sparkle:format="plain-text">安装内容不一致时，可查看差异并明确选择用「我的 Skills」版本替换。
+忽略普通 .DS_Store 文件造成的更新与安装状态误报。
+SKILL.md 对比保留连续双栏文本：旧版删除线，新版黄色标记；安装确认右上角可查看更新。
+添加自定义应用入口固定在管理窗口顶部，点击即可打开设置。
+修复预览后安装位置或内容发生变化时仍沿用旧确认的问题。
 </description>
-      <enclosure url="https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.5/SkillBox-0.2.5-update.zip" length="6687096" type="application/octet-stream" sparkle:edSignature="/LOGNvJmkIzD10DqE2rNMxercMMZGrdsJ1NzMTmdDeDUXT1PthlDT8pALRSDS8fNJQ9bk55oui9fO42GeOJ6AQ=="></enclosure>
+      <enclosure url="https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.6/SkillBox-0.2.6-update.zip" length="6718284" type="application/octet-stream" sparkle:edSignature="NJuYsLXwE3fuj8nOUqkGh9xH2lTVrFXLLGLPIOC2BzLp+VRBWGaMi1FHsbK//rP+XjdtuFoFJ/LO6tBiU+6GBA=="></enclosure>
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: uLOaeWSsqPO8RK7A70C1GR+/4K1KzPeyu8EFPaGk8b9e6NW1FrZ1OCaQr4OQrHcvWaZqYQlRhY63yD/MvxyVDQ==
-length: 1606
+edSignature: 0JeKotIviPB4cXnDDM8rr2QUqQuViX+XzYBVPyy18UhooqMyRwH85npsvrPMqZGzIEoX9qey+HdfIuyEHzacCQ==
+length: 1674
 -->
