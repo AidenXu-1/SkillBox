@@ -274,9 +274,6 @@ struct ContentView: View {
     @State private var showImportPreview = false
     @State private var showUpdatePreview = false
     @State private var showSyncPreview = false
-    @State private var showCustomTarget = false
-    @State private var customTargetName = "其他应用"
-    @State private var editingCustomTarget: AgentTarget?
     @State private var selectedSettingsPage: SettingsPage = .ai
     @State private var visibleStatusMessage: String?
     @State private var statusDismissTask: Task<Void, Never>?
@@ -314,9 +311,7 @@ struct ContentView: View {
                 case .agents:
                     AgentsView(
                         model: model,
-                        addCustom: { showCustomTarget = true },
-                        addSkill: { selection = .library },
-                        editCustom: { editingCustomTarget = $0 }
+                        addSkill: { selection = .library }
                     )
                 case .settings: SettingsView(model: model, selectedSettingsPage: $selectedSettingsPage)
                 }
@@ -371,13 +366,6 @@ struct ContentView: View {
         .sheet(isPresented: $showImportPreview) { ImportPreviewView(model: model, isPresented: $showImportPreview) }
         .sheet(isPresented: $showUpdatePreview) { UpdatePreviewView(model: model, isPresented: $showUpdatePreview) }
         .sheet(isPresented: $showSyncPreview) { SyncPreviewView(model: model, isPresented: $showSyncPreview) }
-        .sheet(isPresented: $showCustomTarget) { CustomTargetView(model: model, isPresented: $showCustomTarget, name: $customTargetName) }
-        .sheet(item: $editingCustomTarget) { target in
-            EditCustomTargetView(model: model, target: target, isPresented: Binding(
-                get: { editingCustomTarget != nil },
-                set: { if !$0 { editingCustomTarget = nil } }
-            ))
-        }
         .alert("操作未完成", isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.dismissCurrentError() } }
@@ -4342,9 +4330,7 @@ private struct AgentMatrixBoundsPreferenceKey: PreferenceKey {
 private struct AgentsView: View {
     @ObservedObject var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let addCustom: () -> Void
     let addSkill: () -> Void
-    let editCustom: (AgentTarget) -> Void
     @State private var assignmentProposal: AssignmentProposal?
     @State private var searchText = ""
     @State private var filter: MatrixSkillFilter = .all
@@ -4507,11 +4493,7 @@ private struct AgentsView: View {
             AgentAssignmentSheet(model: model, proposal: proposal)
         }
         .sheet(isPresented: $showApplicationManager) {
-            ManageApplicationsView(
-                model: model,
-                addCustom: addCustom,
-                editCustom: editCustom
-            )
+            ManageApplicationsView(model: model)
         }
         .onExitCommand { cancelColumnDrag() }
         .onDisappear { cancelColumnDrag() }
@@ -4748,8 +4730,9 @@ private struct TargetColumnHeader: View {
 
 private struct ManageApplicationsView: View {
     @ObservedObject var model: AppModel
-    let addCustom: () -> Void
-    let editCustom: (AgentTarget) -> Void
+    @State private var showCustomTarget = false
+    @State private var customTargetName = "其他应用"
+    @State private var editingCustomTarget: AgentTarget?
     @Environment(\.dismiss) private var dismiss
     @State private var pendingRemoval: AgentTarget?
 
@@ -4765,6 +4748,11 @@ private struct ManageApplicationsView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button("添加自定义应用") {
+                    customTargetName = "其他应用"
+                    showCustomTarget = true
+                }
+                .buttonStyle(SkillBoxHoverButtonStyle(kind: .secondary))
                 Button("完成") { dismiss() }
                     .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
             }
@@ -4775,7 +4763,7 @@ private struct ManageApplicationsView: View {
                     applicationSection(title: "安装表中的应用", count: model.visibleTargets().count) {
                         ForEach(model.visibleTargets()) { target in
                             applicationRow(target) {
-                                if target.isCustom { editCustom(target) }
+                                if target.isCustom { editingCustomTarget = target }
                             } trailing: {
                                 Button(target.isCustom ? "删除" : "移出") { pendingRemoval = target }
                                     .buttonStyle(SkillBoxHoverButtonStyle(kind: .destructiveText))
@@ -4811,25 +4799,19 @@ private struct ManageApplicationsView: View {
                         .padding(.top, 4)
                     }
 
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("列表里没有我的应用").font(.headline)
-                            Text("填写产品名称，再选择它已经存在的全局 Skills 文件夹。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("添加自定义应用") { addCustom() }
-                            .buttonStyle(SkillBoxHoverButtonStyle(kind: .primary))
-                    }
-                    .padding(16)
-                    .background(.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 24)
             }
         }
         .frame(width: 760, height: 680)
+        .sheet(isPresented: $showCustomTarget) { CustomTargetView(model: model, isPresented: $showCustomTarget, name: $customTargetName) }
+        .sheet(item: $editingCustomTarget) { target in
+            EditCustomTargetView(model: model, target: target, isPresented: Binding(
+                get: { editingCustomTarget != nil },
+                set: { if !$0 { editingCustomTarget = nil } }
+            ))
+        }
         .confirmationDialog(
             removalTitle,
             isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } })
