@@ -30,8 +30,8 @@ struct InstallationResponsivenessTests {
     }
 
     @MainActor
-    @Test("Edited managed copies can be compared and explicitly replaced", arguments: [false, true])
-    func editedManagedCopyReplacement(changedAfterPreview: Bool) async throws {
+    @Test("Edited managed copies can be compared and explicitly replaced", arguments: ["unchanged", "edited", "deleted", "moved"])
+    func editedManagedCopyReplacement(changeAfterPreview: String) async throws {
         let fixture = try InstallationFixture()
         defer { fixture.remove() }
         let store = try LibraryStore(root: fixture.storeRoot)
@@ -52,7 +52,25 @@ struct InstallationResponsivenessTests {
         #expect(try String(contentsOf: destination, encoding: .utf8) == edited)
         let pair = await model.assignmentMarkdown(proposal)
         #expect(pair.0 == edited && pair.1?.contains("Safe text.") == true)
-        if changedAfterPreview {
+        if changeAfterPreview == "deleted" || changeAfterPreview == "moved" {
+            let directory = destination.deletingLastPathComponent()
+            if changeAfterPreview == "deleted" {
+                try FileManager.default.removeItem(at: directory)
+            } else {
+                var movedTarget = target
+                movedTarget.path = try fixture.target("Other location").path
+                try await store.replaceTargets([movedTarget])
+            }
+            let transactions = await store.currentSnapshot().transactions
+            #expect(await model.confirmAssignmentProposal(proposal) == false)
+            #expect(await store.currentSnapshot().transactions == transactions)
+            if changeAfterPreview == "deleted" {
+                #expect(!FileManager.default.fileExists(atPath: directory.path))
+            } else {
+                #expect(try String(contentsOf: destination, encoding: .utf8) == edited)
+                #expect(!FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("Other location/edited").path))
+            }
+        } else if changeAfterPreview == "edited" {
             try "Changed again".write(to: destination, atomically: true, encoding: .utf8)
             #expect(await model.confirmAssignmentProposal(proposal) == false)
             #expect(try String(contentsOf: destination, encoding: .utf8) == "Changed again")

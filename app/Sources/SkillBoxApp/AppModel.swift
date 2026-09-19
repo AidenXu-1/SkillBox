@@ -3102,6 +3102,15 @@ final class AppModel: ObservableObject {
                         $0.destinationPath == proposal.action?.destinationPath
                 }
                 plan = try await assignmentPlan(snapshot: approvedSnapshot, skillID: proposal.skill.id, targetID: proposal.target.id)
+                guard plan.actions.count == 1,
+                      let approvedAction = plan.actions.first,
+                      approvedAction.destinationPath == proposal.action?.destinationPath,
+                      approvedAction.expectedSourceFingerprint == proposal.action?.expectedSourceFingerprint,
+                      approvedAction.expectedDestinationFingerprint == proposal.action?.expectedDestinationFingerprint,
+                      approvedAction.kind == .update || approvedAction.kind == .takeover else {
+                    noticeMessage = "安装位置或内容已变化，请重新查看后再确认。"
+                    return false
+                }
             } else {
                 plan = try await refreshAssignmentPlan(proposal)
             }
