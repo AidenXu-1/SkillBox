@@ -73,6 +73,50 @@ struct LocalSourceTrackingTests {
         }
     }
 
+    @Test("Finder metadata never creates a local update, but hidden templates and real edits still do")
+    func finderMetadataDoesNotCreateLocalUpdate() async throws {
+        let fixture = try LocalSourceFixture()
+        defer { fixture.remove() }
+        try fixture.write("skills/demo/SKILL.md", fixture.skillMarkdown("Use templates and scripts."))
+        try fixture.write("skills/demo/templates/.gitignore", "scratch/\n")
+        try fixture.write("skills/demo/templates/docs/guide.md", "Guide")
+        try fixture.write("skills/demo/scripts/run.sh", "echo v1")
+        try fixture.write("skills/demo/tests/fixture.md", "Test")
+        let resolver = LocalSkillPackageResolver()
+        let review = try resolver.review(candidate: try await fixture.candidate(), projectRoot: fixture.projectRoot)
+        let resolved = try await resolver.confirm(review: review, includePaths: review.recommendedIncludePaths)
+        defer { try? FileManager.default.removeItem(at: resolved.candidate.sourceURL.deletingLastPathComponent()) }
+        let state = LocalSourceState(
+            skillID: UUID(), projectRootPath: fixture.projectRoot.path,
+            recipe: resolved.recipe, currentPackageFingerprint: resolved.candidate.fingerprint,
+            topLevelFingerprints: resolved.topLevelFingerprints, status: .current
+        )
+        let strictBefore = try SHA256SkillFingerprinter().fingerprint(directory: fixture.skillRoot)
+        let metadataPaths = [".DS_Store", "templates/.DS_Store", "templates/docs/.DS_Store", "tests/.DS_Store"]
+        for path in metadataPaths { try fixture.write("skills/demo/" + path, "Finder metadata") }
+        let checked = try await resolver.check(state: state)
+        defer { if let url = checked.candidate?.temporaryPackageRoot { try? FileManager.default.removeItem(at: url) } }
+        #expect(checked.state.status == .current)
+        #expect(checked.candidate == nil)
+        #expect(checked.ignoredChangedPaths.isEmpty)
+        #expect(try SHA256SkillFingerprinter().fingerprint(directory: fixture.skillRoot) != strictBefore)
+        let newReview = try resolver.review(candidate: try await fixture.candidate(), projectRoot: fixture.projectRoot)
+        #expect(!newReview.entries.contains { $0.relativePath == ".DS_Store" })
+        let clean = try await resolver.confirm(review: newReview, includePaths: newReview.recommendedIncludePaths)
+        defer { if let url = clean.candidate.temporaryPackageRoot { try? FileManager.default.removeItem(at: url) } }
+        #expect(clean.candidate.fingerprint == resolved.candidate.fingerprint)
+        for path in metadataPaths {
+            #expect(FileManager.default.fileExists(atPath: fixture.skillRoot.appendingPathComponent(path).path))
+            #expect(!FileManager.default.fileExists(atPath: clean.candidate.sourceURL.appendingPathComponent(path).path))
+        }
+        #expect(FileManager.default.fileExists(atPath: clean.candidate.sourceURL.appendingPathComponent("templates/.gitignore").path))
+        try fixture.write("skills/demo/templates/.gitignore", "scratch/\n.build/\n")
+        let changed = try await resolver.check(state: state)
+        defer { if let url = changed.candidate?.temporaryPackageRoot { try? FileManager.default.removeItem(at: url) } }
+        #expect(changed.state.status == .updateAvailable)
+        #expect(changed.candidate?.fingerprint != state.currentPackageFingerprint)
+    }
+
     @Test("New possible runtime content and missing selected content require review")
     func sourceShapeChangesRequireReview() async throws {
         let fixture = try LocalSourceFixture()

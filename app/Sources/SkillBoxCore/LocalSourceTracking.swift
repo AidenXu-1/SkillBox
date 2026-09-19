@@ -192,7 +192,7 @@ public struct LocalSkillPackageResolver: Sendable {
 
     public init(
         scanner: any SkillScanner = FileSystemSkillScanner(limits: .userSelectedLocalSource),
-        fingerprinter: any SkillFingerprinting = SHA256SkillFingerprinter()
+        fingerprinter: any SkillFingerprinting = SHA256SkillFingerprinter(ignoringFinderMetadata: true)
     ) {
         self.scanner = scanner
         self.fingerprinter = fingerprinter
@@ -435,6 +435,14 @@ public struct LocalSkillPackageResolver: Sendable {
                 try fileManager.copyItem(at: source, to: destination)
             }
             try SafeFileOperations.validateTree(root: content, fileManager: fileManager)
+            // Strip metadata only from our disposable package, never the development source.
+            if let enumerator = fileManager.enumerator(at: content, includingPropertiesForKeys: nil) {
+                var metadata: [URL] = []
+                while let url = enumerator.nextObject() as? URL {
+                    if try FinderMetadata.isMetadataFile(url) { metadata.append(url) }
+                }
+                for url in metadata { try fileManager.removeItem(at: url) }
+            }
             let result = await scanner.scan(roots: [content], sourceName: { _ in "本地开发源" })
             guard var packaged = result.candidates.first,
                   packaged.sourceURL.standardizedFileURL == content.standardizedFileURL
@@ -512,7 +520,7 @@ public struct LocalSkillPackageResolver: Sendable {
             at: root,
             includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
             options: []
-        ).map { url -> LocalPackageEntry in
+        ).filter { try !FinderMetadata.isMetadataFile($0) }.map { url -> LocalPackageEntry in
             let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
             let path = url.lastPathComponent
             let kind: LocalPackageEntryKind
@@ -544,6 +552,7 @@ public struct LocalSkillPackageResolver: Sendable {
             options: []
         )
         for url in urls {
+            if try FinderMetadata.isMetadataFile(url) { continue }
             let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
             if values.isDirectory == true {
                 result[url.lastPathComponent] = try fingerprinter.fingerprint(directory: url)

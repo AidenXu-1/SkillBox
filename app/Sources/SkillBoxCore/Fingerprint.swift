@@ -18,7 +18,11 @@ public protocol SkillFingerprinting: Sendable {
 }
 
 public struct SHA256SkillFingerprinter: SkillFingerprinting, Sendable {
-    public init() {}
+    private let ignoringFinderMetadata: Bool
+
+    public init(ignoringFinderMetadata: Bool = false) {
+        self.ignoringFinderMetadata = ignoringFinderMetadata
+    }
 
     public func fingerprint(directory: URL) throws -> String {
         let fileManager = FileManager.default
@@ -47,6 +51,7 @@ public struct SHA256SkillFingerprinter: SkillFingerprinting, Sendable {
 
         var hasher = SHA256()
         for url in urls {
+            if ignoringFinderMetadata, try FinderMetadata.isMetadataFile(url) { continue }
             let relative = relativePath(of: url, root: directory)
             let values = try url.resourceValues(forKeys: Set(keys))
             let attributes = try fileManager.attributesOfItem(atPath: url.path)
@@ -81,5 +86,15 @@ public struct SHA256SkillFingerprinter: SkillFingerprinting, Sendable {
 
     private func update(_ hasher: inout SHA256, text: String) {
         hasher.update(data: Data(text.utf8))
+    }
+}
+
+// Only Finder's ordinary metadata file is excluded. Hidden runtime files,
+// directories and links retain their existing meaning and integrity checks.
+enum FinderMetadata {
+    static func isMetadataFile(_ url: URL) throws -> Bool {
+        guard url.lastPathComponent == ".DS_Store" else { return false }
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return attributes[.type] as? FileAttributeType == .typeRegular
     }
 }
