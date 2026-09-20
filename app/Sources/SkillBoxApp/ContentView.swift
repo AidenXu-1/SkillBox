@@ -281,6 +281,7 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             SkillBoxSidebar(selection: $selection)
+            .background(Color.white.ignoresSafeArea())
             .navigationTitle("SkillBox")
             .navigationSplitViewColumnWidth(min: 210, ideal: 236)
         } detail: {
@@ -317,6 +318,8 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Color.white.ignoresSafeArea())
+            .overlay(alignment: .top) { Divider() }
             .navigationTitle(selection?.rawValue ?? "SkillBox")
             .toolbar {
                 if applicationUpdater.hasPendingUpdate && !(selection == .settings && selectedSettingsPage == .about) {
@@ -350,6 +353,10 @@ struct ContentView: View {
                 }
             }
         }
+        .containerBackground(.white, for: .window)
+        .toolbarBackground(.white, for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
+        .preferredColorScheme(.light)
         .frame(minWidth: 1100, minHeight: 720)
         .onChange(of: applicationUpdater.aboutRequest, initial: true) { _, request in
             guard request != nil else { return }
@@ -488,7 +495,7 @@ private struct StatusToast: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .frame(maxWidth: 360, alignment: .leading)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.35)))
             .shadow(color: .black.opacity(0.10), radius: 14, y: 5)
     }
@@ -515,7 +522,7 @@ private struct OperationProgressView: View {
             }
             .padding(24)
             .frame(width: 350)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .background(Color.white, in: RoundedRectangle(cornerRadius: 16))
             .shadow(color: .black.opacity(0.16), radius: 24, y: 10)
         }
         .accessibilityElement(children: .contain)
@@ -550,7 +557,7 @@ private struct DeleteUndoToast: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(.regularMaterial, in: Capsule())
+        .background(Color.white, in: Capsule())
         .overlay(Capsule().stroke(.separator.opacity(0.4)))
         .shadow(color: .black.opacity(0.10), radius: 16, y: 5)
         .onHover { isHovering = $0 }
@@ -601,7 +608,7 @@ private struct DiscoverSkillsView: View {
                 }
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.white)
         .confirmationDialog("删除这条寻找记录？", isPresented: Binding(
             get: { pendingDelete != nil },
             set: { if !$0 { pendingDelete = nil } }
@@ -4536,7 +4543,7 @@ private struct AgentsView: View {
             if isDragging {
                 TargetColumnHeader(target: target, showsDragHandle: true)
                     .padding(.horizontal, 5)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.blue.opacity(0.55)))
                     .shadow(color: .black.opacity(0.18), radius: 13, y: 7)
                     .offset(x: ghostOffset)
@@ -5658,7 +5665,7 @@ private struct SettingsView: View {
             detailContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.white)
         .task {
             selectedAIProviderID = model.aiSettings.selectedProviderID
             await refreshGitHubIfNeeded()
@@ -6455,7 +6462,7 @@ private struct SettingsNavigationPane: View {
 
             Spacer(minLength: 20)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.white)
     }
 
     private func summary(for page: SettingsPage) -> String {

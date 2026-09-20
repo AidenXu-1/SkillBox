@@ -22,16 +22,20 @@ if (( ${#source_tests[@]} == 0 )); then
     exit 65
 fi
 
-# This test measures a 500 ms UI deadline. Other @MainActor application tests
-# occupy the same executor during a parallel run; isolate it without weakening
-# its assertion, just as transport fixtures are isolated below.
-deadline_test='discoveryPlanningDeadlineStillDeliversFinalCandidate'
-if [[ "${(j: :)test_identifiers}" != *"$deadline_test"* ]]; then
-    print -u2 -r -- "The discovery deadline test was not discovered. Refusing an incomplete test run."
-    exit 65
-fi
-swift test --skip "SourceProviderTests|$deadline_test"
-swift test --filter "$deadline_test"
+# These tests measure short UI deadlines. Other @MainActor tests can occupy
+# their executor before timers start. Run them independently, preserving all
+# original timing assertions, and require discovery so none can be skipped.
+deadline_tests=(discoveryPlanningDeadlineStillDeliversFinalCandidate deletionNoticePausesAndCloses)
+for deadline_test in "${deadline_tests[@]}"; do
+    if [[ "${(j: :)test_identifiers}" != *"$deadline_test"* ]]; then
+        print -u2 -r -- "UI deadline test $deadline_test was not discovered. Refusing an incomplete test run."
+        exit 65
+    fi
+done
+swift test --skip "SourceProviderTests|${(j:|:)deadline_tests}"
+for deadline_test in "${deadline_tests[@]}"; do
+    swift test --filter "$deadline_test"
+done
 
 batch_size=1
 for (( offset = 1; offset <= ${#source_tests[@]}; offset += batch_size )); do

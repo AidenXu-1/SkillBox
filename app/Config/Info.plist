@@ -21,7 +21,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>3.0.1</string>
 	<key>CFBundleVersion</key>
-	<string>29</string>
+	<string>30</string>
 	<key>LSArchitecturePriority</key>
 	<array>
 		<string>arm64</string>
