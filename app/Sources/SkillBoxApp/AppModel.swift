@@ -1601,6 +1601,7 @@ final class AppModel: ObservableObject {
             isBusy = false
         }
         do {
+            let previousHistoryCount = await store.currentSnapshot().transactions.count
             let removed = try await store.pruneRollbackBackups()
             snapshot = await store.currentSnapshot()
             await refreshBackupMaintenanceIssue()
@@ -1613,6 +1614,11 @@ final class AppModel: ObservableObject {
             let total = removed + appRemoved
             backupCheckResult = total == 0 ? "检查完成，没有需要清理的备份。" : "检查完成，已清理 \(total) 份过期或被替代的备份。"
             statusMessage = total == 0 ? "备份检查完成" : "已清理 \(total) 份备份"
+            let removedHistory = max(0, previousHistoryCount - snapshot.transactions.count)
+            if removedHistory > 0 {
+                backupCheckResult = "检查完成，已清理 \(removedHistory) 条到期操作记录、\(total) 份备份。"
+                statusMessage = "操作记录与备份检查完成"
+            }
         } catch {
             snapshot = await store.currentSnapshot()
             await refreshBackupMaintenanceIssue()

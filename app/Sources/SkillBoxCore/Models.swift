@@ -844,10 +844,11 @@ public struct SyncTransaction: Codable, Hashable, Identifiable, Sendable {
     public var backupsExpiredAt: Date?
     public var restorationContext: SyncRestorationContext?
 
+    public var retentionStartedAt: Date { completedAt ?? createdAt }
+
     public func canRestore(at now: Date = Date()) -> Bool {
         guard restorationContext == nil, status == .succeeded || status == .undoBlocked, backupsExpiredAt == nil else { return false }
-        if libraryDeletion != nil || libraryRestoration != nil { return true }
-        return now.timeIntervalSince(createdAt) < BackupRetentionPolicy.lifetime
+        return now.timeIntervalSince(retentionStartedAt) < BackupRetentionPolicy.lifetime
     }
 
     public init(

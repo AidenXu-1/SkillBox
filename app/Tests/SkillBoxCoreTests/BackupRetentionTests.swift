@@ -24,9 +24,9 @@ struct BackupRetentionTests {
         let f = try await RefreshFixture.make()
         defer { f.remove() }
         let transaction = try await update(f, text: "version two")
-        #expect(transaction.canRestore(at: transaction.createdAt.addingTimeInterval(BackupRetentionPolicy.lifetime - 1)))
-        #expect(!transaction.canRestore(at: transaction.createdAt.addingTimeInterval(BackupRetentionPolicy.lifetime)))
-        _ = try await f.store.pruneRollbackBackups(now: transaction.createdAt.addingTimeInterval(BackupRetentionPolicy.lifetime))
+        #expect(transaction.canRestore(at: transaction.retentionStartedAt.addingTimeInterval(BackupRetentionPolicy.lifetime - 1)))
+        #expect(!transaction.canRestore(at: transaction.retentionStartedAt.addingTimeInterval(BackupRetentionPolicy.lifetime)))
+        _ = try await f.store.pruneRollbackBackups(now: transaction.retentionStartedAt.addingTimeInterval(BackupRetentionPolicy.lifetime))
         let versions = f.saved.deletingLastPathComponent().appendingPathComponent("versions")
         #expect(try FileManager.default.contentsOfDirectory(atPath: versions.path).isEmpty)
         await #expect(throws: (any Error).self) {
