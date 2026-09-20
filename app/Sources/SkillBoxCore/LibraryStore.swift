@@ -208,7 +208,8 @@ public actor LibraryStore {
 
     private func performRollbackBackupPruning(now: Date) throws -> Int {
         var plan = BackupRetentionPolicy.plan(snapshot: snapshot, root: root, now: now)
-        let recoveringIDs = Set(snapshot.transactions.filter { $0.status == .running || $0.status == .failed }
+        let protectedIDs = BackupRetentionPolicy.protectedTransactionIDs(in: snapshot)
+        let recoveringIDs = Set(snapshot.transactions.filter { protectedIDs.contains($0.id) }
             .compactMap { $0.libraryUpdate?.previousRecord.id })
         for skill in snapshot.skills where !recoveringIDs.contains(skill.id) {
             let versions = recordRoot(for: skill).appendingPathComponent("versions").standardizedFileURL
@@ -271,6 +272,18 @@ public actor LibraryStore {
                 removed += 1
             }
         }
+        // A completed deletion no longer needs its temporary compensation copy.
+        // Retry failed post-delete cleanup; never follow the user's Trash URL.
+        for transaction in snapshot.transactions where !protectedIDs.contains(transaction.id) {
+            guard let relative = transaction.libraryDeletion?.recoveryBackupRelativePath else { continue }
+            guard relative == "deletion-recovery" else { throw FileOperationError.invalidRelativePath(relative) }
+            let recovery = transactionsDirectory.appendingPathComponent(transaction.id.uuidString)
+                .appendingPathComponent(relative)
+            guard fileManager.fileExists(atPath: recovery.path) else { continue }
+            try validateBackupRemovalPath(recovery)
+            try fileManager.removeItem(at: recovery)
+            removed += 1
+        }
         for path in plan.removablePaths.sorted() {
             let url = URL(fileURLWithPath: path).standardizedFileURL
             guard fileManager.fileExists(atPath: url.path) else { continue }
@@ -304,7 +317,30 @@ public actor LibraryStore {
             }
             cleanedRescueIDs.insert(transaction.id)
         }
-        snapshot.transactions.removeAll { cleanedRescueIDs.contains($0.id) }
+        // Only forget an expired operation after its owned payload is gone.
+        // Empty directories are removed with rmdir, never recursive deletion:
+        // unknown files leave their journal intact for a later cleanup attempt.
+        var expiredHistoryIDs = Set<UUID>()
+        for transaction in snapshot.transactions {
+            guard !protectedIDs.contains(transaction.id),
+                  transaction.restorationContext == nil,
+                  now.timeIntervalSince(transaction.retentionStartedAt) >= BackupRetentionPolicy.lifetime else { continue }
+            let transactionRoot = transactionsDirectory.appendingPathComponent(transaction.id.uuidString)
+            var empty = true
+            for directory in [transactionRoot.appendingPathComponent("backups"), transactionRoot] {
+                guard fileManager.fileExists(atPath: directory.path) else { continue }
+                try validateBackupRemovalPath(directory)
+                let result = directory.withUnsafeFileSystemRepresentation { path in
+                    path.map { Darwin.rmdir($0) } ?? -1
+                }
+                if result != 0 {
+                    if errno == ENOTEMPTY { empty = false; break }
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+            }
+            if empty { expiredHistoryIDs.insert(transaction.id) }
+        }
+        snapshot.transactions.removeAll { cleanedRescueIDs.contains($0.id) || expiredHistoryIDs.contains($0.id) }
         if snapshot.transactions.count != previousAfterCleanup.transactions.count {
             do { try persist() } catch { snapshot = previousAfterCleanup; throw error }
         }
@@ -326,7 +362,7 @@ public actor LibraryStore {
             .sorted { $0.createdAt > $1.createdAt }
             .lazy
             .compactMap { transaction -> DeletedSkillBackup? in
-                guard transaction.status == .succeeded,
+                guard transaction.canRestore(),
                       let deletion = transaction.libraryDeletion?.deletion,
                       let archivedURL = deletion.archivedURL,
                       self.fileManager.fileExists(atPath: archivedURL.path),
@@ -897,10 +933,15 @@ public actor LibraryStore {
             }
             throw error
         }
+        _ = try? pruneRollbackBackups()
         return deletion
     }
 
     public func restoreDeletedSkill(_ deletion: DeletedSkillBackup) throws -> SkillRecord {
+        guard snapshot.transactions.contains(where: {
+            $0.libraryDeletion?.deletion.record.id == deletion.record.id
+                && $0.libraryDeletion?.deletion.archivedURL == deletion.archivedURL && $0.canRestore()
+        }) else { throw SyncExecutorError.rollbackExpired }
         guard !snapshot.skills.contains(where: { $0.id == deletion.record.id }) else {
             throw LibraryStoreError.duplicateRecord
         }
@@ -997,6 +1038,7 @@ public actor LibraryStore {
             try? persist()
             throw error
         }
+        _ = try? pruneRollbackBackups()
         return restoredRecord
     }
 

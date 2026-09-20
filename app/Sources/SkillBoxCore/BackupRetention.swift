@@ -11,7 +11,21 @@ public struct BackupRetentionPlan: Sendable {
 public enum BackupRetentionPolicy {
     public static let lifetime: TimeInterval = 7 * 24 * 60 * 60
 
+    /// Recovery still needs both its journal and the original operation.
+    public static func protectedTransactionIDs(in snapshot: LibrarySnapshot) -> Set<UUID> {
+        var ids = Set(snapshot.transactions.filter { $0.status == .running || $0.status == .failed }.map(\.id))
+        var previousCount = -1
+        while previousCount != ids.count {
+            previousCount = ids.count
+            for transaction in snapshot.transactions where ids.contains(transaction.id) {
+                if let original = transaction.restorationContext?.originalTransactionID { ids.insert(original) }
+            }
+        }
+        return ids
+    }
+
     public static func plan(snapshot: LibrarySnapshot, root: URL, now: Date = Date()) -> BackupRetentionPlan {
+        let protectedIDs = protectedTransactionIDs(in: snapshot)
         var keep = Set<String>()
         var known = Set<String>()
         var expired = Set<UUID>()
@@ -22,7 +36,7 @@ public enum BackupRetentionPolicy {
         }
         // Rescue payloads are protected in addition to the latest successful
         // operation. They must not consume its ordinary rollback slot.
-        for transaction in ordered where transaction.status == .running || transaction.status == .failed {
+        for transaction in ordered where protectedIDs.contains(transaction.id) {
             for item in items(transaction, root: root, contentPaths: contentPaths) {
                 if let path = item.path { keep.insert(path) }
             }
@@ -30,9 +44,9 @@ public enum BackupRetentionPolicy {
         for transaction in ordered {
             let entries = items(transaction, root: root, contentPaths: contentPaths)
             known.formUnion(entries.compactMap(\.path))
-            guard transaction.status != .running, transaction.status != .failed else { continue }
+            guard !protectedIDs.contains(transaction.id) else { continue }
             let isUndoable = transaction.status == .succeeded || transaction.status == .undoBlocked
-            let inTime = now.timeIntervalSince(transaction.createdAt) < lifetime
+            let inTime = now.timeIntervalSince(transaction.retentionStartedAt) < lifetime
             var complete = isUndoable && inTime
             for item in entries {
                 let latest = isUndoable && claimed.insert(item.key).inserted

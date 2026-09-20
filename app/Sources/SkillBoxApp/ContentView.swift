@@ -5260,7 +5260,7 @@ private struct HistoryView: View {
                     PageHeader(
                         eyebrow: "可以反悔",
                         title: "操作记录与恢复",
-                        subtitle: "安装、更新和卸载都会留下记录，需要时可以恢复到操作前。"
+                        subtitle: "保留最近 7 天的操作记录，可用备份支持恢复到操作前。"
                     )
                 }
                 if visibleTransactions.isEmpty {
@@ -5585,7 +5585,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .ai: "决定哪些功能使用 AI，并分别管理每家服务的连接信息。"
         case .github: "连接私人仓库，并管理 SkillBox 可以读取的仓库范围。"
         case .storage: "查看 SkillBox 在这台 Mac 上保存了什么，并清理不再需要的寻找记录。"
-        case .history: "安装、更新和卸载都会留下记录，需要时可以恢复到操作前。"
+        case .history: "保留最近 7 天的操作记录，可用备份支持恢复到操作前。"
         case .privacy: "了解 SkillBox 什么时候读取文件、访问网络，以及如何保护你的内容。"
         case .about: "版本、更新与作者。"
         }
