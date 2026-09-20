@@ -8,7 +8,7 @@
 
 SkillBox 是一款原生 macOS 应用。你可以从本地开发文件夹或 GitHub 添加 Skill，先查看文件和风险提示，再选择安装到哪些 AI 应用。
 
-[**下载 v3.0.1**](https://github.com/AidenXu-1/SkillBox/releases/tag/v3.0.1) · [反馈问题](https://github.com/AidenXu-1/SkillBox/issues) · [历史版本](https://github.com/AidenXu-1/SkillBox/releases)
+[**下载 v3.0.2**](https://github.com/AidenXu-1/SkillBox/releases/tag/v3.0.2) · [反馈问题](https://github.com/AidenXu-1/SkillBox/issues) · [历史版本](https://github.com/AidenXu-1/SkillBox/releases)
 
 **适用系统：Apple Silicon Mac · macOS 15.0 及以上**
 
@@ -34,9 +34,9 @@ SkillBox 是一款原生 macOS 应用。你可以从本地开发文件夹或 Git
 
 ## 下载与安装
 
-当前发布版本：**v3.0.1（Build 27）**。
+当前发布版本：**v3.0.2（Build 31）**。
 
-1. 在 [下载页](https://github.com/AidenXu-1/SkillBox/releases/tag/v3.0.1) 获取 `SkillBox-3.0.1.dmg`。
+1. 在 [下载页](https://github.com/AidenXu-1/SkillBox/releases/tag/v3.0.2) 获取 `SkillBox-3.0.2.dmg`。
 2. 打开安装包，将 SkillBox 拖进「应用程序」。
 3. 打开 SkillBox。如果 macOS 提示无法验证开发者，进入「系统设置 → 隐私与安全」。
 4. 找到 SkillBox，点击「仍要打开」，由你本人按系统提示完成确认。
@@ -97,7 +97,7 @@ SkillBox 是一款原生 macOS 应用。你可以从本地开发文件夹或 Git
 
 遇到问题请到 [GitHub Issues](https://github.com/AidenXu-1/SkillBox/issues) 反馈，尽量写清 SkillBox 版本、macOS 版本、操作步骤、预期结果和实际提示。上传截图或日志前，请移除 API Key 和私人文件内容。
 
-v3.0.1 的七天操作记录清理已通过独立对抗式审查和自动化测试；现有安装环境中的启动清理、恢复确认及取消已实测，Skills 文件和安装关系保持。部分异常恢复场景尚未完成真实窗口逐步点击验证；另一台 Mac 或干净账户的首次安装与手动放行也尚未单独实测。详见 [本次发布说明](https://github.com/AidenXu-1/SkillBox/releases/tag/v3.0.1)。
+v3.0.2 修复主界面泛粉与标题栏接缝，已实测我的 Skills、安装到应用、设置页面及侧栏收起展开；全量自动化、发行包与签名更新检查通过。另一台 Mac 或干净账户的首次安装与手动放行尚未单独实测。详见 [本次发布说明](https://github.com/AidenXu-1/SkillBox/releases/tag/v3.0.2)。
 
 ## 项目文档与参与开发
 
