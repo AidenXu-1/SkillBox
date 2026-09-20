@@ -237,6 +237,29 @@ struct NavigationAndAgentCatalogTests {
         #expect(target.path == root.appendingPathComponent("skills").standardizedFileURL.path)
     }
 
+    @Test("DeepSeek prepares only a missing skills child of an existing home", arguments: ["default", "configured", "missing", "occupied"])
+    func deepSeekPreparesSkillsDirectory(scenario: String) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = root.appendingPathComponent(scenario == "configured" ? "custom" : ".dsh")
+        if scenario != "missing" { try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true) }
+        let skills = home.appendingPathComponent("skills")
+        if scenario == "occupied" { try "keep".write(to: skills, atomically: true, encoding: .utf8) }
+        let targets = BuiltinAgentAdapters.reconciledTargets(persisted: [], homeDirectory: root,
+            environment: scenario == "configured" ? ["DSH_HOME": home.path] : [:])
+        let target = try #require(targets.first { $0.kind == .deepSeekHarness })
+        #expect(target.path == skills.path)
+        if scenario == "default" || scenario == "configured" {
+            #expect(target.detectionStatus == .available)
+            #expect(target.writeStatus == .writable)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: skills.path).isEmpty)
+        } else {
+            #expect(target.detectionStatus == .directoryMissing)
+            if scenario == "missing" { #expect(!FileManager.default.fileExists(atPath: home.path)) }
+            else { #expect(try String(contentsOf: skills, encoding: .utf8) == "keep") }
+        }
+    }
+
     @Test("Old target records decode as visible without losing compatibility")
     func legacyTargetJSONDefaultsToVisible() throws {
         let id = UUID()

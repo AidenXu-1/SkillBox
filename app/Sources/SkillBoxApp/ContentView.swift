@@ -327,13 +327,17 @@ struct ContentView: View {
                     .labelStyle(.titleAndIcon)
                     .help("查看 SkillBox 更新")
                 }
-                if (model.isBusy || model.isCheckingLocalSources) && model.operationProgress == nil {
-                    ProgressView()
-                        .controlSize(.small)
-                }
                 Button { Task { await model.refreshSkills() } } label: {
-                    Label("刷新安装状态与本地来源", systemImage: "arrow.clockwise")
+                    ZStack {
+                        Image(systemName: "arrow.clockwise")
+                            .opacity((model.isBusy || model.isCheckingLocalSources) && model.operationProgress == nil ? 0 : 1)
+                        if (model.isBusy || model.isCheckingLocalSources) && model.operationProgress == nil {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                    .frame(width: 20, height: 20)
                 }
+                .accessibilityLabel("刷新安装状态与本地来源")
                 .help("检查本地开发文件夹的变化，并刷新应用安装状态；GitHub 更新可在来源菜单中检查")
                 .disabled(model.isBusy || model.isCheckingLocalSources)
             }

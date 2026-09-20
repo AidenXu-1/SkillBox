@@ -146,6 +146,23 @@ public enum BuiltinAgentAdapters {
                 fileManager: fileManager,
                 environment: environment
             )
+            // DSH creates its home before it creates a skills directory. Only
+            // prepare that empty child inside an existing, writable DSH home;
+            // never create an application home merely because it is listed.
+            if adapter.kind == .deepSeekHarness, target.detectionStatus == .directoryMissing {
+                let skills = URL(fileURLWithPath: target.path)
+                let parent = skills.deletingLastPathComponent()
+                let parentType = try? fileManager.attributesOfItem(atPath: parent.path)[.type] as? FileAttributeType
+                let occupied = (try? fileManager.attributesOfItem(atPath: skills.path)) != nil
+                if parentType == .typeDirectory, !occupied, fileManager.isWritableFile(atPath: parent.path) {
+                    do {
+                        try fileManager.createDirectory(at: skills, withIntermediateDirectories: false)
+                        target = adapter.makeTarget(homeDirectory: homeDirectory, fileManager: fileManager, environment: environment)
+                    } catch {
+                        // Keep the actual unavailable state if preparation fails.
+                    }
+                }
+            }
             if let previous = persistedByID[target.id] {
                 target.isVisible = previous.isVisible
                 target.sortIndex = previous.sortIndex == .max ? index : previous.sortIndex
