@@ -1,0 +1,414 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-21",
+  "reason": "Remove developer-local paths from three historical documents; preserve all released source snapshots and existing binary assets",
+  "versions": [
+    {
+      "tag": "v3.0.3",
+      "original_commit": "58405c1405fcc5d39de6f1be92c39b5b8e4aeabd",
+      "current_commit": "1d341e607fb8852a8eb2979ec7171c354e006703",
+      "identical_source_tree": "fea16c7c15fc4dd8ebe4683a29b4b40d386f1553",
+      "release_id": 419205802,
+      "assets": [
+        {
+          "name": "appcast.xml",
+          "id": 661514286,
+          "sha256": "b117ba7c632f2d064c05895a37f9e82d7c152fa197c075875a61acfbc23fa669",
+          "bytes": 2030,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.3/appcast.xml"
+        },
+        {
+          "name": "SkillBox-3.0.3-release.json",
+          "id": 661513942,
+          "sha256": "0c96191a214cd4b00ecfbad4057c6dcd77dbcfd804e581b66a7bbaddfc6eeae4",
+          "bytes": 1556,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.3/SkillBox-3.0.3-release.json"
+        },
+        {
+          "name": "SkillBox-3.0.3-source.zip",
+          "id": 661513963,
+          "sha256": "788913e6628e474a39844cc46344f48bf397fa4c5dc8acad6e93df90d1e88323",
+          "bytes": 23832414,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.3/SkillBox-3.0.3-source.zip"
+        },
+        {
+          "name": "SkillBox-3.0.3-update.zip",
+          "id": 661513966,
+          "sha256": "eefd8da5bcf36ef00a80ec594bdd1eb0d175f6494362d10f929ff18709e823d4",
+          "bytes": 6643665,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.3/SkillBox-3.0.3-update.zip"
+        },
+        {
+          "name": "SkillBox-3.0.3.dmg",
+          "id": 661513944,
+          "sha256": "68bc964f1f9fa9752defaa25261f6cab4ed28353a2049a0d988cfa7a83395037",
+          "bytes": 7094084,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.3/SkillBox-3.0.3.dmg"
+        },
+        {
+          "name": "SkillBox-3.0.3.sha256",
+          "id": 661513964,
+          "sha256": "db10e09287beef7ce7761fb05a0c729644fc839c720548344ac5a1152650b9b4",
+          "bytes": 441,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.3/SkillBox-3.0.3.sha256"
+        }
+      ]
+    },
+    {
+      "tag": "v3.0.2",
+      "original_commit": "6160aa9a74c000d2e9ad8714aba4bfab8f53c120",
+      "current_commit": "b7c10b1a541dd38abb42e5d029ba55dd6081ab9b",
+      "identical_source_tree": "9846d9a03f0b18f78f41d25e5f4d94ac9e42cc2e",
+      "release_id": 392383076,
+      "assets": [
+        {
+          "name": "appcast.xml",
+          "id": 576548454,
+          "sha256": "8525d6e84c244cc4a1888a4aa53593be56eab778567ab85a42c580e9b4b859b5",
+          "bytes": 1558,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.2/appcast.xml"
+        },
+        {
+          "name": "SkillBox-3.0.2-release.json",
+          "id": 576548452,
+          "sha256": "57d1d09ff740c3d044056c2151b756d92a5ad7d58f1cc4e9793235ed1520af32",
+          "bytes": 904,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.2/SkillBox-3.0.2-release.json"
+        },
+        {
+          "name": "SkillBox-3.0.2-update.zip",
+          "id": 576548459,
+          "sha256": "005a1423c043c1a2ee0bd3191c85a63052e2d171c1c6957ba8647f37444fc280",
+          "bytes": 6712013,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.2/SkillBox-3.0.2-update.zip"
+        },
+        {
+          "name": "SkillBox-3.0.2.dmg",
+          "id": 576548466,
+          "sha256": "c00030be4de7b688575c5f101b54e9f4140d9b85826bb62ba80333675e1d1c50",
+          "bytes": 7167589,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.2/SkillBox-3.0.2.dmg"
+        },
+        {
+          "name": "SkillBox-3.0.2.sha256",
+          "id": 576548468,
+          "sha256": "44a6373d714fd40ca96fd057c2c1373dc30d088fba94f07b2b6994189d024657",
+          "bytes": 349,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.2/SkillBox-3.0.2.sha256"
+        }
+      ]
+    },
+    {
+      "tag": "v3.0.1",
+      "original_commit": "1dc715b6767d333c8e8bf07976bb0d1bf84c0709",
+      "current_commit": "1845e8c84b94d599f612b89f59246b4dfb1db168",
+      "identical_source_tree": "25f3a3ff609dac53a5f46d5f010ecf9d6c825ff2",
+      "release_id": 392360353,
+      "assets": [
+        {
+          "name": "appcast.xml",
+          "id": 576421614,
+          "sha256": "3a8c02d6a30240a7e6296e3db415769d9445a0748bbd2595bba01a3d2295d055",
+          "bytes": 1683,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.1/appcast.xml"
+        },
+        {
+          "name": "SkillBox-3.0.1-release.json",
+          "id": 576421610,
+          "sha256": "40c0cd2fc69b74068ff273e51c2db7434c7ea80161f7bedf1611c11680580532",
+          "bytes": 904,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.1/SkillBox-3.0.1-release.json"
+        },
+        {
+          "name": "SkillBox-3.0.1-update.zip",
+          "id": 576421612,
+          "sha256": "9fc7b6705b0a08c26c49a5c9e82c6bfbd3defaeb14f3e4c81fdb16cb9a0be57a",
+          "bytes": 6710352,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.1/SkillBox-3.0.1-update.zip"
+        },
+        {
+          "name": "SkillBox-3.0.1.dmg",
+          "id": 576421616,
+          "sha256": "dce4b4d4b6a1b638082850d11183feb050edc77de0cb6b07cb58d48744bfbf8d",
+          "bytes": 7165980,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.1/SkillBox-3.0.1.dmg"
+        },
+        {
+          "name": "SkillBox-3.0.1.sha256",
+          "id": 576421618,
+          "sha256": "749f6fca9d4adbd062ad83f9f38c127d159e398570666a3db6b485a971b158f1",
+          "bytes": 349,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.1/SkillBox-3.0.1.sha256"
+        }
+      ]
+    },
+    {
+      "tag": "v0.2.6",
+      "original_commit": "c6927e457bc845bc4d3c96b93ec797ce6d553473",
+      "current_commit": "7373027917c9a720b1283dbcfeebb489b79718fc",
+      "identical_source_tree": "288c5378e0164fbd83959209fa7fbfa9e60e6875",
+      "release_id": 392213946,
+      "assets": [
+        {
+          "name": "appcast.xml",
+          "id": 575489245,
+          "sha256": "a0753f849afd56fb5d3b5963415cb457dc246813976b805742ddebe587177b39",
+          "bytes": 1818,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.6/appcast.xml"
+        },
+        {
+          "name": "SkillBox-0.2.6-release.json",
+          "id": 575489241,
+          "sha256": "2e2242f167e155f9bca0d209f7f16535c4f5a82b8ab024320df3311511b1da61",
+          "bytes": 904,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.6/SkillBox-0.2.6-release.json"
+        },
+        {
+          "name": "SkillBox-0.2.6-update.zip",
+          "id": 575489242,
+          "sha256": "e4be9d3e1c5b51f1216a0c171ee51bcf7975cb7985129818bb5d4ced471da644",
+          "bytes": 6718284,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.6/SkillBox-0.2.6-update.zip"
+        },
+        {
+          "name": "SkillBox-0.2.6.dmg",
+          "id": 575489239,
+          "sha256": "fcdd6726bdd3403eb9ac3232845467c7b9ed200bf59a9f08078209a154f53896",
+          "bytes": 7173601,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.6/SkillBox-0.2.6.dmg"
+        },
+        {
+          "name": "SkillBox-0.2.6.sha256",
+          "id": 575489244,
+          "sha256": "99f77c1c8af3d182da82fed7fc30c0b6324b73979a793d807f6bc38f281b9568",
+          "bytes": 349,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.6/SkillBox-0.2.6.sha256"
+        }
+      ]
+    },
+    {
+      "tag": "v0.2.5",
+      "original_commit": "19ceb0a0fda7e1c210393f963561a15fc751af43",
+      "current_commit": "baec031fba39e755a8a6d67052ea53b2e918dd59",
+      "identical_source_tree": "85ee78866ea0dd5a5b312a347afdfcd3dad0c82a",
+      "release_id": 390828544,
+      "assets": [
+        {
+          "name": "appcast.xml",
+          "id": 570510273,
+          "sha256": "a6f0909ddd24af5029f5f695cc2bad89c1b7dbf1a570ac3d3ab76014c92ad3f0",
+          "bytes": 1750,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.5/appcast.xml"
+        },
+        {
+          "name": "SkillBox-0.2.5-release.json",
+          "id": 570510280,
+          "sha256": "094ee690782843bc2db08a2f26a9b35c2dfa8d49961811dfa1a2043fe4eddf3b",
+          "bytes": 904,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.5/SkillBox-0.2.5-release.json"
+        },
+        {
+          "name": "SkillBox-0.2.5-update.zip",
+          "id": 570510275,
+          "sha256": "b64a2d99608bd0f0f15dc9465382b6f981613e838f729a74843335f7b30ab14e",
+          "bytes": 6687096,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.5/SkillBox-0.2.5-update.zip"
+        },
+        {
+          "name": "SkillBox-0.2.5.dmg",
+          "id": 570510274,
+          "sha256": "5002efdfc818af280feefe59dd1676f6935a301136cfcb1a4cd1831c17f32255",
+          "bytes": 7138547,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.5/SkillBox-0.2.5.dmg"
+        },
+        {
+          "name": "SkillBox-0.2.5.sha256",
+          "id": 570510276,
+          "sha256": "c17de6138c972d8999667249bb1f02a55277a99713b2c86eb13d046a3c356711",
+          "bytes": 349,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.5/SkillBox-0.2.5.sha256"
+        }
+      ]
+    },
+    {
+      "tag": "v0.2.4",
+      "original_commit": "b2fb8557a75aedb02d5fdd7d4ed270bd757ebb7e",
+      "current_commit": "d339edf66fea1f67ed2690ee20a5623cd085e7e4",
+      "identical_source_tree": "02dcb2c31e66fddb2f5fdaedef514e6bcc91b7ab",
+      "release_id": 388146249,
+      "assets": [
+        {
+          "name": "SkillBox-0.2.4-release.json",
+          "id": 562560703,
+          "sha256": "517a0f2904b397bb2ae660a4bdfa08af9ff830b44c633a4827aef2f434764a68",
+          "bytes": 771,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.4/SkillBox-0.2.4-release.json"
+        },
+        {
+          "name": "SkillBox-0.2.4.dmg",
+          "id": 562560702,
+          "sha256": "4444d4013ee89a73e63b56554b9f88bb23945932ff95fb2bf87d71ab05366911",
+          "bytes": 6036663,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.4/SkillBox-0.2.4.dmg"
+        },
+        {
+          "name": "SkillBox-0.2.4.sha256",
+          "id": 562560704,
+          "sha256": "b788e288f70bb61b661a8bd7011c33228bface6505a361e130909b39d75e4108",
+          "bytes": 179,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.4/SkillBox-0.2.4.sha256"
+        }
+      ]
+    },
+    {
+      "tag": "v0.2.3",
+      "original_commit": "e96f1fd2f667173c5b8333715c106910bea422e6",
+      "current_commit": "58229850f9e215c791246ce6b40646bd2dec3e02",
+      "identical_source_tree": "06bc0ea5d9432636a6e9ed43904015b08e663dcc",
+      "release_id": 384462940,
+      "assets": [
+        {
+          "name": "SkillBox-0.2.3-release.json",
+          "id": 549915258,
+          "sha256": "c60d6b620aae0b6fbd10044747a47fe113bf9eee471022803c1eed1c2ee63c92",
+          "bytes": 770,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.3/SkillBox-0.2.3-release.json"
+        },
+        {
+          "name": "SkillBox-0.2.3.dmg",
+          "id": 549915259,
+          "sha256": "f92bf9471e8eb7fc3b4e8d8a21c3c211eab11d84daf627915e9aa6547857a358",
+          "bytes": 5876203,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.3/SkillBox-0.2.3.dmg"
+        },
+        {
+          "name": "SkillBox-0.2.3.sha256",
+          "id": 549915260,
+          "sha256": "693ec23c409e552d0fd03b225fe9d089c5256cc247b136aaafeb7928e93ebfd3",
+          "bytes": 179,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.3/SkillBox-0.2.3.sha256"
+        }
+      ]
+    },
+    {
+      "tag": "v0.2.2",
+      "original_commit": "5ae3e8c1651bb4837358d8aa66e7756ae5481369",
+      "current_commit": "567b080e4709047777c20ea6af1d1ddb3cbd4968",
+      "identical_source_tree": "b92ca3555b94a5c1c27a5ca7dc7a82498c233523",
+      "release_id": 383633692,
+      "assets": [
+        {
+          "name": "SkillBox-0.2.2-release.json",
+          "id": 547358386,
+          "sha256": "34d74637c89e885be2c84335ceb080866bd890384cb678bf69cfda29cf23694a",
+          "bytes": 770,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.2/SkillBox-0.2.2-release.json"
+        },
+        {
+          "name": "SkillBox-0.2.2.dmg",
+          "id": 547358387,
+          "sha256": "e1f012abc61614ad6467200b96a6dc6c83f96631d2b028dcbe0fc9ee7905a0ff",
+          "bytes": 5823989,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.2/SkillBox-0.2.2.dmg"
+        },
+        {
+          "name": "SkillBox-0.2.2.sha256",
+          "id": 547358385,
+          "sha256": "517244d16ddf9c267f88d1a6d0186173b8ea0f7b34c0a50002acbbcd0a08d664",
+          "bytes": 179,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.2/SkillBox-0.2.2.sha256"
+        }
+      ]
+    },
+    {
+      "tag": "v0.2.1",
+      "original_commit": "d59f82bc691f096ea49ca5a6b25e2cf0a7e30088",
+      "current_commit": "2a62f196c8703df2f64e226467770f8d537d1e0e",
+      "identical_source_tree": "02896270f1dc77c332460cab9c0a0663357f02db",
+      "release_id": 380167430,
+      "assets": [
+        {
+          "name": "SkillBox-0.2.1-release.json",
+          "id": 538804164,
+          "sha256": "7ee485859a1f9607ccc5b5a7d99c4ba9a3bc44c1407cb84aadd9462e3cbd8138",
+          "bytes": 770,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.1/SkillBox-0.2.1-release.json"
+        },
+        {
+          "name": "SkillBox-0.2.1.dmg",
+          "id": 538804165,
+          "sha256": "f96310a2d3b059a56758a95e3a28432524ff2a4626ed744ec9993604a338ca42",
+          "bytes": 4580661,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.1/SkillBox-0.2.1.dmg"
+        },
+        {
+          "name": "SkillBox-0.2.1.sha256",
+          "id": 538804163,
+          "sha256": "11ebbfa08f381b0154c7b414b1299f530ed09cd5adc143b93d14336b58c34558",
+          "bytes": 179,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.1/SkillBox-0.2.1.sha256"
+        }
+      ]
+    },
+    {
+      "tag": "v0.2.0",
+      "original_commit": "1b43cad89933181cf1b8cba39cc9ef697ca79faa",
+      "current_commit": "bb5180085b40d31713341693f4d4dfd5bc6d0dd1",
+      "identical_source_tree": "3177b91d4fdd834bc09e652badfc962768c1ee77",
+      "release_id": 379905558,
+      "assets": [
+        {
+          "name": "SkillBox-0.2.0-release.json",
+          "id": 538253798,
+          "sha256": "508e2124f0394e46c8acc3d08ed246f9d23d39fe4d3ce3bedb67f91ebed8dc97",
+          "bytes": 770,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.0/SkillBox-0.2.0-release.json"
+        },
+        {
+          "name": "SkillBox-0.2.0.dmg",
+          "id": 538253799,
+          "sha256": "7b9a2ea76c62c1828f338716217853a3061f3cbd0cd5d4f5f1a75375e97e8bed",
+          "bytes": 4580444,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.0/SkillBox-0.2.0.dmg"
+        },
+        {
+          "name": "SkillBox-0.2.0.sha256",
+          "id": 538253800,
+          "sha256": "6f3f3e542f31e2a7372f6ee4d0d6af440b66824482aebc2f030b6dbdcac4e2a6",
+          "bytes": 179,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.2.0/SkillBox-0.2.0.sha256"
+        }
+      ]
+    },
+    {
+      "tag": "v0.1.0",
+      "original_commit": "23d3c4bc4a752d2806086ef36d0ee41df27607e2",
+      "current_commit": "23d3c4bc4a752d2806086ef36d0ee41df27607e2",
+      "identical_source_tree": "fb25e32989b5e2b11421dc3b6e73df1084fffbab",
+      "release_id": 375309454,
+      "assets": [
+        {
+          "name": "SkillBox-0.1.0-release.json",
+          "id": 526579036,
+          "sha256": "1b0607ddc927d0555782cfe7b94d62dafcf879f4bb869b98a8b4d59061d770c1",
+          "bytes": 770,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.1.0/SkillBox-0.1.0-release.json"
+        },
+        {
+          "name": "SkillBox-0.1.0.dmg",
+          "id": 526579035,
+          "sha256": "d17038ac0122ac4d0e569e20483a9a80614224d1c83845888e81c6e45c3ed9e7",
+          "bytes": 4585477,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.1.0/SkillBox-0.1.0.dmg"
+        },
+        {
+          "name": "SkillBox-0.1.0.sha256",
+          "id": 526579037,
+          "sha256": "908caafae313b13d1a79d775abc05ca0147102b91294423e84c52136f295f333",
+          "bytes": 179,
+          "download_url": "https://github.com/AidenXu-1/SkillBox/releases/download/v0.1.0/SkillBox-0.1.0.sha256"
+        }
+      ]
+    }
+  ]
+}
