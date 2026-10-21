@@ -5,20 +5,25 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <title>SkillBox Updates</title>
     <link>https://github.com/AidenXu-1/SkillBox</link>
     <item>
-      <title>SkillBox 3.0.2</title>
-      <pubDate>Sun, 20 Sep 2026 09:41:29 +0000</pubDate>
-      <sparkle:version>31</sparkle:version>
-      <sparkle:shortVersionString>3.0.2</sparkle:shortVersionString>
+      <title>SkillBox 3.0.3</title>
+      <pubDate>Wed, 21 Oct 2026 05:32:04 +0000</pubDate>
+      <sparkle:version>32</sparkle:version>
+      <sparkle:shortVersionString>3.0.3</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <description sparkle:format="plain-text">主界面与提示浮层固定为白色，避免系统背景着色导致泛粉。
-修复标题栏与侧边栏交界处的台阶状接缝。
-保留原有页面布局、导航和操作方式。
+      <description sparkle:format="plain-text">修复保存失败后错误状态可能留在内存、影响后续保存的问题。
+更新预览补齐隐藏配置、目录、类型和权限变化。
+统一检查文件链接的真实位置，阻止指向 Skill 外部或复制后越界的链接。
+全局安装核对和更新文件比较改为后台处理，并保护取消及较新的操作结果。
+修复完整测试脚本漏跑带参数检查的问题，零匹配时明确失败。
+修复附加资料中的名称和简介覆盖 Skill 正式信息的问题。
+资料目录打不开时显示错误提示，支持重试和访达定位。
+保留现有正常页面、Skill 内容、安装关系与恢复规则。
 </description>
-      <enclosure url="https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.2/SkillBox-3.0.2-update.zip" length="6712013" type="application/octet-stream" sparkle:edSignature="sDtwY9lZlTJ0RTyWG45OY2beXamNpFJlmVAZnK7ITnGvJQy8I4Gg5Er1EST1XWme2/OR2x0eZnQO/p/Qi/gxDw=="></enclosure>
+      <enclosure url="https://github.com/AidenXu-1/SkillBox/releases/download/v3.0.3/SkillBox-3.0.3-update.zip" length="6643665" type="application/octet-stream" sparkle:edSignature="VL9aIiphYITDSHcoDY3IkNVb9Ojf6nRonx2ZThMbKCPHR4tJ0RRSyEx0rsuo5aac6twym1RZyhhQ/d2sHEmhDw=="></enclosure>
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: 4u26w3H9WECRupDzX0FRmIFtOBzk/6W1b9tXHKaEbmEIA0mYsIg3esIllpA5fVAYx3fZS7TcPrfTEbQky0FWDg==
-length: 1414
+edSignature: hfkygttP+Ue17jBwvOZZ6/3MmPxcJil4ByVKDo/jxpaIxOprYbb87Swmu/BE43Q4JDh8KNwxiey+38MaiyxADw==
+length: 1886
 -->
