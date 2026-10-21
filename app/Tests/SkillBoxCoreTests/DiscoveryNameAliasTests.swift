@@ -17,7 +17,7 @@ struct DiscoveryNameAliasTests {
         let suite = "SkillBoxAlias.\(UUID())"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        let model = AppModel(libraryRoot: root, homeDirectory: root, routedDiscoveryProvider: provider, userDefaults: defaults, startBootstrap: false)
+        let model = try AppModel(libraryRoot: root, homeDirectory: root, routedDiscoveryProvider: provider, userDefaults: defaults, startBootstrap: false)
         model.discoveryDraft = "我要找一个小黑配图的skill。"
         model.startDiscoverySearch()
         for _ in 0..<500 where model.isDiscoverySearching { try await Task.sleep(for: .milliseconds(10)) }

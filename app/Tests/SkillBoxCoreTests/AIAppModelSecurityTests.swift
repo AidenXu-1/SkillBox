@@ -12,7 +12,7 @@ struct AIAppModelSecurityTests {
         defer { fixture.remove() }
         let provider = BlockingConnectionProvider()
         let keyStore = InMemoryAIKeyStore()
-        let model = fixture.model(provider: provider, keyStore: keyStore)
+        let model = try fixture.model(provider: provider, keyStore: keyStore)
         model.updateAIConfiguration(
             providerID: "custom",
             baseURL: "https://old.example/v1",
@@ -41,7 +41,7 @@ struct AIAppModelSecurityTests {
         defer { fixture.remove() }
         let provider = BlockingConnectionProvider()
         let keyStore = InMemoryAIKeyStore()
-        let model = fixture.model(provider: provider, keyStore: keyStore)
+        let model = try fixture.model(provider: provider, keyStore: keyStore)
         model.updateAIConfiguration(
             providerID: "custom",
             baseURL: "https://custom.example/v1",
@@ -63,7 +63,7 @@ struct AIAppModelSecurityTests {
     func completedSearchCanContinueItsNextEvaluationWindow() throws {
         let fixture = try AIAppModelFixture()
         defer { fixture.remove() }
-        let model = fixture.model(provider: BlockingConnectionProvider(), keyStore: InMemoryAIKeyStore())
+        let model = try fixture.model(provider: BlockingConnectionProvider(), keyStore: InMemoryAIKeyStore())
         var settings = AISettings.defaults
         settings.isEnabled = true
         settings.selectedProviderID = "agnes"
@@ -104,7 +104,7 @@ struct AIAppModelSecurityTests {
     func completedSearchStopsWhenOnlyIneligibleCandidatesRemain() throws {
         let fixture = try AIAppModelFixture()
         defer { fixture.remove() }
-        let model = fixture.model(provider: BlockingConnectionProvider(), keyStore: InMemoryAIKeyStore())
+        let model = try fixture.model(provider: BlockingConnectionProvider(), keyStore: InMemoryAIKeyStore())
         var settings = AISettings.defaults
         settings.isEnabled = true
         settings.selectedProviderID = "agnes"
@@ -142,8 +142,8 @@ private struct AIAppModelFixture {
     }
 
     @MainActor
-    func model(provider: any AIProvider, keyStore: any AIKeyStore) -> AppModel {
-        AppModel(
+    func model(provider: any AIProvider, keyStore: any AIKeyStore) throws -> AppModel {
+        try AppModel(
             libraryRoot: root.appendingPathComponent("store", isDirectory: true),
             store: store,
             homeDirectory: root,

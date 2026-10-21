@@ -18,7 +18,7 @@ struct ConsumerClosureFlowTests {
             try? FileManager.default.removeItem(at: root)
         }
         let skill = highRiskSkill(fingerprint: "content-v1", evidence: "LaunchAgents")
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: root,
             homeDirectory: root.appendingPathComponent("home"),
             userDefaults: defaults,
@@ -29,7 +29,7 @@ struct ConsumerClosureFlowTests {
         model.acknowledgeRisk(for: skill)
         #expect(!model.needsRiskAcknowledgement(for: skill))
 
-        let relaunched = AppModel(
+        let relaunched = try AppModel(
             libraryRoot: root,
             homeDirectory: root.appendingPathComponent("home"),
             userDefaults: defaults,
@@ -55,7 +55,7 @@ struct ConsumerClosureFlowTests {
             try? FileManager.default.removeItem(at: root)
         }
         let skill = highRiskSkill(fingerprint: "content-v1", evidence: "LaunchAgents")
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: root,
             homeDirectory: root.appendingPathComponent("home"),
             userDefaults: defaults,
@@ -113,7 +113,7 @@ struct ConsumerClosureFlowTests {
             promptVersion: "usage-guide-v2",
             guide: completeGuide
         )).write(to: guideURL)
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: storeRoot,
             store: store,
             homeDirectory: root.appendingPathComponent("home"),
@@ -149,7 +149,7 @@ struct ConsumerClosureFlowTests {
             writeStatus: .writable,
             isCustom: true
         )
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: root,
             homeDirectory: root.appendingPathComponent("home"),
             userDefaults: defaults,
@@ -196,7 +196,7 @@ struct ConsumerClosureFlowTests {
             isCustom: true
         )
         try await store.replaceTargets([target])
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: root.appendingPathComponent("store"),
             store: store,
             homeDirectory: root.appendingPathComponent("home"),
@@ -246,7 +246,7 @@ struct ConsumerClosureFlowTests {
             isCustom: true
         )
         try await store.replaceTargets([target])
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: root.appendingPathComponent("store"),
             store: store,
             homeDirectory: root.appendingPathComponent("home"),
@@ -306,7 +306,7 @@ struct ConsumerClosureFlowTests {
         let transaction = try await TransactionalSyncExecutor().execute(plan: plan, store: store)
         #expect(FileManager.default.fileExists(atPath: destination.path))
 
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: storeRoot,
             store: store,
             homeDirectory: root.appendingPathComponent("home"),

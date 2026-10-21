@@ -387,8 +387,7 @@ public actor LibraryStore {
     }
 
     public func replaceTargets(_ targets: [AgentTarget]) throws {
-        snapshot.targets = targets
-        try persist()
+        try commitSnapshotChange { $0.targets = targets }
     }
 
     public func setTargetVisibility(
@@ -403,12 +402,13 @@ public actor LibraryStore {
         guard isVisible || !hasManagedCopies || preservingManagedCopies else {
             throw LibraryStoreError.targetStillInstalled
         }
-        if !isVisible, preservingManagedCopies {
-            snapshot.assignments.removeAll { $0.targetID == id }
-            snapshot.installations.removeAll { $0.targetID == id }
+        try commitSnapshotChange { next in
+            if !isVisible, preservingManagedCopies {
+                next.assignments.removeAll { $0.targetID == id }
+                next.installations.removeAll { $0.targetID == id }
+            }
+            next.targets[index].isVisible = isVisible
         }
-        snapshot.targets[index].isVisible = isVisible
-        try persist()
     }
 
     public func replaceAssignments(_ assignments: [Assignment]) throws {
@@ -419,65 +419,57 @@ public actor LibraryStore {
                 throw LibraryStoreError.duplicateDesiredDestination
             }
         }
-        snapshot.assignments = assignments
-        try persist()
+        try commitSnapshotChange { $0.assignments = assignments }
     }
 
     public func replaceOrganization(_ organization: SkillOrganization) throws {
         var normalized = organization
         normalized.normalize(skillIDs: snapshot.skills.map(\.id))
-        snapshot.organization = normalized
-        try persist()
+        try commitSnapshotChange { $0.organization = normalized }
     }
 
     public func refreshRiskReports(using analyzer: any RiskAnalyzer) throws {
-        let previousSnapshot = snapshot
-        for index in snapshot.skills.indices {
-            let content = root.appendingPathComponent(snapshot.skills[index].contentRelativePath)
-            snapshot.skills[index].riskReport = try analyzer.analyze(skillDirectory: content)
-            let skillMarkdown = content.appendingPathComponent("SKILL.md")
-            if let text = try? String(contentsOf: skillMarkdown, encoding: .utf8) {
-                let metadata = SkillMetadataParser.parse(
-                    text: text,
-                    fallbackName: snapshot.skills[index].canonicalName
-                )
-                if metadata.description != "未提供描述" {
-                    snapshot.skills[index].description = metadata.description
+        try commitSnapshotChange { next in
+            for index in next.skills.indices {
+                let content = root.appendingPathComponent(next.skills[index].contentRelativePath)
+                next.skills[index].riskReport = try analyzer.analyze(skillDirectory: content)
+                let skillMarkdown = content.appendingPathComponent("SKILL.md")
+                if let text = try? String(contentsOf: skillMarkdown, encoding: .utf8) {
+                    let metadata = SkillMetadataParser.parse(text: text, fallbackName: next.skills[index].canonicalName)
+                    if metadata.description != "未提供描述" {
+                        next.skills[index].description = metadata.description
+                    }
                 }
             }
-        }
-        do { try persist() } catch {
-            snapshot = previousSnapshot
-            throw error
         }
     }
 
     public func replaceSourceStates(_ states: [GitHubSourceState]) throws {
-        snapshot.sourceStates = states
-        try persist()
+        try commitSnapshotChange { $0.sourceStates = states }
     }
 
     public func updateSourceState(_ state: GitHubSourceState) throws {
-        if let index = snapshot.sourceStates.firstIndex(where: { $0.skillID == state.skillID }) {
-            snapshot.sourceStates[index] = state
-        } else {
-            snapshot.sourceStates.append(state)
+        try commitSnapshotChange { next in
+            if let index = next.sourceStates.firstIndex(where: { $0.skillID == state.skillID }) {
+                next.sourceStates[index] = state
+            } else {
+                next.sourceStates.append(state)
+            }
         }
-        try persist()
     }
 
     public func replaceLocalSourceStates(_ states: [LocalSourceState]) throws {
-        snapshot.localSourceStates = states
-        try persist()
+        try commitSnapshotChange { $0.localSourceStates = states }
     }
 
     public func updateLocalSourceState(_ state: LocalSourceState) throws {
-        if let index = snapshot.localSourceStates.firstIndex(where: { $0.skillID == state.skillID }) {
-            snapshot.localSourceStates[index] = state
-        } else {
-            snapshot.localSourceStates.append(state)
+        try commitSnapshotChange { next in
+            if let index = next.localSourceStates.firstIndex(where: { $0.skillID == state.skillID }) {
+                next.localSourceStates[index] = state
+            } else {
+                next.localSourceStates.append(state)
+            }
         }
-        try persist()
     }
 
     /// A background read must never revive removed tracking or overwrite an
@@ -1084,12 +1076,13 @@ public actor LibraryStore {
         guard preservingManagedCopies || !snapshot.installations.contains(where: { $0.targetID == id }) else {
             throw LibraryStoreError.targetStillInstalled
         }
-        snapshot.targets.removeAll { $0.id == id }
-        snapshot.assignments.removeAll { $0.targetID == id }
-        if preservingManagedCopies {
-            snapshot.installations.removeAll { $0.targetID == id }
+        try commitSnapshotChange { next in
+            next.targets.removeAll { $0.id == id }
+            next.assignments.removeAll { $0.targetID == id }
+            if preservingManagedCopies {
+                next.installations.removeAll { $0.targetID == id }
+            }
         }
-        try persist()
     }
 
     public func recordTransaction(_ transaction: SyncTransaction) throws {
@@ -1494,6 +1487,15 @@ public actor LibraryStore {
 
     private func persist() throws {
         try Self.persist(snapshot: snapshot, root: root, encoder: encoder, fileManager: fileManager)
+    }
+
+    /// Publish in-memory changes only after the complete snapshot commit marker
+    /// has been saved. A failed mirror or marker write leaves the old state live.
+    private func commitSnapshotChange(_ change: (inout LibrarySnapshot) throws -> Void) throws {
+        var next = snapshot
+        try change(&next)
+        try Self.persist(snapshot: next, root: root, encoder: encoder, fileManager: fileManager)
+        snapshot = next
     }
 
     private static func persist(snapshot: LibrarySnapshot, root: URL, encoder: JSONEncoder, fileManager: FileManager) throws {

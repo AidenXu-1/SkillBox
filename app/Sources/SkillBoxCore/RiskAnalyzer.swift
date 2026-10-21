@@ -12,6 +12,7 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
     }
 
     public func analyze(skillDirectory: URL) throws -> RiskReport {
+        let skillDirectory = skillDirectory.resolvingSymlinksInPath().standardizedFileURL
         let fileManager = FileManager.default
         var findings: [RiskFinding] = []
         var scannedFiles = 0
@@ -39,9 +40,7 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
 
             if values.isSymbolicLink == true {
                 let destination = try fileManager.destinationOfSymbolicLink(atPath: url.path)
-                let resolved = url.deletingLastPathComponent().appendingPathComponent(destination).standardizedFileURL
-                let root = skillDirectory.standardizedFileURL
-                let escapes = resolved.path != root.path && !resolved.path.hasPrefix(root.path + "/")
+                let escapes = !SkillLinkBoundary.isContained(link: url, target: destination, root: skillDirectory)
                 findings.append(.init(
                     severity: escapes ? .blocked : .caution,
                     category: escapes ? .pathEscape : .symlink,
@@ -383,8 +382,9 @@ public struct StaticRiskAnalyzer: RiskAnalyzer, Sendable {
     }
 
     private func relativePath(of url: URL, root: URL) -> String {
-        let rootPath = root.standardizedFileURL.path
-        let itemPath = url.standardizedFileURL.path
-        return String(itemPath.dropFirst(min(itemPath.count, rootPath.count + 1)))
+        let rootPath = root.resolvingSymlinksInPath().path
+        let parentPath = url.deletingLastPathComponent().resolvingSymlinksInPath().path
+        let prefix = parentPath == rootPath ? "" : String(parentPath.dropFirst(rootPath.count + 1)) + "/"
+        return prefix + url.lastPathComponent
     }
 }

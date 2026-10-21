@@ -79,7 +79,7 @@ struct SourceProviderTests {
         let provider = GitHubSourceProvider(
             session: GitHubNetworkFailureFixture.session(errorCode: .notConnectedToInternet)
         )
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: root,
             homeDirectory: root,
             githubProvider: provider,

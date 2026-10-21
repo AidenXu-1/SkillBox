@@ -10,7 +10,7 @@ struct LocalSourceRefreshTests {
     func refreshFindsChangesWithoutInstalling() async throws {
         let fixture = try await RefreshFixture.make()
         defer { fixture.remove() }
-        let model = fixture.model()
+        let model = try fixture.model()
         await model.reload()
         try fixture.edit("updated runtime")
 
@@ -34,7 +34,7 @@ struct LocalSourceRefreshTests {
     func monitorChecksRepeatedlyAndDefersWhileBusy() async throws {
         let fixture = try await RefreshFixture.make()
         defer { fixture.remove() }
-        let model = fixture.model()
+        let model = try fixture.model()
         await model.reload()
         model.startLocalSourceMonitoring(interval: .milliseconds(20))
         defer { model.stopLocalSourceMonitoring() }
@@ -55,7 +55,7 @@ struct LocalSourceRefreshTests {
     func discoveredUpdateCanBePreviewedAndCancelled() async throws {
         let fixture = try await RefreshFixture.make()
         defer { fixture.remove() }
-        let model = fixture.model()
+        let model = try fixture.model()
         await model.reload()
         try fixture.edit("new guide content")
         await model.checkAllLocalSources()
@@ -76,7 +76,7 @@ struct LocalSourceRefreshTests {
     func sourceChangesOnlyUpdateStatus() async throws {
         let fixture = try await RefreshFixture.make()
         defer { fixture.remove() }
-        let model = fixture.model()
+        let model = try fixture.model()
         await model.reload()
         try "new".write(to: fixture.source.appendingPathComponent("extra.md"), atomically: true, encoding: .utf8)
         await model.checkAllLocalSources()
@@ -111,7 +111,7 @@ struct LocalSourceRefreshTests {
     func failedChecksDoNotClaimCurrentContent() async throws {
         let fixture = try await RefreshFixture.make()
         defer { fixture.remove() }
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: fixture.root.appendingPathComponent("Store"), store: fixture.store,
             homeDirectory: fixture.root,
             localPackageResolver: .init(scanner: FailingRefreshScanner()), startBootstrap: false
@@ -122,7 +122,7 @@ struct LocalSourceRefreshTests {
         #expect(model.statusMessage.contains("无法检查"))
         let reloaded = try LibraryStore(root: fixture.root.appendingPathComponent("Store"))
         #expect(await reloaded.currentSnapshot().localSourceStates.first?.lastCheckError != nil)
-        let recovered = fixture.model()
+        let recovered = try fixture.model()
         await recovered.reload()
         await recovered.checkAllLocalSources()
         #expect(recovered.snapshot.localSourceStates.first?.lastCheckError == nil)
@@ -183,8 +183,8 @@ struct RefreshFixture {
                      installed: targetRoot.appendingPathComponent("demo"), store: store, record: record)
     }
 
-    @MainActor func model() -> AppModel {
-        AppModel(libraryRoot: root.appendingPathComponent("Store"), store: store, homeDirectory: root, startBootstrap: false)
+    @MainActor func model() throws -> AppModel {
+        try AppModel(libraryRoot: root.appendingPathComponent("Store"), store: store, homeDirectory: root, startBootstrap: false)
     }
 
     func edit(_ text: String) throws {

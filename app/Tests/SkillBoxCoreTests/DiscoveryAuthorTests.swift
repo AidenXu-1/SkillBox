@@ -54,7 +54,7 @@ struct DiscoveryAuthorTests {
         let suite = "SkillBoxAuthorTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        let model = AppModel(libraryRoot: root, homeDirectory: root, routedDiscoveryProvider: provider, userDefaults: defaults, startBootstrap: false)
+        let model = try AppModel(libraryRoot: root, homeDirectory: root, routedDiscoveryProvider: provider, userDefaults: defaults, startBootstrap: false)
         model.discoveryDraft = "帮我找卡兹克写作的skill。"
         model.startDiscoverySearch()
         for _ in 0..<200 where !model.discoveryDraft.isEmpty { try await Task.sleep(for: .milliseconds(10)) }

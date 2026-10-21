@@ -3,22 +3,32 @@ import SwiftUI
 
 @main
 struct SkillBoxApplication: App {
-    @StateObject private var model = AppModel()
+    @StateObject private var startup = ApplicationStartup()
     @StateObject private var updater = ApplicationUpdater()
     @NSApplicationDelegateAdaptor(SkillBoxApplicationDelegate.self) private var appDelegate
 
     var body: some Scene {
         Window("SkillBox", id: "main") {
-            ContentView(model: model)
-                .environmentObject(updater)
-                .frame(minWidth: 1100, minHeight: 720)
-                .task {
-                    updater.canRestart = { [weak model] in model?.isBusy == false }
-                    appDelegate.canTerminate = { [weak model, weak updater] in
-                        updater?.phase != .installing || model?.isBusy == false
-                    }
-                    updater.start()
+            Group {
+                if let model = startup.model {
+                    ContentView(model: model)
+                        .environmentObject(updater)
+                        .task {
+                            updater.canRestart = { [weak model] in model?.isBusy == false }
+                            appDelegate.canTerminate = { [weak model, weak updater] in
+                                updater?.phase != .installing || model?.isBusy == false
+                            }
+                            updater.start()
+                        }
+                } else if startup.errorMessage != nil {
+                    ApplicationStartupRecoveryView(startup: startup)
+                } else {
+                    ProgressView("正在打开 SkillBox…")
+                        .containerBackground(.white, for: .window)
+                        .preferredColorScheme(.light)
                 }
+            }
+            .frame(minWidth: 1100, minHeight: 720)
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 1280, height: 820)

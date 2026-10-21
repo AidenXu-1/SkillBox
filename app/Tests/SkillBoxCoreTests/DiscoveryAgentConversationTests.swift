@@ -109,7 +109,7 @@ struct DiscoveryAgentConversationTests {
         let store = try DiscoverySessionStore(root: root)
         try await store.save(Self.session())
         let spy = ConversationSearchSpy()
-        let model = makeModel(root: root, spy: spy)
+        let model = try makeModel(root: root, spy: spy)
         await model.reloadDiscoverySessions()
         model.discoveryDraft = "帮我找去掉中文文案 AI 味的 Skill"
         model.startDiscoverySearch()
@@ -124,7 +124,7 @@ struct DiscoveryAgentConversationTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let spy = ConversationSearchSpy(failedSourceCount: failedSources)
-        let model = makeModel(root: root, spy: spy)
+        let model = try makeModel(root: root, spy: spy)
         model.discoveryDraft = "推荐去文案AI味的skill。"
         model.startDiscoverySearch()
         try await waitForReply(model)
@@ -204,7 +204,7 @@ struct DiscoveryAgentConversationTests {
         let store = try DiscoverySessionStore(root: root)
         try await store.save(Self.session())
         let spy = ConversationSearchSpy()
-        let model = makeModel(root: root, spy: spy)
+        let model = try makeModel(root: root, spy: spy)
         await model.reloadDiscoverySessions()
         model.discoveryDraft = "这两个有什么区别？"
         model.startDiscoverySearch()
@@ -226,7 +226,7 @@ struct DiscoveryAgentConversationTests {
         let store = try DiscoverySessionStore(root: root)
         try await store.save(Self.session())
         let spy = ConversationSearchSpy(delay: .seconds(2))
-        let model = makeModel(root: root, spy: spy)
+        let model = try makeModel(root: root, spy: spy)
         await model.reloadDiscoverySessions()
         model.discoveryDraft = "继续寻找"
         model.startDiscoverySearch()
@@ -251,7 +251,7 @@ struct DiscoveryAgentConversationTests {
         let store = try DiscoverySessionStore(root: root)
         try await store.save(Self.session())
         let spy = ConversationSearchSpy(delay: .milliseconds(200))
-        let model = makeModel(root: root, spy: spy)
+        let model = try makeModel(root: root, spy: spy)
         await model.reloadDiscoverySessions()
         model.discoveryDraft = "继续寻找"
         model.startDiscoverySearch()
@@ -279,7 +279,7 @@ struct DiscoveryAgentConversationTests {
         session.runs = [.init(queries: ["user:KKKKhazix", "khazix-writer"], route: .hybrid, state: .completed)]
         try await store.save(session)
         let spy = ConversationSearchSpy()
-        let model = makeModel(root: root, spy: spy)
+        let model = try makeModel(root: root, spy: spy)
         await model.reloadDiscoverySessions()
         model.discoveryDraft = "不限制作者了"
         model.startDiscoverySearch()
@@ -307,7 +307,7 @@ struct DiscoveryAgentConversationTests {
         try await store.save(original)
         try await store.save(other)
         let spy = ConversationSearchSpy(delay: .milliseconds(200))
-        let model = makeModel(root: root, spy: spy)
+        let model = try makeModel(root: root, spy: spy)
         await model.reloadDiscoverySessions()
         model.selectDiscoverySession(original.id)
         model.discoveryDraft = "继续寻找"
@@ -335,7 +335,7 @@ struct DiscoveryAgentConversationTests {
         try await store.save(original)
         try await store.save(other)
         let spy = ConversationSearchSpy(delay: .milliseconds(200))
-        let model = makeModel(root: root, spy: spy)
+        let model = try makeModel(root: root, spy: spy)
         await model.reloadDiscoverySessions()
         model.selectDiscoverySession(original.id)
         model.discoveryDraft = "继续寻找"
@@ -362,7 +362,7 @@ struct DiscoveryAgentConversationTests {
             try await store.save(Self.session())
         }
         let spy = ConversationSearchSpy()
-        let model = makeModel(root: root, spy: spy)
+        let model = try makeModel(root: root, spy: spy)
         await model.reloadDiscoverySessions()
         model.discoveryDraft = "有什么 Skill 可以把 PDF 转成 Word 吗？"
         model.startDiscoverySearch()
@@ -406,7 +406,7 @@ struct DiscoveryAgentConversationTests {
         session.queuedMessages = [.init(text: "必须中文")]
         try await store.save(session)
         let spy = ConversationSearchSpy()
-        let model = makeModel(root: root, spy: spy)
+        let model = try makeModel(root: root, spy: spy)
         await model.reloadDiscoverySessions()
         model.discoveryDraft = "谢谢"
         model.startDiscoverySearch()
@@ -423,8 +423,8 @@ struct DiscoveryAgentConversationTests {
     }
 
     @MainActor
-    private func makeModel(root: URL, spy: ConversationSearchSpy) -> AppModel {
-        AppModel(libraryRoot: root, homeDirectory: root,
+    private func makeModel(root: URL, spy: ConversationSearchSpy) throws -> AppModel {
+        try AppModel(libraryRoot: root, homeDirectory: root,
             routedDiscoveryProvider: RoutedSkillDiscoveryProvider(exactProvider: spy, scenarioProvider: spy, hybridProvider: spy),
             userDefaults: UserDefaults(suiteName: "SkillBoxConversationTests." + UUID().uuidString)!, startBootstrap: false)
     }

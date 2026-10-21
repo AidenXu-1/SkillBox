@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public enum SkillFileChangeKind: String, Codable, Sendable {
@@ -35,31 +36,43 @@ public struct SkillDiffAnalyzer: Sendable {
     }
 
     private func files(in root: URL) throws -> [String: URL] {
-        guard let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [:] }
+        let manager = FileManager.default
         var result: [String: URL] = [:]
-        for case let url as URL in enumerator {
-            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-            guard values.isRegularFile == true || values.isSymbolicLink == true else { continue }
-            let relative = String(url.standardizedFileURL.path.dropFirst(root.standardizedFileURL.path.count + 1))
-            result[relative] = url
+        var directories = [(root, "")]
+        while let (directory, prefix) = directories.popLast() {
+            try Task.checkCancellation()
+            for url in try manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+                if try FinderMetadata.isMetadataFile(url) { continue }
+                // Carry names explicitly: Foundation may mix /var and
+                // /private/var spellings even within the same enumeration.
+                let relative = prefix + url.lastPathComponent
+                result[relative] = url
+                let type = try manager.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType
+                if type == .typeDirectory { directories.append((url, relative + "/")) }
+            }
         }
         return result
     }
 
-    private func signature(for url: URL) throws -> Data {
-        let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey])
-        if values.isSymbolicLink == true {
-            return Data(try FileManager.default.destinationOfSymbolicLink(atPath: url.path).utf8)
-        }
-        var data = try Data(contentsOf: url)
+    private func signature(for url: URL) throws -> String {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-        if let permissions = attributes[.posixPermissions] as? NSNumber {
-            data.append(Data("\0mode:\(permissions.intValue)".utf8))
+        let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0
+        switch attributes[.type] as? FileAttributeType {
+        case .typeSymbolicLink:
+            return "L\0\(permissions)\0\(try FileManager.default.destinationOfSymbolicLink(atPath: url.path))"
+        case .typeDirectory:
+            return "D\0\(permissions)"
+        case .typeRegular:
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            var hash = SHA256()
+            while let data = try handle.read(upToCount: 64 * 1_024), !data.isEmpty {
+                try Task.checkCancellation()
+                hash.update(data: data)
+            }
+            return "F\0\(permissions)\0\(hash.finalize().map { String(format: "%02x", $0) }.joined())"
+        default:
+            throw FingerprintError.unsupportedItem(url.lastPathComponent)
         }
-        return data
     }
 }

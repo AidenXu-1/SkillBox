@@ -12,7 +12,7 @@ struct BuiltInUsageGuideTests {
         defer { fixture.cleanup() }
         let provider = ManualUsageGuideProviderSpy(results: [.success(Self.completeGuide)])
         let keyStore = ManualUsageGuideKeyStore(values: ["agnes": "user-agnes-key"])
-        let model = fixture.model(provider: provider, keyStore: keyStore)
+        let model = try fixture.model(provider: provider, keyStore: keyStore)
         connectAgnes(model)
 
         _ = await model.skillUsageGuide(fixture.skill)
@@ -39,7 +39,7 @@ struct BuiltInUsageGuideTests {
             "agnes": "user-agnes-key",
             "deepseek": "user-deepseek-key",
         ])
-        let model = fixture.model(provider: provider, keyStore: keyStore)
+        let model = try fixture.model(provider: provider, keyStore: keyStore)
         connectAgnes(model)
         model.aiSettings.selectedProviderID = "deepseek"
 
@@ -54,7 +54,7 @@ struct BuiltInUsageGuideTests {
         let fixture = try await Fixture.make()
         defer { fixture.cleanup() }
         let provider = ManualUsageGuideProviderSpy(results: [.success(Self.completeGuide)])
-        let model = fixture.model(provider: provider, keyStore: ManualUsageGuideKeyStore())
+        let model = try fixture.model(provider: provider, keyStore: ManualUsageGuideKeyStore())
 
         let generated = await model.generateSkillUsageGuide(fixture.skill)
 
@@ -80,7 +80,7 @@ struct BuiltInUsageGuideTests {
             .success(Self.completeGuide),
         ])
         let keyStore = ManualUsageGuideKeyStore(values: ["agnes": "user-agnes-key"])
-        let model = fixture.model(provider: provider, keyStore: keyStore)
+        let model = try fixture.model(provider: provider, keyStore: keyStore)
         connectAgnes(model)
 
         #expect(await model.generateSkillUsageGuide(fixture.skill) == nil)
@@ -109,7 +109,7 @@ struct BuiltInUsageGuideTests {
             .failure(AIServiceError.invocation(.init(category: .truncatedOutput, diagnostic: diagnostic))),
         ])
         let keyStore = ManualUsageGuideKeyStore(values: ["agnes": "user-agnes-key"])
-        let model = fixture.model(provider: provider, keyStore: keyStore)
+        let model = try fixture.model(provider: provider, keyStore: keyStore)
         connectAgnes(model)
 
         #expect(await model.generateSkillUsageGuide(fixture.skill) == nil)
@@ -124,7 +124,7 @@ struct BuiltInUsageGuideTests {
         defer { fixture.cleanup() }
         let provider = ManualUsageGuideProviderSpy(results: [.success(Self.completeGuide)], delay: .milliseconds(20))
         let keyStore = ManualUsageGuideKeyStore(values: ["agnes": "user-agnes-key"])
-        let model = fixture.model(provider: provider, keyStore: keyStore)
+        let model = try fixture.model(provider: provider, keyStore: keyStore)
         connectAgnes(model)
 
         async let first = model.generateSkillUsageGuide(fixture.skill)
@@ -144,7 +144,7 @@ struct BuiltInUsageGuideTests {
             values: ["agnes": "user-agnes-key"],
             userInitiatedError: .keychainAuthorizationNotCompleted
         )
-        let model = fixture.model(provider: provider, keyStore: keyStore)
+        let model = try fixture.model(provider: provider, keyStore: keyStore)
         connectAgnes(model)
 
         #expect(await model.generateSkillUsageGuide(fixture.skill) == nil)
@@ -257,8 +257,8 @@ private struct Fixture {
     let skill: SkillRecord
 
     @MainActor
-    func model(provider: any AIProvider, keyStore: any AIKeyStore) -> AppModel {
-        AppModel(
+    func model(provider: any AIProvider, keyStore: any AIKeyStore) throws -> AppModel {
+        try AppModel(
             libraryRoot: storeRoot,
             store: store,
             homeDirectory: root.appendingPathComponent("home"),

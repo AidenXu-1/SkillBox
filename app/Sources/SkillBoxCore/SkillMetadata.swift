@@ -19,9 +19,20 @@ public enum SkillMetadataParser {
 
         if lines.first?.trimmingCharacters(in: .whitespacesAndNewlines) == "---",
            let closing = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines) == "---" }) {
+            // A metadata map can contain its own name/description. Read only
+            // root fields, allowing documents whose root is uniformly indented.
+            let rootIndent = lines[1..<closing].compactMap { line -> Int? in
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { return nil }
+                return line.prefix { $0 == " " || $0 == "\t" }.count
+            }.min() ?? 0
             var index = 1
             while index < closing {
                 let line = lines[index]
+                guard line.prefix(while: { $0 == " " || $0 == "\t" }).count == rootIndent else {
+                    index += 1
+                    continue
+                }
                 let pair = line.split(separator: ":", maxSplits: 1).map(String.init)
                 guard pair.count == 2 else { index += 1; continue }
                 let key = pair[0].trimmingCharacters(in: .whitespacesAndNewlines)

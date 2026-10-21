@@ -9,7 +9,7 @@ struct BackupMaintenanceFlowTests {
     @MainActor func resumesAfterBlocker(_ blocker: String) async throws {
         let f = try await RefreshFixture.make()
         defer { f.remove() }
-        let model = f.model()
+        let model = try f.model()
         await model.reload()
         let candidate = try #require(try await LocalFolderSourceProvider().preview(locator: f.source.path).first)
         switch blocker {
@@ -58,7 +58,7 @@ struct BackupMaintenanceFlowTests {
     @MainActor func manualCheckConsumesStartupRequest() async throws {
         let f = try await RefreshFixture.make()
         defer { f.remove() }
-        let model = f.model()
+        let model = try f.model()
         model.isBusy = true
         await model.checkRollbackBackupsOnStartup()
         let configuration = model.libraryRoot.appendingPathComponent("rollback-maintenance.json")
@@ -86,7 +86,7 @@ struct BackupMaintenanceFlowTests {
         try FileManager.default.createDirectory(at: versions, withIntermediateDirectories: true)
         let unsafeBackup = versions.appendingPathComponent(String(repeating: "e", count: 64))
         try FileManager.default.createSymbolicLink(at: unsafeBackup, withDestinationURL: f.source)
-        let model = f.model()
+        let model = try f.model()
         await model.reload()
         let target = try #require(model.snapshot.targets.first)
         let proposal = try #require(await model.prepareAssignmentProposal(skill: f.record, target: target))

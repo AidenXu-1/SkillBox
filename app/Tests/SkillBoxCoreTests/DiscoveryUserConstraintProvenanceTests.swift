@@ -87,7 +87,7 @@ struct DiscoveryUserConstraintProvenanceTests {
         let suite = "SkillBoxProvenance." + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        let model = AppModel(libraryRoot: root, homeDirectory: root, aiKeyStore: ProvenanceKeyStore(), aiProvider: ai,
+        let model = try AppModel(libraryRoot: root, homeDirectory: root, aiKeyStore: ProvenanceKeyStore(), aiProvider: ai,
             routedDiscoveryProvider: .init(exactProvider: source, scenarioProvider: source, hybridProvider: source), userDefaults: defaults, startBootstrap: false)
         var settings = AISettings.defaults
         settings.isEnabled = true

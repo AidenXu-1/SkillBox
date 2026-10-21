@@ -10,7 +10,7 @@ struct SkillRemovalFlowTests {
     func deletionNoticePausesAndCloses() async throws {
         let fixture = try await makeManagedSkill()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let model = AppModel(libraryRoot: fixture.root.appendingPathComponent("store"), store: fixture.store,
+        let model = try AppModel(libraryRoot: fixture.root.appendingPathComponent("store"), store: fixture.store,
                              homeDirectory: fixture.root.appendingPathComponent("home"), startBootstrap: false,
                              deleteUndoDuration: .milliseconds(40))
         await model.reload()
@@ -22,7 +22,7 @@ struct SkillRemovalFlowTests {
         try await Task.sleep(for: .milliseconds(100))
         #expect(model.lastDeletedSkill == nil)
         #expect(await fixture.store.mostRecentRestorableDeletion() != nil)
-        let restarted = AppModel(libraryRoot: fixture.root.appendingPathComponent("store"), store: fixture.store,
+        let restarted = try AppModel(libraryRoot: fixture.root.appendingPathComponent("store"), store: fixture.store,
                                  homeDirectory: fixture.root.appendingPathComponent("home"), startBootstrap: false)
         await restarted.reload()
         #expect(restarted.lastDeletedSkill == nil)
@@ -33,7 +33,7 @@ struct SkillRemovalFlowTests {
     func deletionNoticeExpiresWithoutLosingRecovery() async throws {
         let fixture = try await makeManagedSkill()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let model = AppModel(libraryRoot: fixture.root.appendingPathComponent("store"), store: fixture.store,
+        let model = try AppModel(libraryRoot: fixture.root.appendingPathComponent("store"), store: fixture.store,
                              homeDirectory: fixture.root.appendingPathComponent("home"), startBootstrap: false)
         await model.reload()
         #expect(await model.deleteSkill(fixture.record, preservingInstalledCopies: true))
@@ -55,7 +55,7 @@ struct SkillRemovalFlowTests {
     func uninstallAllWaitsForConfirmedPlan() async throws {
         let fixture = try await makeManagedSkill()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: fixture.root.appendingPathComponent("store"),
             store: fixture.store,
             homeDirectory: fixture.root.appendingPathComponent("home"),
@@ -79,7 +79,7 @@ struct SkillRemovalFlowTests {
     func confirmedUninstallAllCompletesDeletion() async throws {
         let fixture = try await makeManagedSkill()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: fixture.root.appendingPathComponent("store"),
             store: fixture.store,
             homeDirectory: fixture.root.appendingPathComponent("home"),
@@ -120,7 +120,7 @@ struct SkillRemovalFlowTests {
             source: .init(kind: .localFolder, displayName: "Replacement", locator: replacementSource.path),
             riskReport: try StaticRiskAnalyzer().analyze(skillDirectory: replacementSource)
         ))
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: fixture.root.appendingPathComponent("store"),
             store: fixture.store,
             homeDirectory: fixture.root.appendingPathComponent("home"),

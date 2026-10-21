@@ -13,7 +13,7 @@ struct BackupRecoveryPresentationTests {
         let candidate = try #require(try await LocalFolderSourceProvider().preview(locator: f.source.path).first)
         let result = try await SkillUpdateCoordinator().updateCentralOnly(skillID: f.record.id, candidate: candidate, store: f.store)
         let transaction = try #require(result.transaction)
-        let model = f.model()
+        let model = try f.model()
         await model.reload()
         #expect(model.prepareUndoPreview(transaction))
         let content = UndoPreviewContent(transaction: try #require(model.pendingUndoTransaction))
@@ -53,7 +53,7 @@ struct BackupRecoveryPresentationTests {
         let suite = "BackupRecoveryPresentation-\(UUID())"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let model = AppModel(libraryRoot: root, store: store, homeDirectory: root.appendingPathComponent("home"),
+        let model = try AppModel(libraryRoot: root, store: store, homeDirectory: root.appendingPathComponent("home"),
                              userDefaults: defaults, startBootstrap: false)
         await model.reload()
         #expect(model.snapshot.transactions.first { $0.id == old.id }?.canRestore() == true)

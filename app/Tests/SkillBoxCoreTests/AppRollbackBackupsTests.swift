@@ -50,7 +50,7 @@ struct AppRollbackBackupsTests {
     @MainActor func manualCheckFeedback() async throws {
         let f = try await RefreshFixture.make()
         defer { f.remove() }
-        let model = f.model()
+        let model = try f.model()
         model.isBusy = true
         await model.cleanRollbackBackups()
         #expect(model.backupCheckResult == "请先完成当前操作，再检查备份。")

@@ -15,7 +15,7 @@ struct InstallationResponsivenessTests {
         let skill = try await store.importCandidate(candidate)
         let target = try fixture.target("App")
         try await store.replaceTargets([target])
-        let model = AppModel(libraryRoot: fixture.storeRoot, store: store, homeDirectory: fixture.root, startBootstrap: false)
+        let model = try AppModel(libraryRoot: fixture.storeRoot, store: store, homeDirectory: fixture.root, startBootstrap: false)
         await model.reload()
         let proposal = try #require(await model.prepareAssignmentProposal(skill: skill, target: target))
         #expect(await model.confirmAssignmentProposal(proposal))
@@ -38,7 +38,7 @@ struct InstallationResponsivenessTests {
         let skill = try await store.importCandidate(fixture.candidate("edited"))
         let target = try fixture.target("App")
         try await store.replaceTargets([target])
-        let model = AppModel(libraryRoot: fixture.storeRoot, store: store, homeDirectory: fixture.root, startBootstrap: false)
+        let model = try AppModel(libraryRoot: fixture.storeRoot, store: store, homeDirectory: fixture.root, startBootstrap: false)
         await model.reload()
         let initial = try #require(await model.prepareAssignmentProposal(skill: skill, target: target))
         #expect(await model.confirmAssignmentProposal(initial))
@@ -100,7 +100,7 @@ struct InstallationResponsivenessTests {
         try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         let old = "---\nname: comparison\ndescription: Old\n---\nOld app content.\n"
         try old.write(to: destination.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
-        let model = AppModel(libraryRoot: fixture.storeRoot, store: store, homeDirectory: fixture.root, startBootstrap: false)
+        let model = try AppModel(libraryRoot: fixture.storeRoot, store: store, homeDirectory: fixture.root, startBootstrap: false)
         await model.reload()
         let proposal = try #require(await model.prepareAssignmentProposal(skill: skill, target: target))
         #expect(proposal.hasDifferentExistingContent)
@@ -123,7 +123,7 @@ struct InstallationResponsivenessTests {
         try "---\nname: foreign-skill\ndescription: Existing third party copy\n---\n".write(
             to: existing.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8
         )
-        let model = AppModel(libraryRoot: fixture.storeRoot, homeDirectory: fixture.root, startBootstrap: false)
+        let model = try AppModel(libraryRoot: fixture.storeRoot, homeDirectory: fixture.root, startBootstrap: false)
         await model.bootstrap()
         #expect(model.snapshot.targets.contains { $0.kind == .claudeCode && $0.detectionStatus == .available })
         #expect(model.scanResult?.candidates.isEmpty == true)
@@ -147,7 +147,7 @@ struct InstallationResponsivenessTests {
         let otherAssignment = Assignment(skillID: other.id, targetID: otherTarget.id, installationDirectoryName: other.canonicalName)
         try await store.replaceAssignments([otherAssignment])
         let probe = PlanningProbe()
-        let model = AppModel(libraryRoot: fixture.storeRoot, store: store, planner: probe, homeDirectory: fixture.root, startBootstrap: false)
+        let model = try AppModel(libraryRoot: fixture.storeRoot, store: store, planner: probe, homeDirectory: fixture.root, startBootstrap: false)
         await model.reload()
         probe.reset()
 
@@ -179,7 +179,7 @@ struct InstallationResponsivenessTests {
         let store = try LibraryStore(root: fixture.storeRoot)
         let skill = try await store.importCandidate(fixture.candidate("demo"))
         let probe = PlanningProbe()
-        let model = AppModel(libraryRoot: fixture.storeRoot, store: store, planner: probe, homeDirectory: fixture.root, startBootstrap: false)
+        let model = try AppModel(libraryRoot: fixture.storeRoot, store: store, planner: probe, homeDirectory: fixture.root, startBootstrap: false)
         await model.reload()
         probe.reset()
         #expect(await model.createSkillFolder(named: "Writing"))

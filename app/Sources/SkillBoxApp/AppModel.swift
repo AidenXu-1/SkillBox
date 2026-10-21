@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import CryptoKit
 import Foundation
+import OSLog
 import SkillBoxCore
 
 struct SkillBoxOperationProgress: Equatable {
@@ -102,6 +103,24 @@ struct AIModelChoice: Identifiable, Hashable {
 
 private struct DiscoveryAIRequestTimeout: Error, Sendable {}
 
+private struct InstallationPlanningState: Equatable, Sendable {
+    var skills: [SkillRecord]
+    var targets: [AgentTarget]
+    var assignments: [Assignment]
+    var installations: [ManagedInstallation]
+
+    init(snapshot: LibrarySnapshot, draft: [Assignment]?) {
+        skills = snapshot.skills
+        targets = snapshot.targets
+        assignments = draft ?? snapshot.assignments
+        installations = snapshot.installations
+    }
+
+    var snapshot: LibrarySnapshot {
+        .init(skills: skills, targets: targets, assignments: assignments, installations: installations)
+    }
+}
+
 private final class DiscoveryAIRequestRace<Value: Sendable>: @unchecked Sendable {
     typealias Continuation = CheckedContinuation<Value, Error>
 
@@ -201,7 +220,9 @@ final class AppModel: ObservableObject {
     }
     @Published var selectedCandidateIDs: Set<String> = []
     @Published var activeConflict: ConflictGroup?
-    @Published var syncPlan: SyncPlan?
+    @Published var syncPlan: SyncPlan? {
+        didSet { planningGeneration = UUID() }
+    }
     @Published var isBusy = false {
         didSet { scheduleDeferredStartupBackupCheckIfReady() }
     }
@@ -310,6 +331,11 @@ final class AppModel: ObservableObject {
     private var aiAuthorizationGeneration = 0
     private var riskAcknowledgementDigests: [String: String] = [:]
     private var pendingSyncAssignments: [Assignment]?
+    private var pendingSyncPreviewID: UUID?
+    private var planningGeneration = UUID()
+    private var reloadGeneration = UUID()
+    private var lastCommittedPlan: (state: InstallationPlanningState, plan: SyncPlan)?
+    private var localUpdatePreviewGeneration = UUID()
     private var manualUsageGuideTasks: [String: Task<ManualUsageGuideTaskResult, Never>] = [:]
 
     var githubClientID: String { Bundle.main.object(forInfoDictionaryKey: "SkillBoxGitHubClientID") as? String ?? "" }
@@ -333,13 +359,23 @@ final class AppModel: ObservableObject {
         userDefaults: UserDefaults = .standard,
         startBootstrap: Bool = true,
         deleteUndoDuration: Duration = .seconds(6)
-    ) {
+    ) throws {
         self.deleteUndoDuration = deleteUndoDuration
         homeDirectory = customHomeDirectory ?? FileManager.default.homeDirectoryForCurrentUser
         libraryRoot = customLibraryRoot ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/SkillBox")
         discoverySessionsDirectory = libraryRoot.appendingPathComponent("SearchSessions", isDirectory: true)
+        // Prepare auxiliary storage before opening the library, whose startup
+        // recovery may write records. A storage failure must not start recovery
+        // or create an empty replacement model.
+        var preparingSection = "寻找记录"
         do {
+            discoveryStore = try DiscoverySessionStore(root: libraryRoot)
+            preparingSection = "Skill 介绍"
+            usageGuideStore = try SkillUsageGuideStore(root: libraryRoot)
+            preparingSection = "AI 设置"
+            aiSettingsStore = try AISettingsStore(root: libraryRoot)
+            preparingSection = "技能资料"
             if let providedStore {
                 store = providedStore
             } else {
@@ -349,11 +385,13 @@ final class AppModel: ObservableObject {
                     migratesLegacyDeletedItems: true
                 )
             }
-            discoveryStore = try DiscoverySessionStore(root: libraryRoot)
-            usageGuideStore = try SkillUsageGuideStore(root: libraryRoot)
-            aiSettingsStore = try AISettingsStore(root: libraryRoot)
         } catch {
-            fatalError("无法准备 SkillBox 的本地保存位置：\(error.localizedDescription)")
+            let diagnostic = error as NSError
+            Logger(subsystem: "com.zhaoji.skillbox", category: "Startup").error(
+                "Storage preparation failed: \(preparingSection, privacy: .public), \(diagnostic.domain, privacy: .public), \(diagnostic.code)"
+            )
+            if case LibraryStoreError.unsupportedSchema = error { throw error }
+            throw ApplicationStartupError.storageUnavailable(section: preparingSection)
         }
         self.planner = planner
         self.localPackageResolver = localPackageResolver
@@ -466,12 +504,23 @@ final class AppModel: ObservableObject {
         await checkAllGitHubUpdatesIfStale()
     }
 
-    func reload() async {
+    @discardableResult
+    func reload() async -> Bool {
+        let generation = UUID()
+        reloadGeneration = generation
         do { try await store.reconcileMatchingInstallations() }
-        catch { present(error) }
-        snapshot = await store.currentSnapshot()
+        catch {
+            guard reloadGeneration == generation, !Task.isCancelled else { return false }
+            present(error)
+            syncPlan = nil
+            return false
+        }
+        let loaded = await store.currentSnapshot()
+        guard reloadGeneration == generation, !Task.isCancelled else { return false }
+        snapshot = loaded
         await refreshBackupMaintenanceIssue()
-        refreshPlan()
+        guard reloadGeneration == generation, !Task.isCancelled else { return false }
+        return await refreshPlan()
     }
 
     var selectedDiscoverySession: DiscoverySession? {
@@ -1944,6 +1993,8 @@ final class AppModel: ObservableObject {
         skill: SkillRecord,
         state providedState: LocalSourceState? = nil
     ) async throws {
+        let previewGeneration = UUID()
+        localUpdatePreviewGeneration = previewGeneration
         var state = providedState ?? snapshot.localSourceStates.first(where: { $0.skillID == skill.id }) ?? .init(
             skillID: skill.id,
             projectRootPath: prepared.projectRootPath,
@@ -1973,13 +2024,21 @@ final class AppModel: ObservableObject {
         state.status = .updateAvailable
         try await store.updateLocalSourceState(state)
         let current = await store.contentURL(for: skill)
-        let changes = try SkillDiffAnalyzer().compare(
+        let changes = try await backgroundFileChanges(
             before: current,
             after: prepared.package.candidate.sourceURL
         )
         async let beforeMarkdown = readMarkdown(at: current.appendingPathComponent("SKILL.md"))
         async let afterMarkdown = readMarkdown(at: prepared.package.candidate.sourceURL.appendingPathComponent("SKILL.md"))
         let markdown = await (beforeMarkdown, afterMarkdown)
+        let latest = await store.currentSnapshot()
+        guard !Task.isCancelled, localUpdatePreviewGeneration == previewGeneration,
+              latest.skills.contains(where: { $0.id == skill.id && $0.fingerprint == skill.fingerprint && $0.source == skill.source }),
+              latest.localSourceStates.first(where: { $0.skillID == skill.id }) == state
+        else {
+            cleanupLocalCandidates([prepared.package.candidate])
+            throw CancellationError()
+        }
         pendingLocalPackages = [prepared.package.candidate.id: prepared]
         pendingLocalUpdateState = state
         pendingGitHubVersion = nil
@@ -2402,11 +2461,13 @@ final class AppModel: ObservableObject {
         }
         guard let candidate = matching.first else { throw GitHubSourceError.noSkillsFound }
         let current = await store.contentURL(for: skill)
-        let changes = try SkillDiffAnalyzer().compare(before: current, after: candidate.sourceURL)
+        let changes = try await backgroundFileChanges(before: current, after: candidate.sourceURL)
         async let beforeMarkdown = readMarkdown(at: current.appendingPathComponent("SKILL.md"))
         async let afterMarkdown = readMarkdown(at: candidate.sourceURL.appendingPathComponent("SKILL.md"))
         let markdown = await (beforeMarkdown, afterMarkdown)
-        guard activeGitHubPreviewOperationID == operationID, !Task.isCancelled else {
+        let latest = await store.currentSnapshot()
+        guard activeGitHubPreviewOperationID == operationID, !Task.isCancelled,
+              latest.skills.contains(where: { $0.id == skill.id && $0.fingerprint == skill.fingerprint && $0.source == skill.source }) else {
             cleanupGitHubCandidates(result.candidates)
             throw CancellationError()
         }
@@ -2555,11 +2616,13 @@ final class AppModel: ObservableObject {
         operationID: UUID
     ) async throws {
         let current = await store.contentURL(for: skill)
-        let changes = try SkillDiffAnalyzer().compare(before: current, after: candidate.sourceURL)
+        let changes = try await backgroundFileChanges(before: current, after: candidate.sourceURL)
         async let beforeMarkdown = readMarkdown(at: current.appendingPathComponent("SKILL.md"))
         async let afterMarkdown = readMarkdown(at: candidate.sourceURL.appendingPathComponent("SKILL.md"))
         let markdown = await (beforeMarkdown, afterMarkdown)
-        guard activeGitHubPreviewOperationID == operationID, !Task.isCancelled else {
+        let latest = await store.currentSnapshot()
+        guard activeGitHubPreviewOperationID == operationID, !Task.isCancelled,
+              latest.skills.contains(where: { $0.id == skill.id && $0.fingerprint == skill.fingerprint && $0.source == skill.source }) else {
             cleanupGitHubCandidates([candidate])
             throw CancellationError()
         }
@@ -2871,6 +2934,7 @@ final class AppModel: ObservableObject {
     }
 
     func cancelCandidatePreview() {
+        localUpdatePreviewGeneration = UUID()
         cleanupGitHubCandidates(pendingCandidates)
         cleanupLocalCandidates(pendingCandidates)
         pendingCandidates = []
@@ -3196,12 +3260,15 @@ final class AppModel: ObservableObject {
             setAssignment(skill: skill, target: target, desired: true, assignments: &assignments)
         }
         pendingDeletionAfterSyncSkillID = nil
+        let previewID = UUID()
+        pendingSyncPreviewID = previewID
         pendingSyncAssignments = assignments
-        refreshPlan()
+        let prepared = await refreshPlan()
+        guard pendingSyncPreviewID == previewID else { return false }
+        guard prepared else { clearPendingSyncPreview(); return false }
         let shouldPreview = syncPlan?.actions.contains { $0.skillID == skill.id && $0.kind != .noChange } == true
         if !shouldPreview {
-            pendingSyncAssignments = nil
-            refreshPlan()
+            clearPendingSyncPreview()
             noticeMessage = "这份 Skill 已经安装到所有可用应用。"
         }
         return shouldPreview
@@ -3225,13 +3292,15 @@ final class AppModel: ObservableObject {
             noticeMessage = "这份 Skill 还没有通过 SkillBox 安装到任何应用。"
             return false
         }
+        let previewID = UUID()
+        pendingSyncPreviewID = previewID
         pendingSyncAssignments = assignments
-        refreshPlan()
+        let prepared = await refreshPlan()
+        guard pendingSyncPreviewID == previewID else { return false }
+        guard prepared else { clearPendingSyncPreview(); return false }
         let shouldPreview = syncPlan?.actions.contains { $0.skillID == skill.id && $0.kind != .noChange } == true
         if !shouldPreview {
-            pendingSyncAssignments = nil
-            pendingDeletionAfterSyncSkillID = nil
-            refreshPlan()
+            clearPendingSyncPreview()
             noticeMessage = "这份 Skill 当前没有可卸载的受管理副本。"
         }
         return shouldPreview
@@ -3242,10 +3311,18 @@ final class AppModel: ObservableObject {
     }
 
     func cancelSyncPreview() {
+        clearPendingSyncPreview()
+        Task { await refreshPlan() }
+        noticeMessage = "已取消，没有保存任何安装选择。"
+    }
+
+    private func clearPendingSyncPreview() {
+        pendingSyncPreviewID = nil
         pendingSyncAssignments = nil
         pendingDeletionAfterSyncSkillID = nil
-        refreshPlan()
-        noticeMessage = "已取消，没有保存任何安装选择。"
+        planningGeneration = UUID()
+        let state = InstallationPlanningState(snapshot: snapshot, draft: nil)
+        syncPlan = lastCommittedPlan?.state == state ? lastCommittedPlan?.plan : nil
     }
 
     var isDeletingSkillAfterSync: Bool {
@@ -3483,17 +3560,18 @@ final class AppModel: ObservableObject {
         assignments[index].authorizedDestinationFingerprint = action.expectedDestinationFingerprint
         if pendingSyncAssignments != nil {
             pendingSyncAssignments = assignments
-            refreshPlan()
+            await refreshPlan()
         } else {
             do { try await store.replaceAssignments(assignments); await reload() } catch { present(error) }
         }
     }
 
     func executePlan() async {
-        guard syncPlan != nil else { return }
+        guard !isBusy, syncPlan != nil else { return }
         let deletionSkillID = pendingDeletionAfterSyncSkillID
         isBusy = true
         defer {
+            pendingSyncPreviewID = nil
             pendingSyncAssignments = nil
             pendingDeletionAfterSyncSkillID = nil
             isBusy = false
@@ -3502,7 +3580,10 @@ final class AppModel: ObservableObject {
             if let pendingSyncAssignments {
                 try await store.replaceAssignments(pendingSyncAssignments)
                 self.pendingSyncAssignments = nil
-                await reload()
+                guard await reload() else {
+                    noticeMessage = "开始前重新检查尚未完成，暂时没有修改应用文件。"
+                    return
+                }
             }
             guard let syncPlan, !syncPlan.executableActions.isEmpty else {
                 noticeMessage = "开始前重新检查时发现了变化，暂时没有修改应用文件。"
@@ -3834,6 +3915,15 @@ final class AppModel: ObservableObject {
         }.value
     }
 
+    private func backgroundFileChanges(before: URL, after: URL) async throws -> [SkillFileChange] {
+        let task = Task.detached(priority: .userInitiated) {
+            try SkillDiffAnalyzer().compare(before: before, after: after)
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: { task.cancel() }
+    }
+
     private func cleanupGitHubCandidates(_ candidates: [SkillCandidate]) {
         let temporaryRoot = FileManager.default.temporaryDirectory.standardizedFileURL.path
         let roots = Set(candidates.filter { $0.source.kind == .github }.compactMap { candidate -> URL? in
@@ -3863,13 +3953,37 @@ final class AppModel: ObservableObject {
         for root in roots { try? FileManager.default.removeItem(at: root) }
     }
 
-    private func refreshPlan() {
-        var planningSnapshot = snapshot
-        if let pendingSyncAssignments {
-            planningSnapshot.assignments = pendingSyncAssignments
+    @discardableResult
+    private func refreshPlan() async -> Bool {
+        let generation = UUID()
+        planningGeneration = generation
+        let input = InstallationPlanningState(snapshot: snapshot, draft: pendingSyncAssignments)
+        let previewID = pendingSyncPreviewID
+        let planner = planner, root = libraryRoot
+        let task = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            return try planner.makePlan(snapshot: input.snapshot, libraryRoot: root)
         }
-        do { syncPlan = try planner.makePlan(snapshot: planningSnapshot, libraryRoot: libraryRoot) }
-        catch { present(error) }
+        do {
+            let plan = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: { task.cancel() }
+            guard !Task.isCancelled, planningGeneration == generation,
+                  pendingSyncPreviewID == previewID,
+                  InstallationPlanningState(snapshot: snapshot, draft: pendingSyncAssignments) == input
+            else { return false }
+            syncPlan = plan
+            if pendingSyncAssignments == nil { lastCommittedPlan = (input, plan) }
+            return true
+        } catch {
+            guard !Task.isCancelled, planningGeneration == generation,
+                  pendingSyncPreviewID == previewID,
+                  InstallationPlanningState(snapshot: snapshot, draft: pendingSyncAssignments) == input
+            else { return false }
+            syncPlan = nil
+            present(error)
+            return false
+        }
     }
 
     private func refreshTargetStatuses() async {
@@ -3879,7 +3993,7 @@ final class AppModel: ObservableObject {
         )
         do {
             try await store.replaceTargets(targets)
-            await reload()
+            snapshot = await store.currentSnapshot()
         } catch {
             present(error)
         }

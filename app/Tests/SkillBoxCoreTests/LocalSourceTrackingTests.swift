@@ -339,7 +339,7 @@ struct LocalSourceTrackingTests {
         try fixture.write("skills/demo/scripts/run.sh", "echo ready")
         try fixture.write("skills/demo/tests/fixture.md", "development")
         let store = try LibraryStore(root: fixture.storeRoot)
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: fixture.storeRoot,
             store: store,
             homeDirectory: fixture.root,
@@ -386,7 +386,7 @@ struct LocalSourceTrackingTests {
         try handle.truncate(atOffset: 64 * 1_024 * 1_024)
         try handle.close()
         let store = try LibraryStore(root: fixture.storeRoot)
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: fixture.storeRoot,
             store: store,
             homeDirectory: fixture.root,
@@ -434,7 +434,7 @@ struct LocalSourceTrackingTests {
         try initialHandle.truncate(atOffset: 1 * 1_024 * 1_024)
         try initialHandle.close()
         let store = try LibraryStore(root: fixture.storeRoot)
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: fixture.storeRoot,
             store: store,
             homeDirectory: fixture.root,
@@ -507,7 +507,7 @@ struct LocalSourceTrackingTests {
         let fixture = try LocalSourceFixture()
         defer { fixture.remove() }
         try fixture.write("skills/demo/SKILL.md", fixture.skillMarkdown("A local development demo."))
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: fixture.storeRoot,
             homeDirectory: fixture.root,
             startBootstrap: false
@@ -549,7 +549,7 @@ struct LocalSourceTrackingTests {
             riskReport: try StaticRiskAnalyzer().analyze(skillDirectory: content)
         )
         let store = try LibraryStore(root: fixture.storeRoot)
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: fixture.storeRoot,
             store: store,
             homeDirectory: fixture.root,
@@ -568,7 +568,7 @@ struct LocalSourceTrackingTests {
         let fixture = try LocalSourceFixture()
         defer { fixture.remove() }
         let store = try LibraryStore(root: fixture.storeRoot)
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: fixture.storeRoot,
             store: store,
             homeDirectory: fixture.root,

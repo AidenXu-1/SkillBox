@@ -20,6 +20,7 @@ public struct DefaultSyncPlanner: SyncPlanner, Sendable {
         var actions: [SyncAction] = []
 
         for assignment in snapshot.assignments where assignment.isDesired {
+            try Task.checkCancellation()
             guard let skill = skills[assignment.skillID] else {
                 actions.append(blocked(assignment, path: "", reason: .missingSkill, summary: "SkillBox 中找不到这份 Skill")); continue
             }
@@ -81,6 +82,7 @@ public struct DefaultSyncPlanner: SyncPlanner, Sendable {
         }
 
         for installation in snapshot.installations where !desiredDestinations.contains(installation.destinationPath) {
+            try Task.checkCancellation()
             let current = currentFingerprint(URL(fileURLWithPath: installation.destinationPath))
             if current == installation.deployedFingerprint {
                 actions.append(.init(kind: .remove, skillID: installation.skillID, targetID: installation.targetID, destinationPath: installation.destinationPath, expectedDestinationFingerprint: current, summary: "从这个应用中移除 Skill"))

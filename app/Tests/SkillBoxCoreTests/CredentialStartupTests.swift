@@ -22,7 +22,7 @@ struct CredentialStartupTests {
         defaults.set(true, forKey: AppModel.githubConnectionHintKey)
 
         let keyStore = StartupKeyStoreSpy()
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: root,
             homeDirectory: root.appendingPathComponent("home", isDirectory: true),
             aiKeyStore: keyStore,

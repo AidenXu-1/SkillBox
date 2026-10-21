@@ -58,7 +58,7 @@ struct LibraryStoreTests {
         try await store.replaceInstallations([old])
         _ = try fixture.writeSkill(at: destination, name: "demo", body: "current")
         let modifiedAt = try FileManager.default.attributesOfItem(atPath: destination.appendingPathComponent("SKILL.md").path)[.modificationDate] as? Date
-        let model = AppModel(libraryRoot: fixture.storeRoot, homeDirectory: fixture.root, startBootstrap: false)
+        let model = try AppModel(libraryRoot: fixture.storeRoot, homeDirectory: fixture.root, startBootstrap: false)
         await model.reload()
         await model.scanInstalledSkills()
         #expect(model.syncPlan?.actions.first?.kind == .noChange)
@@ -84,7 +84,7 @@ struct LibraryStoreTests {
         try await store.replaceInstallations([.init(skillID: record.id, targetID: target.id, destinationPath: destination.path,
             deployedFingerprint: try SHA256SkillFingerprinter().fingerprint(directory: destination), transactionID: UUID())])
         _ = try fixture.writeSkill(at: destination, name: "demo", body: "modified externally")
-        let model = AppModel(libraryRoot: fixture.storeRoot, homeDirectory: fixture.root, startBootstrap: false)
+        let model = try AppModel(libraryRoot: fixture.storeRoot, homeDirectory: fixture.root, startBootstrap: false)
         await model.reload()
         await model.scanInstalledSkills()
         #expect(model.snapshot.installations.count == 1)

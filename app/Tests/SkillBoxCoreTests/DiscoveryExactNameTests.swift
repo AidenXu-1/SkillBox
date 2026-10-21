@@ -64,7 +64,7 @@ struct DiscoveryExactNameTests {
         let suite = "SkillBoxExactTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        let model = AppModel(libraryRoot: root, homeDirectory: root, routedDiscoveryProvider: provider, userDefaults: defaults, startBootstrap: false)
+        let model = try AppModel(libraryRoot: root, homeDirectory: root, routedDiscoveryProvider: provider, userDefaults: defaults, startBootstrap: false)
         model.discoveryDraft = input.0
         model.startDiscoverySearch()
         for _ in 0..<300 where model.isDiscoverySearching { try await Task.sleep(for: .milliseconds(10)) }
@@ -87,7 +87,7 @@ struct DiscoveryExactNameTests {
         let suite = "SkillBoxNameClarification.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        let model = AppModel(libraryRoot: root, homeDirectory: root, routedDiscoveryProvider: provider, userDefaults: defaults, startBootstrap: false)
+        let model = try AppModel(libraryRoot: root, homeDirectory: root, routedDiscoveryProvider: provider, userDefaults: defaults, startBootstrap: false)
         for input in ["alpha-tools这个skill和beta-tools这个skill", "第一个"] {
             model.discoveryDraft = input
             model.startDiscoverySearch()

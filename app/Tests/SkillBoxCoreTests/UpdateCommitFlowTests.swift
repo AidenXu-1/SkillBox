@@ -10,7 +10,7 @@ struct UpdateCommitFlowTests {
     func successfulUpdateRestoresContentAndSource(github: Bool) async throws {
         let fixture = try await UpdateCommitFixture.make(github: github)
         defer { fixture.remove() }
-        let model = fixture.model()
+        let model = try fixture.model()
         await fixture.prepareUpdate(model)
         await model.applyPendingUpdate(deployToExisting: false)
         #expect(model.errorMessage == nil)
@@ -43,7 +43,7 @@ struct UpdateCommitFlowTests {
     func failedSourceCommitRetryAndRestart(github: Bool) async throws {
         let fixture = try await UpdateCommitFixture.make(github: github)
         defer { fixture.remove() }
-        let model = fixture.model()
+        let model = try fixture.model()
         await fixture.prepareUpdate(model)
         fixture.fault.arm(expectedFingerprint: fixture.next.fingerprint, github: github)
         await model.applyPendingUpdate(deployToExisting: false)
@@ -82,7 +82,7 @@ struct UpdateCommitFlowTests {
     func cancellingPreviewDoesNotCommit() async throws {
         let fixture = try await UpdateCommitFixture.make(github: false)
         defer { fixture.remove() }
-        let model = fixture.model()
+        let model = try fixture.model()
         await fixture.prepareUpdate(model)
         model.cancelCandidatePreview()
         await model.applyPendingUpdate(deployToExisting: false)
@@ -177,8 +177,8 @@ private struct UpdateCommitFixture {
         return .init(root: root, source: source, storeRoot: storeRoot, store: store, fault: fault, original: original, next: next, github: github, saved: await store.contentURL(for: original))
     }
 
-    @MainActor func model() -> AppModel {
-        AppModel(libraryRoot: storeRoot, store: store, homeDirectory: root, startBootstrap: false)
+    @MainActor func model() throws -> AppModel {
+        try AppModel(libraryRoot: storeRoot, store: store, homeDirectory: root, startBootstrap: false)
     }
 
     @MainActor func prepareUpdate(_ model: AppModel) async {

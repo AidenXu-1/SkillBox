@@ -39,7 +39,7 @@ struct NavigationAndAgentCatalogTests {
         let suiteName = "SkillBoxDiscoverySelectionTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: root,
             store: store,
             homeDirectory: root,
@@ -76,7 +76,7 @@ struct NavigationAndAgentCatalogTests {
         let suiteName = "SkillBoxDiscoveryPublicFlowTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: root,
             homeDirectory: root,
             routedDiscoveryProvider: routedProvider,
@@ -116,7 +116,7 @@ struct NavigationAndAgentCatalogTests {
         let suiteName = "SkillBoxDiscoveryPlanningDeadlineTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: root,
             homeDirectory: root,
             aiKeyStore: keyStore,
@@ -205,7 +205,7 @@ struct NavigationAndAgentCatalogTests {
             encoding: .utf8
         )
         let storeRoot = root.appendingPathComponent("Store", isDirectory: true)
-        let model = AppModel(
+        let model = try AppModel(
             libraryRoot: storeRoot,
             homeDirectory: root,
             startBootstrap: false

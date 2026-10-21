@@ -18,28 +18,33 @@ public enum FileOperationError: LocalizedError {
 
 enum SafeFileOperations {
     static func copyDirectory(from source: URL, to destination: URL, fileManager: FileManager = .default) throws {
+        let source = source.resolvingSymlinksInPath().standardizedFileURL
         guard fileManager.fileExists(atPath: source.path) else { throw FileOperationError.sourceMissing(source.path) }
-        try validateTree(root: source, fileManager: fileManager)
+        try validateTree(root: source, fileManager: fileManager, relocationRoot: destination)
         if fileManager.fileExists(atPath: destination.path) { try fileManager.removeItem(at: destination) }
         try fileManager.copyItem(at: source, to: destination)
     }
 
-    static func validateTree(root: URL, fileManager: FileManager = .default) throws {
-        let normalizedRoot = root.standardizedFileURL
-        guard let enumerator = fileManager.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isSymbolicLinkKey],
-            options: []
-        ) else { return }
-        for case let url as URL in enumerator {
-            let relative = String(url.standardizedFileURL.path.dropFirst(normalizedRoot.path.count + 1))
-            if relative.split(separator: "/").contains("..") { throw FileOperationError.invalidRelativePath(relative) }
-            let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey])
-            if values.isSymbolicLink == true {
-                let link = try fileManager.destinationOfSymbolicLink(atPath: url.path)
-                let resolved = url.deletingLastPathComponent().appendingPathComponent(link).standardizedFileURL
-                guard resolved.path == normalizedRoot.path || resolved.path.hasPrefix(normalizedRoot.path + "/") else {
-                    throw FileOperationError.unsafeSymlink(relative)
+    static func validateTree(root: URL, fileManager: FileManager = .default, relocationRoot: URL? = nil) throws {
+        let normalizedRoot = root.resolvingSymlinksInPath().standardizedFileURL
+        var directories = [(normalizedRoot, "")]
+        while let (directory, prefix) = directories.popLast() {
+            for url in try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+                let relative = prefix + url.lastPathComponent
+                let type = try fileManager.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType
+                if type == .typeSymbolicLink {
+                    let link = try fileManager.destinationOfSymbolicLink(atPath: url.path)
+                    guard SkillLinkBoundary.isContained(link: url, target: link, root: normalizedRoot) else {
+                        throw FileOperationError.unsafeSymlink(relative)
+                    }
+                    // Refuse an absolute source pointer before relocation can
+                    // turn it into an external link in the copied directory.
+                    if let relocationRoot, (link as NSString).isAbsolutePath,
+                       !SkillLinkBoundary.isContained(link: relocationRoot.appendingPathComponent(relative), target: link, root: relocationRoot) {
+                        throw FileOperationError.unsafeSymlink(relative)
+                    }
+                } else if type == .typeDirectory {
+                    directories.append((url, relative + "/"))
                 }
             }
         }
@@ -55,5 +60,18 @@ enum SafeFileOperations {
         } else {
             try fileManager.moveItem(at: temporary, to: url)
         }
+    }
+}
+
+enum SkillLinkBoundary {
+    static func isContained(link: URL, target: String, root: URL) -> Bool {
+        let targetURL = (target as NSString).isAbsolutePath
+            ? URL(fileURLWithPath: target)
+            : link.deletingLastPathComponent().appendingPathComponent(target)
+        let resolved = targetURL.resolvingSymlinksInPath().standardizedFileURL
+        let root = root.resolvingSymlinksInPath().standardizedFileURL
+        // A terminal link left unresolved is cyclic or could not be resolved.
+        guard (try? FileManager.default.destinationOfSymbolicLink(atPath: resolved.path)) == nil else { return false }
+        return resolved.path == root.path || resolved.path.hasPrefix(root.path + "/")
     }
 }
